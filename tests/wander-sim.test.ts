@@ -81,7 +81,8 @@ describe("wander residency: bounded memory over a long walk", () => {
     expect(st.seenRegions).toBeGreaterThan(300);
     expect(maxGrowing).toBeLessThanOrEqual(GROWING_CAP);
     expect(rechecked).toBeGreaterThan(500);
-  });
+    // ~1.7 s alone; a loaded machine needs the headroom.
+  }, 30_000);
 
   test("walking back and forth across one chunk edge regenerates nothing (hysteresis)", () => {
     const res = new Residency(SEED);
