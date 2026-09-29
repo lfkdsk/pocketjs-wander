@@ -26,7 +26,7 @@
 import { createSession, startSession, stepSession, type Session, type SessionState } from "../../src/engine/session.ts";
 import { keyedRecord } from "../../src/engine/clone.ts";
 import { MOTION_HZ, motionTicksPerFrame } from "../../src/engine/motion-clock.ts";
-import { BLOCK } from "../../src/engine/passability.ts";
+import { BLOCK, setPassageOverride, type PassageTable } from "../../src/engine/passability.ts";
 import { blocksAt, roadAt, type ChunkData } from "./chunk.ts";
 import { AutoWalker } from "./driver.ts";
 import { regionKey, Residency, STEP_MAX, TICK_BUDGET, type Focus, type ResidencyStats } from "./residency.ts";
@@ -363,7 +363,7 @@ export class WanderSim {
         if (Math.floor(cx / REGION_CHUNKS) !== rx || Math.floor(cy / REGION_CHUNKS) !== ry) continue;
         const c = this.res.chunk(cx, cy);
         if (!c) continue;
-        this.patchChunk(table.overrides, c, last, tick);
+        this.patchChunk(table, c, last, tick);
       }
       for (const a of this.window.actors) {
         if (a.rx !== rx || a.ry !== ry || a.born <= last || a.born > tick) continue;
@@ -377,7 +377,7 @@ export class WanderSim {
     }
   }
 
-  private patchChunk(overrides: Int8Array, c: ChunkData, last: number, tick: number): void {
+  private patchChunk(table: PassageTable, c: ChunkData, last: number, tick: number): void {
     const ox = c.x0 - this.window.x0, oy = c.y0 - this.window.y0;
     const roads = this.window.roads;
     for (let n = 0; n < c.growCells.length; n++) {
@@ -386,7 +386,7 @@ export class WanderSim {
       if (!((born > last && born <= tick) || (hide > last && hide <= tick))) continue;
       const lx = i % CHUNK, ly = (i - lx) / CHUNK;
       const at = (oy + ly) * WINDOW + ox + lx;
-      overrides[at] = blocksAt(c, i, tick) ? BLOCK : 0;
+      setPassageOverride(table, at, blocksAt(c, i, tick) ? BLOCK : 0);
       roads[at] = roadAt(c, i, tick) ? 1 : 0;
     }
   }

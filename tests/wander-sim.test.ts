@@ -17,6 +17,7 @@
 //             resumes; a touch target is walked to
 
 import { describe, expect, test } from "bun:test";
+import { BLOCK, canEnter } from "../src/engine/passability.ts";
 import { validateSchema } from "../src/engine/schema-validate.ts";
 import { BTN } from "../vendor/pocketjs/contracts/spec/spec.ts";
 import { CHUNK, REGION, regionOf } from "../examples/wander/world.ts";
@@ -208,6 +209,35 @@ describe("wander sim: floating origin and the window document", () => {
 });
 
 describe("wander sim: takeover, idle resume and touch", () => {
+  test("newly grown blockers update the live passage table", () => {
+    // Regression for passage cooking: growth mutates the live override at a
+    // deterministic cell after boot, and both the lookup and the player must
+    // observe it without rebuilding the whole session table.
+    const sim = new WanderSim({ seed: 1, hz: 60, viewW: 480, viewH: 272, manual: true });
+    for (let frame = 0; frame < 49; frame++) sim.step(0);
+
+    const table = sim.session.tables.get("wander")!;
+    const at = 37 * table.width + 47;
+    expect(table.overrides[at]).toBe(BLOCK);
+    expect(canEnter(table, 47, 37)).toBe(false);
+
+    const state = sim.state;
+    sim.state = {
+      ...state,
+      move: {
+        ...state.move,
+        tx: 47,
+        ty: 36,
+        px: 47 * 16,
+        py: 36 * 16,
+        phase: 0,
+        moving: false,
+      },
+    };
+    for (let frame = 0; frame < 30; frame++) sim.step(BTN.DOWN);
+    expect([sim.state.move.tx, sim.state.move.ty]).toEqual([47, 36]);
+  });
+
   test("a d-pad press takes over at once; 10 idle seconds hand the walk back", () => {
     const sim = new WanderSim({ seed: SEED, hz: 30, viewW: 480, viewH: 272 });
     for (let f = 0; f < 30 * 6; f++) sim.step(0);
