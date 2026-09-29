@@ -266,7 +266,10 @@ export function WanderView() {
     const p = sim.playerTile;
     batch(() => {
       setPosText(`X ${p.x}  Y ${p.y}  ${BIOME_NAMES[biomeAt(sim.seed, p.x, p.y)]}`);
-      setModeText(`${modeLabel(sim.mode, sim)}${sim.fast ? "  FAST" : ""}`);
+      // Fast travel replaces AUTO in the label rather than lengthening it, so
+      // a long town name still fits the 158 px plate.
+      const label = modeLabel(sim.mode, sim);
+      setModeText(!sim.fast ? label : label.startsWith("AUTO") ? `FAST${label.slice(4)}` : `${label}  FAST`);
       setResText(`CHUNKS ${st.resident}/${st.cap} ${Math.round(st.bytes / 1024)}K`);
       setGenText(`GEN ${st.generatedLastSecond}/S  Q ${st.queued}`);
       // Live image nodes (the pools also keep a few hidden spares, whose
