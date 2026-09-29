@@ -1,0 +1,47 @@
+{
+  "$schema": "https://pocketjs.dev/schema/pocket-2.json",
+  "pocket": 2,
+  "id": "dev.lfkdsk.pocket-rpgkit-wander",
+  "name": "pocket-rpgkit-wander",
+  "title": "Pocket RPG Kit — Endless Wander",
+  "version": "0.2.0",
+  "engine": {
+    "capabilities": {
+      "requires": [
+        "text.glyphs.baked",
+        "input.buttons"
+      ],
+      "enhances": [
+        "display.viewport.live"
+      ]
+    }
+  },
+  "app": {
+    "entry": "examples/wander/wander.tsx",
+    "output": "wander",
+    "framework": "solid",
+    "viewport": {
+      "fixed": {
+        "logical": [
+          480,
+          272
+        ],
+        "presentation": "integer-fit"
+      },
+      "dynamic": {
+        "default": [
+          960,
+          544
+        ],
+        "min": [
+          480,
+          272
+        ],
+        "max": [
+          4096,
+          4096
+        ]
+      }
+    }
+  }
+}
