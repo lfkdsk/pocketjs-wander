@@ -18,7 +18,14 @@
 //            TRIANGLE toggles fast travel; SELECT hands back to the driver;
 //            a tap (touches(), or a left click on the desktop host's mouse
 //            service lines) on the field walks there, on the seed plate
-//            grows a new seed
+//            grows a new seed. Every live input is sampled once per host
+//            frame and enqueued on the sim's scheduled tape at the frame's
+//            first reference tick (WanderSim.enqueue), so the live path and
+//            replays are the same code path; the recorded tape
+//            (globalThis.__wanderTape) replays the session tick-for-tick at
+//            any host rate. A slow host still observes a click later than a
+//            fast one — inputs are sampled at host frames, the engine's
+//            documented contract
 
 import { batch, createSignal, Show } from "solid-js";
 import { Text, View, type NodeMirror } from "@pocketjs/framework/components";
@@ -35,7 +42,7 @@ import { playerImageKey } from "../../src/ui/PlayerSprite.tsx";
 import { DialogBox } from "../../src/ui/DialogBox.tsx";
 import { WANDER_PLAYER, WANDER_VILLAGER } from "./assets-wander.ts";
 import { RenderRing, OVERSCAN_LEAD, OVERSCAN_TRAIL, TILE } from "./wander-render.ts";
-import { NEXT_SEED, TAKEOVER, WanderSim, type WanderMode } from "./wander-sim.ts";
+import { TAKEOVER, WanderSim, type ScheduledInput, type WanderMode } from "./wander-sim.ts";
 import { BIOME_NAMES, CHUNK, biomeAt } from "./world.ts";
 import { seedHex } from "./window.ts";
 import { regionName } from "./region.ts";
@@ -70,6 +77,10 @@ declare global {
   var __wanderSeed: number | undefined;
   // eslint-disable-next-line no-var
   var __wanderFast: boolean | undefined;
+  /** Test hook: every live input this session enqueued, in firing order —
+   *  a scheduled tape that replays the session tick-for-tick at any Hz. */
+  // eslint-disable-next-line no-var
+  var __wanderTape: ScheduledInput[] | undefined;
   /** Benchmark hook: record a per-phase wall-clock breakdown each frame. */
   // eslint-disable-next-line no-var
   var __wanderPerfOn: boolean | undefined;
@@ -106,8 +117,45 @@ export function WanderView() {
   const [viewport, setViewport] = createSignal<Viewport>(vp);
   const perfClock = globalThis.__wanderPerfOn && globalThis.performance ? () => globalThis.performance.now() : undefined;
   const budget = globalThis.__wanderBudget;
-  let sim = new WanderSim({ seed: globalThis.__wanderSeed ?? 0x5eed_0001, hz, viewW: vp.w, viewH: vp.h, fast: globalThis.__wanderFast === true, budget, clock: perfClock });
+  const sim = new WanderSim({ seed: globalThis.__wanderSeed ?? 0x5eed_0001, hz, viewW: vp.w, viewH: vp.h, fast: globalThis.__wanderFast === true, budget, clock: perfClock });
   globalThis.__wanderSim = sim;
+  // Every live input is enqueued on the sim's tape at this host frame's
+  // first reference tick, so live play and replays share one code path; the
+  // recording is the exportable scheduled tape.
+  const recorded: ScheduledInput[] = [];
+  globalThis.__wanderTape = recorded;
+  const enqueue = (ev: ScheduledInput) => { sim.enqueue(ev); recorded.push(ev); };
+  let liveMask = 0;
+  enqueue({ at: 0, buttons: 0 });
+  // Set while this host frame's inputs cross a reseed (SQUARE, or a seed-plate
+  // tap). A reseed restarts the session clock at 0, so the rest of the frame's
+  // mask changes and taps are enqueued at the new session's tick 0 — not at
+  // the old session's `sim.now`, which would park them at the tape's front
+  // until the new session caught up and drop short presses. Reset per frame.
+  let frameReseeded = false;
+  // SQUARE (and a seed-plate tap): rebuild the world at this frame's first
+  // reference tick. The held mask carries into the new session (the sim
+  // preserves it across a reseed), so it is not re-queued here.
+  const reseedNow = () => {
+    enqueue({ at: sim.now, reseed: true });
+    frameReseeded = true;
+  };
+  // Enqueue a live input at the current epoch's tick: the frame's first
+  // reference tick, or tick 0 of the new session when the frame reseeded.
+  const enqueueLive = (ev: { buttons?: number; goto?: { x: number; y: number } }) => {
+    enqueue({ at: frameReseeded ? 0 : sim.now, ...ev });
+  };
+  // The sim rebuilds the world in place on a scheduled reseed; re-point the
+  // view at the new residency, exactly like a fresh boot.
+  sim.onReseed = () => {
+    const s = sim.playerTile;
+    ring.reset(sim.res, sim.seed, Math.floor(s.x / CHUNK) * CHUNK, Math.floor(s.y / CHUNK) * CHUNK);
+    for (const [id, rec] of npcs) { setProp(rec.node, "src", null, WANDER_VILLAGER); npcFree.push(rec.node); npcs.delete(id); }
+    playerX = NaN; playerY = NaN;
+    shownModal = null;
+    lastMode = sim.mode;
+    batch(() => { setSeedText(`SEED 0x${seedHex(sim.seed)}`); setModal(null); });
+  };
 
   // -- world --------------------------------------------------------------
   const frameRoot = createElement("view");
@@ -279,28 +327,16 @@ export function WanderView() {
     updateMinimap();
   };
 
-  const newSeed = () => {
-    const next = (sim.seed + NEXT_SEED) >>> 0;
-    sim = new WanderSim({ seed: next, hz, viewW: vp.w, viewH: vp.h, fast: sim.fast, budget, clock: perfClock });
-    globalThis.__wanderSim = sim;
-    const s = sim.playerTile;
-    ring.reset(sim.res, sim.seed, Math.floor(s.x / CHUNK) * CHUNK, Math.floor(s.y / CHUNK) * CHUNK);
-    for (const [id, rec] of npcs) { setProp(rec.node, "src", null, WANDER_VILLAGER); npcFree.push(rec.node); npcs.delete(id); }
-    playerX = NaN; playerY = NaN;
-    shownModal = null;
-    lastMode = sim.mode;
-    batch(() => { setSeedText(`SEED 0x${seedHex(sim.seed)}`); setModal(null); });
-  };
-
   const plateW = () => (viewport().w >= 900 ? 206 : 158);
   const tap = (x: number, y: number) => {
     // Seed plate (top-left): a new world. Anywhere else on the field: walk.
-    if (x < plateW() + 6 && y < 50) { newSeed(); return; }
+    if (x < plateW() + 6 && y < 50) { reseedNow(); return; }
     const cam = camera();
-    sim.goto(Math.floor((cam.x + x) / TILE), Math.floor((cam.y + y) / TILE));
+    enqueueLive({ goto: { x: Math.floor((cam.x + x) / TILE), y: Math.floor((cam.y + y) / TILE) } });
   };
 
   onFrame((buttons) => {
+    frameReseeded = false;
     const nextVp = hostViewport(getOps());
     if (nextVp && (nextVp.w !== vp.w || nextVp.h !== vp.h)) {
       vp = { ...nextVp };
@@ -311,7 +347,15 @@ export function WanderView() {
     }
     const pressed = buttons & ~prevButtons;
     prevButtons = buttons;
-    if (pressed & BTN.SQUARE) newSeed();
+    // Live inputs are sampled once per host frame and enqueued at the frame's
+    // first reference tick: the tape is the only input path, so a recorded
+    // session replays tick-for-tick at any host rate. A frame that reseeds
+    // (SQUARE, or a seed-plate tap) starts a new session clock at 0, so the
+    // rest of that frame's inputs are enqueued at tick 0 of the new session
+    // (enqueueLive); the held mask carries across without a fresh press edge.
+    const live = buttons & ~BTN.SQUARE;
+    if (pressed & BTN.SQUARE) reseedNow();
+    if (live !== liveMask) { liveMask = live; enqueueLive({ buttons: live }); }
     const ids = new Set<number>();
     for (const t of touches()) {
       ids.add(t.id);

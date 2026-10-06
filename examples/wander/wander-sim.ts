@@ -4,7 +4,16 @@
 // (60 per virtual second at every host rate, like the kit's session). Each
 // reference tick, in order:
 //
-//   1. input      live buttons (manual) or the auto-wander driver's mask
+//   1. input      live buttons (manual) or the auto-wander driver's mask;
+//                 a scheduled tape (schedule()/enqueue()) overrides the live
+//                 poll with a per-reference-tick mask and taps, so replays,
+//                 recordings and live hosts all fold identically at
+//                 60/30/20/4 Hz. Live hosts sample their inputs once per host
+//                 frame and enqueue them at the frame's first reference tick,
+//                 so a slow host observes a click later than a fast one (the
+//                 engine's host-frame input contract, src/engine/motion-clock.ts);
+//                 the same recorded tape, however, replays tick-for-tick
+//                 identically at every rate
 //   2. session    stepSession on the window project (a 60 Hz session, so
 //                 one call is one reference tick)
 //   3. focus      the player's tile plus a lead along the facing
@@ -23,10 +32,17 @@
 // 4 Hz folds 15 reference ticks and may spend 15 ticks of budget; a 60 Hz
 // frame spends one. Nothing here reads a clock or the host.
 
-import { createSession, startSession, stepSession, type Session, type SessionState } from "../../src/engine/session.ts";
+import {
+  createSession,
+  sessionPassageTable,
+  startSession,
+  stepSession,
+  type Session,
+  type SessionState,
+} from "../../src/engine/session.ts";
 import { keyedRecord } from "../../src/engine/clone.ts";
 import { MOTION_HZ, motionTicksPerFrame } from "../../src/engine/motion-clock.ts";
-import { BLOCK, setPassageOverride, type PassageTable } from "../../src/engine/passability.ts";
+import { BLOCK, canStepFrom, setPassageOverride, type Dir4, type PassageTable } from "../../src/engine/passability.ts";
 import { blocksAt, roadAt, type ChunkData } from "./chunk.ts";
 import { AutoWalker } from "./driver.ts";
 import { regionKey, Residency, STEP_MAX, TICK_BUDGET, type Focus, type ResidencyStats } from "./residency.ts";
@@ -37,6 +53,7 @@ const BTN_SELECT = 0x0001, BTN_START = 0x0008;
 const BTN_UP = 0x0010, BTN_RIGHT = 0x0020, BTN_DOWN = 0x0040, BTN_LEFT = 0x0080;
 const BTN_L = 0x0100, BTN_R = 0x0200;
 const BTN_TRIANGLE = 0x1000, BTN_CIRCLE = 0x2000, BTN_CROSS = 0x4000, BTN_SQUARE = 0x8000;
+const BTN_DPAD = BTN_UP | BTN_RIGHT | BTN_DOWN | BTN_LEFT;
 /** Buttons that take the walk over from the driver. */
 export const TAKEOVER = BTN_UP | BTN_RIGHT | BTN_DOWN | BTN_LEFT | BTN_CIRCLE | BTN_CROSS | BTN_L | BTN_R | BTN_START;
 export const NEXT_SEED = 0x9e37_79b9;
@@ -53,6 +70,9 @@ export const START_LINGER_SECONDS = 5;
 const DX = [0, -1, 0, 1] as const;
 const DY = [1, 0, -1, 0] as const;
 const DIR_NAMES = ["down", "left", "up", "right"] as const;
+const BUTTON_FOR_DIR = [BTN_DOWN, BTN_LEFT, BTN_UP, BTN_RIGHT] as const;
+const SLIDE_SIDES: readonly (readonly [Dir4, Dir4])[] = [[1, 3], [0, 2], [3, 1], [2, 0]];
+const MANUAL_SLIDE_LOOKAHEAD = 16;
 
 export interface WanderConfig {
   seed: number;
@@ -71,6 +91,43 @@ export interface WanderConfig {
 }
 
 export type WanderMode = "auto" | "manual" | "goto";
+
+/** One deterministic input at a reference tick. A tape of these lets live
+ *  hosts, recordings, replays and tests press buttons, tap tiles and grow new
+ *  seeds at exact reference ticks, so the same tape produces the same
+ *  per-reference-tick trajectory at every host rate: a tap at tick 362 fires
+ *  at tick 362 inside a 4 Hz fold, not at the next host frame boundary.
+ *
+ *  Same-tick semantics (implementation and tests agree):
+ *  - Events must be queued in firing order (recordings are); events at the
+ *    same tick fire in queue order.
+ *  - The tick's held mask is the FINAL `buttons` value after all of the
+ *    tick's events; edges are computed against the previous reference tick's
+ *    final mask, so a press and a release queued for the same tick leave no
+ *    ghost edge.
+ *  - Taps (`goto`) take effect as they are consumed, before the tick's
+ *    controls run; the tick's TRIANGLE/SELECT/TAKEOVER handling then runs
+ *    with the final mask, so a held takeover mask queued at the same tick as
+ *    a tap always wins (the walk is handed to the player).
+ *  - `reseed` grows a fresh world: the sim is rebuilt in place and the
+ *    reference-tick clock restarts at 0, so later events' `at` is relative
+ *    to the new session (segment). The held mask carries across the reseed:
+ *    a button still held when the world rebuilds keeps holding in the new
+ *    session without producing a fresh press edge, so a host that samples a
+ *    whole frame at once enqueues that frame's remaining mask changes and
+ *    taps at `at: 0` (the new session's first tick), not at the old
+ *    session's `now`. */
+export interface ScheduledInput {
+  /** Reference tick (WanderSim.now) at which the input applies. */
+  at: number;
+  /** Held button mask from this tick until the next scheduled mask. */
+  buttons?: number;
+  /** Tap: walk to this world tile from this tick. */
+  goto?: { x: number; y: number };
+  /** SQUARE: grow a new seed at this tick. The world rebuilds in place and
+   *  the reference-tick clock restarts at 0. */
+  reseed?: boolean;
+}
 
 export interface FrameReport {
   /** Units of generation work this host frame, and its budget. */
@@ -94,22 +151,25 @@ function startTile(res: Residency): { x: number; y: number } {
 }
 
 export class WanderSim {
-  readonly seed: number;
+  seed!: number;
   readonly hz: number;
   readonly ticksPerFrame: number;
   readonly budget: number;
-  readonly res: Residency;
-  readonly driver: AutoWalker;
-  /** Reference ticks since boot. */
+  res!: Residency;
+  driver!: AutoWalker;
+  /** Reference ticks since boot (restarts at 0 on a reseed). */
   now = 0;
   /** Host frames since boot. */
   frame = 0;
-  window: WindowBuild;
-  session: Session;
-  state: SessionState;
+  /** Session segment: 1 after the constructor's boot, incremented at every
+   *  reseed (boot() does the increment). */
+  segment = 0;
+  window!: WindowBuild;
+  session!: Session;
+  state!: SessionState;
   mode: WanderMode = "auto";
   fast = false;
-  focus: Focus;
+  focus!: Focus;
   viewW: number;
   viewH: number;
   idle = 0;
@@ -120,10 +180,27 @@ export class WanderSim {
   private pending: { cx: number; cy: number; gen: Generator<number, WindowBuild> } | null = null;
   private built: WindowBuild | null = null;
   private prevButtons = 0;
+  /** Scheduled input tape (live hosts, recordings, replays, tests); while
+   *  non-null it overrides the live `buttons` argument to step(), one mask
+   *  per reference tick. */
+  private tape: ScheduledInput[] | null = null;
+  private tapeMask = 0;
+  /** Final mask of the previous reference tick: edges are computed against
+   *  it, so a press and a release in the same tick leave no ghost edge. */
+  private prevTapeMask = 0;
   private lastTileX = NaN;
   private lastTileY = NaN;
   private lastFocusChunk = "";
   private ringTimer = 0;
+  /** Optional per-reference-tick digest hook (tests and replays). When set,
+   *  it is called at the end of every reference tick with that tick's
+   *  digest — including ticks folded inside a low-Hz host frame — so a tape
+   *  can be compared tick-for-tick at 60/30/20/4 Hz. Shipped hosts leave it
+   *  unset: the hot path is one untaken branch. */
+  onTick: ((digest: string) => void) | null = null;
+  /** Optional hook fired after a scheduled reseed rebuilt the world (live
+   *  hosts re-point their view at the new residency here). */
+  onReseed: ((sim: WanderSim) => void) | null = null;
   maxFrameUnits = 0;
   budgetViolations = 0;
   recentres = 0;
@@ -136,17 +213,49 @@ export class WanderSim {
   private unitsThisFrame = 0;
 
   constructor(cfg: WanderConfig) {
-    this.seed = cfg.seed >>> 0;
     this.hz = cfg.hz;
     this.ticksPerFrame = motionTicksPerFrame(cfg.hz);
     this.budget = cfg.budget ?? TICK_BUDGET;
     this.clock = cfg.clock;
     this.viewW = cfg.viewW;
     this.viewH = cfg.viewH;
-    this.res = new Residency(this.seed);
-    this.driver = new AutoWalker(this.seed);
-    this.fast = cfg.fast ?? false;
-    if (cfg.manual) this.mode = "manual";
+    this.boot(cfg.seed >>> 0, cfg.fast ?? false, cfg.manual === true);
+  }
+
+  /** Build the world for `seed` and start a fresh session on its plaza.
+   *  Called by the constructor and by a scheduled reseed; the tape, hooks,
+   *  viewport and budget survive, everything world-relative restarts. The
+   *  held input mask also survives a reseed: a key held across the epoch
+   *  boundary keeps holding in the new session without re-firing as a fresh
+   *  press (the constructor's mask is 0 anyway). */
+  private boot(seed: number, fast: boolean, manual: boolean): void {
+    this.seed = seed;
+    this.segment++;
+    this.now = 0;
+    this.frame = 0;
+    this.mode = manual ? "manual" : "auto";
+    this.fast = fast;
+    this.idle = 0;
+    this.walked = 0;
+    this.windowTicks.clear();
+    this.pending = null;
+    this.built = null;
+    this.prevButtons = 0;
+    // tapeMask / prevTapeMask deliberately survive: see boot()'s doc.
+    this.lastTileX = NaN;
+    this.lastTileY = NaN;
+    this.lastFocusChunk = "";
+    this.ringTimer = 0;
+    this.recentres = 0;
+    this.maxFrameUnits = 0;
+    this.budgetViolations = 0;
+    this.lastFrame = { units: 0, budget: 0, recentred: false, grown: [] };
+    this.perf = { driver: 0, session: 0, growth: 0, rings: 0, budget: 0, swap: 0 };
+    this.grownThisFrame = new Set();
+    this.recentredThisFrame = false;
+    this.unitsThisFrame = 0;
+    this.res = new Residency(seed);
+    this.driver = new AutoWalker(seed);
     const start = startTile(this.res);
     const cx = Math.floor(start.x / CHUNK), cy = Math.floor(start.y / CHUNK);
     this.focus = { x: start.x, y: start.y, hx: 1, hy: 0 };
@@ -155,7 +264,7 @@ export class WanderSim {
     this.res.fill(0);
     this.res.maxSpent = 0; // boot is the one unbudgeted fill
     this.discover();
-    this.window = buildWindow(this.res, this.seed, cx, cy, (rx, ry) => this.res.regionTick(rx, ry, this.now), { ...start, dir: "down" });
+    this.window = buildWindow(this.res, seed, cx, cy, (rx, ry) => this.res.regionTick(rx, ry, this.now), { ...start, dir: "down" });
     this.session = this.makeSession(this.window);
     this.state = this.freshState(this.window);
     for (const [k, t] of this.window.ticks) this.windowTicks.set(k, t);
@@ -163,6 +272,14 @@ export class WanderSim {
     // The walk begins on a town that starts growing on the first frame:
     // stand and watch it grow before setting off.
     this.driver.hold(START_LINGER_SECONDS * MOTION_HZ);
+    if (this.segment > 1) this.onReseed?.(this);
+  }
+
+  /** SQUARE: grow a new seed in place. The tape keeps playing (its later
+   *  `at` values are relative to the new session); hooks and viewport
+   *  survive. */
+  reseed(): void {
+    this.boot((this.seed + NEXT_SEED) >>> 0, this.fast, false);
   }
 
   get viewTilesW(): number { return Math.ceil(this.viewW / 16) + 2; }
@@ -216,22 +333,57 @@ export class WanderSim {
     this.driver.goto(x, y);
   }
 
+  /** Queue a tape of inputs at reference ticks, replacing any previous tape.
+   *  While a tape is queued the live `buttons` argument to step() is ignored:
+   *  each tick's held mask and edges come from the tape, so the same tape
+   *  folds identically at 60/30/20/4 Hz. Events must be queued in firing
+   *  order (see ScheduledInput for the same-tick contract); an event whose
+   *  tick already passed applies at the next tick (tapes should be queued
+   *  early). */
+  schedule(inputs: ScheduledInput[]): void {
+    this.tape = [...inputs];
+    this.tapeMask = 0;
+    this.prevTapeMask = 0;
+  }
+
+  /** Append one input to the tape, starting it if none is queued. Live hosts
+   *  use this for their per-frame sampling: it does not reset edge state, so
+   *  a held mask keeps holding across enqueues. */
+  enqueue(input: ScheduledInput): void {
+    (this.tape ??= []).push(input);
+  }
+
   /** One host frame. */
   step(buttons: number): FrameReport {
     const pressed = buttons & ~this.prevButtons;
     this.prevButtons = buttons;
-    if (pressed & BTN_TRIANGLE) this.setFast(!this.fast);
-    if (pressed & BTN_SELECT) { this.mode = "auto"; this.driver.reset(); this.idle = 0; }
-    if (buttons & TAKEOVER) {
-      if (this.mode !== "manual") this.driver.reset();
-      this.mode = "manual";
-      this.idle = 0;
-    }
     this.grownThisFrame = new Set();
     this.recentredThisFrame = false;
     this.unitsThisFrame = 0;
     if (this.clock) this.perf = { driver: 0, session: 0, growth: 0, rings: 0, budget: 0, swap: 0 };
-    for (let t = 0; t < this.ticksPerFrame; t++) this.tick(buttons, t === 0 ? pressed : 0);
+    for (let t = 0; t < this.ticksPerFrame; t++) {
+      let mask = buttons, edge = t === 0 ? pressed : 0;
+      if (this.tape) {
+        // Scheduled inputs fire at their exact reference tick, even inside a
+        // folded 4 Hz frame, so a tape folds identically at every host rate.
+        // A reseed restarts the clock at 0; the same tick's remaining events
+        // (and later ones) are relative to the new session.
+        let ev: ScheduledInput | undefined;
+        while ((ev = this.tape[0]) && ev.at <= this.now) {
+          this.tape.shift();
+          if (ev.buttons !== undefined) this.tapeMask = ev.buttons;
+          if (ev.goto) this.goto(ev.goto.x, ev.goto.y);
+          if (ev.reseed) this.reseed();
+        }
+        // Edges run from the previous reference tick's FINAL mask to this
+        // tick's final mask, so a press and a release in the same tick leave
+        // no ghost edge.
+        edge = this.tapeMask & ~this.prevTapeMask;
+        this.prevTapeMask = this.tapeMask;
+        mask = this.tapeMask;
+      }
+      this.tick(mask, edge);
+    }
     this.frame++;
     const frameBudget = this.budget * this.ticksPerFrame;
     if (this.unitsThisFrame > frameBudget) this.budgetViolations++;
@@ -247,15 +399,77 @@ export class WanderSim {
     return t;
   }
 
+  /** Allocation-free movement probe matching the engine's legacy body
+   *  overlay. The corner aid can ask several nearby questions without
+   *  cloning a passage table and Set for each one. */
+  private canManualStep(table: PassageTable, x: number, y: number, dir: Dir4): boolean {
+    if (!canStepFrom(table, x, y, dir)) return false;
+    const tx = x + DX[dir]!, ty = y + DY[dir]!;
+    for (const id in this.state.chars.chars) {
+      const ch = this.state.chars.chars[id]!;
+      if (!ch.blocks) continue;
+      if (ch.tx === tx && ch.ty === ty) return false;
+      if (ch.moving && ch.tx + DX[ch.stepDir]! === tx && ch.ty + DY[ch.stepDir]! === ty) return false;
+    }
+    return true;
+  }
+
+  /** Wander-only corner aid for held manual input. At a tile boundary, a
+   *  blocked cardinal direction may become one perpendicular step when that
+   *  side reaches a clear route around the obstacle within a short lookahead.
+   *  Long walls and closed pockets retain the ordinary face-in-place result.
+   *  Auto and goto never call this helper, so their trajectories are exact. */
+  private slideManualMask(buttons: number): number {
+    if (this.state.move.moving) return buttons;
+    const dpad = buttons & BTN_DPAD;
+    if (dpad === 0 || (dpad & (dpad - 1)) !== 0) return buttons;
+    const dir: Dir4 = dpad === BTN_DOWN ? 0 : dpad === BTN_LEFT ? 1 : dpad === BTN_UP ? 2 : 3;
+    const m = this.state.move;
+    const table = sessionPassageTable(this.session, this.state);
+    if (this.canManualStep(table, m.tx, m.ty, dir)) return buttons;
+
+    // Only start sliding when the held direction is known to clear again.
+    // This keeps the aid local to corners instead of turning it into an
+    // unbounded wall-following driver.
+    let bestSide: Dir4 | null = null;
+    let bestDistance = MANUAL_SLIDE_LOOKAHEAD + 1;
+    for (const side of SLIDE_SIDES[dir]!) {
+      let sx = m.tx, sy = m.ty;
+      for (let distance = 1; distance <= MANUAL_SLIDE_LOOKAHEAD; distance++) {
+        if (!this.canManualStep(table, sx, sy, side)) break;
+        sx += DX[side]!;
+        sy += DY[side]!;
+        if (this.canManualStep(table, sx, sy, dir)) {
+          if (distance < bestDistance) {
+            bestSide = side;
+            bestDistance = distance;
+          }
+          break;
+        }
+      }
+    }
+    if (bestSide !== null) return (buttons & ~BTN_DPAD) | BUTTON_FOR_DIR[bestSide]!;
+    return buttons;
+  }
+
   private tick(buttons: number, pressed: number): void {
     let t = this.clock ? this.clock() : 0;
+    // 0. host controls (per reference tick: a live host delivers edges at the
+    //    frame's first tick, a scheduled tape at its exact tick)
+    if (pressed & BTN_TRIANGLE) this.setFast(!this.fast);
+    if (pressed & BTN_SELECT) { this.mode = "auto"; this.driver.reset(); this.idle = 0; }
+    if (buttons & TAKEOVER) {
+      if (this.mode !== "manual") this.driver.reset();
+      this.mode = "manual";
+      this.idle = 0;
+    }
     // 1. input
     let mask = 0;
     let edges = 0;
     if (this.mode === "manual") {
       if (buttons & TAKEOVER) this.idle = 0;
       else if (++this.idle >= IDLE_RESUME_SECONDS * MOTION_HZ) { this.mode = "auto"; this.driver.reset(); }
-      mask = buttons & TAKEOVER;
+      mask = this.slideManualMask(buttons & TAKEOVER);
       edges = pressed;
     }
     if (this.mode !== "manual") {
@@ -330,6 +544,7 @@ export class WanderSim {
     }
     this.lap("swap", t);
     this.now++;
+    if (this.onTick) this.onTick(this.digest());
   }
 
   private windowReady(cx: number, cy: number): boolean {

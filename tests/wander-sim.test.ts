@@ -17,7 +17,7 @@
 //             resumes; a touch target is walked to
 
 import { describe, expect, test } from "bun:test";
-import { BLOCK, canEnter } from "../src/engine/passability.ts";
+import { BLOCK, PASS, canEnter, setPassageOverride, type Dir4 } from "../src/engine/passability.ts";
 import { validateSchema } from "../src/engine/schema-validate.ts";
 import { BTN } from "../vendor/pocketjs/contracts/spec/spec.ts";
 import { CHUNK, REGION, regionOf } from "../examples/wander/world.ts";
@@ -25,7 +25,7 @@ import { generateChunk } from "../examples/wander/chunk.ts";
 import { planRegion } from "../examples/wander/region.ts";
 import { GROWING_CAP, Residency, TICK_BUDGET, type Focus } from "../examples/wander/residency.ts";
 import { buildWindow } from "../examples/wander/window.ts";
-import { FAST_SPEED, GROW_RING_H, GROW_RING_W, WALK_SPEED, WanderSim } from "../examples/wander/wander-sim.ts";
+import { FAST_SPEED, GROW_RING_H, GROW_RING_W, NEXT_SEED, WALK_SPEED, WanderSim, type ScheduledInput, type WanderMode } from "../examples/wander/wander-sim.ts";
 
 const schema = await Bun.file(new URL("../src/data/schema.json", import.meta.url)).json() as Record<string, unknown>;
 const SEED = 0x5eed_0001;
@@ -124,9 +124,15 @@ describe("wander sim: determinism and budget", () => {
   test("the auto-wander trajectory and residency are identical at 60/30/20/4 Hz", () => {
     const runs = [60, 30, 20, 4].map((hz) => runSim(hz, 50));
     for (const r of runs.slice(1)) expect(r.digests).toEqual(runs[0]!.digests);
+    expect(new Bun.CryptoHasher("sha256").update(JSON.stringify(runs[0]!.digests)).digest("hex")).toBe(
+      "6c4e3a49a0b043d944eb61cbdbcb917d7c046ca1dd750d6f773f9e8d81e6dc12",
+    );
     // Fast travel too.
     const fast = [60, 4].map((hz) => runSim(hz, 20, { fast: true }));
     expect(fast[1]!.digests).toEqual(fast[0]!.digests);
+    expect(new Bun.CryptoHasher("sha256").update(JSON.stringify(fast[0]!.digests)).digest("hex")).toBe(
+      "1f3c357035d773e2f065f6739e0bb3579514a290a8610f22bc1ac647881ddc4d",
+    );
   }, 60_000);
 
   test("no tick exceeds the tick budget and no frame its ticks' worth, at every rate", () => {
@@ -158,6 +164,419 @@ describe("wander sim: determinism and budget", () => {
     expect(st.budgetViolations).toBe(0);
     expect(st.recentres).toBeGreaterThan(40);
     expect(st.maxResident).toBeLessThanOrEqual(st.cap);
+  }, 60_000);
+});
+
+// Per-reference-tick hz consistency with scheduled inputs ---------------
+
+interface TapeRun {
+  hz: number;
+  sim: WanderSim;
+  byTick: Map<number, string>;
+}
+
+/** Run a sim whose inputs come from a tape of events at reference ticks,
+ *  digesting the state at EVERY reference tick (including ticks folded
+ *  inside a low-Hz host frame, via the onTick hook). */
+function runTape(hz: number, seconds: number, tape: ScheduledInput[], opts: { seed?: number; fast?: boolean } = {}): TapeRun {
+  const sim = new WanderSim({ seed: opts.seed ?? SEED, hz, viewW: 480, viewH: 272, fast: opts.fast });
+  sim.schedule(tape);
+  const byTick = new Map<number, string>();
+  sim.onTick = (d) => byTick.set(sim.now, d);
+  for (let f = 0; f < seconds * hz; f++) sim.step(0);
+  return { hz, sim, byTick };
+}
+
+/** Run the same tape at 60/30/20/4 Hz and assert identical digests at every
+ *  reference tick (the onTick hook sees inside each folded frame). Returns
+ *  the runs for further assertions. */
+function compareHz(seconds: number, tape: ScheduledInput[], opts: { seed?: number; fast?: boolean } = {}): TapeRun[] {
+  const runs = [60, 30, 20, 4].map((hz) => runTape(hz, seconds, tape, opts));
+  const coarse = runs[3]!;
+  for (const r of runs) expect(r.byTick.size).toBe(coarse.byTick.size);
+  for (const r of runs.slice(0, 3)) for (const [t, d] of coarse.byTick) expect(r.byTick.get(t)).toBe(d);
+  return runs;
+}
+
+/** A reachable world tile a few cells east of the player at reference tick
+ *  `at` (the world is deterministic per seed, so every hz run sees it). */
+function scoutGoal(at: number, dx = 8): { x: number; y: number } {
+  const scout = new WanderSim({ seed: SEED, hz: 60, viewW: 480, viewH: 272 });
+  while (scout.now < at) scout.step(0);
+  const table = scout.session.tables.get("wander")!;
+  const m = scout.state.move;
+  for (let r = 6; r < 14; r++) {
+    const lx = m.tx + r * Math.sign(dx), ly = m.ty;
+    if (table.overrides[ly * 96 + lx] === 0) return { x: scout.window.x0 + lx, y: scout.window.y0 + ly };
+  }
+  throw new Error("no open cell east of the player");
+}
+
+/** The tile the player stands on once the in-flight step finishes (tx/ty is
+ *  the step's origin while moving, so the destination is one cell along the
+ *  facing). A d-pad takeover finishes that step, then walks the held way. */
+function standingTile(scout: WanderSim): { tx: number; ty: number } {
+  const m = scout.state.move;
+  if (!m.moving) return { tx: m.tx, ty: m.ty };
+  // Facing order in the session: down, left, up, right.
+  const fdx = [0, -1, 0, 1] as const, fdy = [1, 0, -1, 0] as const;
+  return { tx: m.tx + fdx[m.facing]!, ty: m.ty + fdy[m.facing]! };
+}
+
+/** A d-pad button whose next cell is open from the player's standing tile
+ *  at tick `at` (prefers a direction other than the current facing, so the
+ *  displacement is unmistakably the keys'). */
+function scoutDir(at: number): number {
+  const scout = new WanderSim({ seed: SEED, hz: 60, viewW: 480, viewH: 272 });
+  while (scout.now < at) scout.step(0);
+  return dirFromStanding(scout);
+}
+
+function sameFacing(button: number, facing: number): boolean {
+  return (button === BTN.DOWN && facing === 0) || (button === BTN.LEFT && facing === 1)
+    || (button === BTN.UP && facing === 2) || (button === BTN.RIGHT && facing === 3);
+}
+
+function dirFromStanding(scout: WanderSim): number {
+  const table = scout.session.tables.get("wander")!;
+  const { tx, ty } = standingTile(scout);
+  const open = DIRS.filter(([, dx, dy]) => table.overrides[(ty + dy) * 96 + tx + dx] === 0);
+  return (open.find(([b]) => !sameFacing(b, scout.state.move.facing)) ?? open[0])![0];
+}
+
+describe("wander sim: per-reference-tick consistency at 60/30/20/4 Hz", () => {
+  test("auto-wander agrees at every reference tick, not just every second", () => {
+    compareHz(50, []);
+  }, 60_000);
+
+  test("a tap scheduled at a non-frame-aligned reference tick walks there identically at every rate", () => {
+    // 362 is a frame boundary at 60 Hz only: at 30/20/4 Hz it sits inside a
+    // folded frame, so the tap must fire mid-fold at the exact tick.
+    const goal = scoutGoal(362);
+    // 12 s: the walker arrives (~tick 500) and stands there; the 10 s idle
+    // resume has not kicked in yet, so the end state is "at the goal".
+    const runs = compareHz(12, [{ at: 362, goto: goal }]);
+    for (const r of runs) {
+      const p = r.sim.playerTile;
+      expect(Math.abs(p.x - goal.x) + Math.abs(p.y - goal.y)).toBeLessThanOrEqual(1);
+      expect(r.sim.mode).toBe("manual"); // arrived, then waits there
+    }
+  }, 60_000);
+
+  test("a d-pad hold scheduled at reference ticks walks the same distance at every rate", () => {
+    // Held for 12 ticks: at 4 Hz the hold starts and ends inside one folded
+    // frame, so the mask must be applied per tick, not per frame.
+    const button = scoutDir(360);
+    const start = new WanderSim({ seed: SEED, hz: 60, viewW: 480, viewH: 272 }).playerTile;
+    const runs = compareHz(20, [{ at: 360, buttons: button }, { at: 372, buttons: 0 }]);
+    for (const r of runs) {
+      const p = r.sim.playerTile;
+      expect(p).toEqual(runs[0]!.sim.playerTile);
+      // 12 ticks at 2 px/tick is 24 px: the walker left its start tile.
+      expect(Math.abs(p.x - start.x) + Math.abs(p.y - start.y)).toBeGreaterThan(0);
+    }
+  }, 60_000);
+
+  test("tap, takeover and idle-resume transitions all agree per tick at every rate", () => {
+    const goal = scoutGoal(362);
+    // The takeover direction must be open in the tape run, not in an auto
+    // run: scout it from a sim that followed the same tap.
+    const scout = new WanderSim({ seed: SEED, hz: 60, viewW: 480, viewH: 272 });
+    scout.schedule([{ at: 362, goto: goal }]);
+    while (scout.now < 600) scout.step(0);
+    const table = scout.session.tables.get("wander")!;
+    const m = scout.state.move;
+    const dirs = [[BTN.LEFT, -1, 0], [BTN.RIGHT, 1, 0], [BTN.UP, 0, -1], [BTN.DOWN, 0, 1]] as const;
+    const [button] = dirs.find(([, dx, dy]) => table.overrides[(m.ty + dy) * 96 + m.tx + dx] === 0)!;
+    const tape: ScheduledInput[] = [
+      { at: 362, goto: goal },
+      { at: 600, buttons: button },
+      { at: 720, buttons: 0 },
+    ];
+    // 35 s: the tap is taken over at 600, the hold ends at 720, and the 10 s
+    // idle resume has handed the walk back to the driver by the end.
+    const runs = compareHz(35, tape);
+    for (const r of runs) {
+      expect(r.sim.mode).toBe("auto");
+      expect(r.sim.driver.arrivedTowns).toBe(runs[0]!.sim.driver.arrivedTowns);
+    }
+  }, 60_000);
+
+  test("another seed and fast travel each agree per tick at every rate", () => {
+    const other = compareHz(40, [], { seed: SEED + 0x9e3779b9 });
+    const stock = compareHz(40, []);
+    const t = other[0]!.sim.now;
+    expect(other[0]!.byTick.get(t)).not.toBe(stock[0]!.byTick.get(t));
+    compareHz(30, [], { fast: true });
+  }, 90_000);
+});
+
+// Scheduled-input contract: same-tick semantics, exact transition ticks,
+// and discriminating movement proofs -------------------------------------
+
+const DIRS: [number, number, number][] = [[BTN.LEFT, -1, 0], [BTN.RIGHT, 1, 0], [BTN.UP, 0, -1], [BTN.DOWN, 0, 1]];
+
+interface Snap { now: number; segment: number; mode: WanderMode; fast: boolean; x: number; y: number }
+
+/** Run a tape and snapshot the semantic state at EVERY reference tick. */
+function runSnaps(hz: number, seconds: number, tape: ScheduledInput[], opts: { seed?: number; fast?: boolean } = {}): { sim: WanderSim; snaps: Snap[] } {
+  const sim = new WanderSim({ seed: opts.seed ?? SEED, hz, viewW: 480, viewH: 272, fast: opts.fast });
+  sim.schedule(tape);
+  const snaps: Snap[] = [];
+  sim.onTick = () => {
+    const p = sim.playerTile;
+    snaps.push({ now: sim.now, segment: sim.segment, mode: sim.mode, fast: sim.fast, x: p.x, y: p.y });
+  };
+  for (let f = 0; f < seconds * hz; f++) sim.step(0);
+  return { sim, snaps };
+}
+
+const snapKey = (s: Snap) => `${s.segment}:${s.now}|${s.mode}|${s.fast}|${s.x},${s.y}`;
+
+/** Run the same tape at 60/30/20/4 Hz, asserting identical snapshot
+ *  streams at every reference tick (ordered, so reseeds that restart the
+ *  clock still align). Returns the per-Hz snapshot streams. */
+function compareSnapsHz(seconds: number, tape: ScheduledInput[], opts: { seed?: number; fast?: boolean } = {}): Snap[][] {
+  const runs = [60, 30, 20, 4].map((hz) => runSnaps(hz, seconds, tape, opts).snaps);
+  const keys = runs.map((r) => r.map(snapKey));
+  for (const k of keys.slice(1)) expect(k).toEqual(keys[0]);
+  return runs;
+}
+
+/** A d-pad button whose next cell is open at tick `at` in a run that
+ *  followed `prefix` (the world at `at` depends on the tape, not on an
+ *  auto run). */
+function scoutDirTape(at: number, prefix: ScheduledInput[]): number {
+  const scout = new WanderSim({ seed: SEED, hz: 60, viewW: 480, viewH: 272 });
+  scout.schedule(prefix);
+  while (scout.now < at) scout.step(0);
+  return dirFromStanding(scout);
+}
+
+describe("wander sim: scheduled-input same-tick contract", () => {
+  test("a press and release queued for the same tick leave no edge", () => {
+    // TRIANGLE pressed and released inside tick 360: the tick's final mask
+    // is 0, so no edge is computed against tick 359's mask and fast never
+    // toggles. (The old accumulating-tapeEdge implementation ghost-toggled.)
+    const [snaps] = compareSnapsHz(10, [
+      { at: 360, buttons: BTN.TRIANGLE },
+      { at: 360, buttons: 0 },
+    ]);
+    expect(snaps!.every((s) => !s.fast)).toBe(true);
+    // SELECT the same way, against an active goto: the walk is NOT handed
+    // back to the driver, because no edge survived the tick.
+    const goal = scoutGoal(360);
+    const [sel] = compareSnapsHz(12, [
+      { at: 360, goto: goal },
+      { at: 400, buttons: BTN.SELECT },
+      { at: 400, buttons: 0 },
+    ]);
+    expect(sel!.find((s) => s.now === 401)!.mode).not.toBe("auto");
+  }, 60_000);
+
+  test("a held takeover mask queued with a same-tick tap wins the tick", () => {
+    // Documented contract: taps apply before the tick's controls, so the
+    // final held mask always wins a same-tick race with a goto.
+    const goal = scoutGoal(360);
+    const dir = scoutDir(360);
+    const [, dx, dy] = DIRS.find(([b]) => b === dir)!;
+    const [snaps] = compareSnapsHz(10, [
+      { at: 360, goto: goal },
+      { at: 360, buttons: dir },
+      { at: 380, buttons: 0 },
+    ]);
+    // The digest after tick 360: the player has the walk, not the tap.
+    expect(snaps!.find((s) => s.now === 361)!.mode).toBe("manual");
+    // The walker went the d-pad's way.
+    const start = snaps!.find((s) => s.now === 360)!;
+    const end = snaps!.find((s) => s.now === 380)!;
+    expect((end.x - start.x) * dx + (end.y - start.y) * dy).toBeGreaterThan(0);
+  }, 60_000);
+
+  test("TRIANGLE toggles fast travel at exactly the pressed tick", () => {
+    const [snaps] = compareSnapsHz(10, [
+      { at: 360, buttons: BTN.TRIANGLE },
+      { at: 361, buttons: 0 },
+    ]);
+    expect(snaps!.find((s) => s.now === 360)!.fast).toBe(false);
+    expect(snaps!.find((s) => s.now === 361)!.fast).toBe(true); // edge at 360
+    expect(snaps!.find((s) => s.now === 400)!.fast).toBe(true); // released at 361
+  }, 60_000);
+
+  test("SELECT hands the walk back at exactly the pressed tick", () => {
+    const goal = scoutGoal(360);
+    const [snaps] = compareSnapsHz(14, [
+      { at: 360, goto: goal },
+      { at: 600, buttons: BTN.SELECT },
+      { at: 601, buttons: 0 },
+    ]);
+    // The tap is still active (walking there, or arrived and waiting).
+    expect(snaps!.find((s) => s.now === 600)!.mode).not.toBe("auto");
+    expect(snaps!.find((s) => s.now === 601)!.mode).toBe("auto"); // edge at 600
+  }, 60_000);
+});
+
+describe("wander sim: scheduled controls at exact ticks", () => {
+  test("a d-pad hold walks the pressed way from the pressed tick, unlike the auto walker", () => {
+    // 361 is mid-fold at 30/20/4 Hz (odd, not a multiple of 3 or 15).
+    const dir = scoutDir(361);
+    const [, dx, dy] = DIRS.find(([b]) => b === dir)!;
+    const runs = compareSnapsHz(10, [
+      { at: 361, buttons: dir },
+      { at: 380, buttons: 0 },
+    ]);
+    for (const snaps of runs) {
+      // The takeover lands at tick 361 itself, observable one digest later.
+      expect(snaps.find((s) => s.now === 361)!.mode).not.toBe("manual");
+      expect(snaps.find((s) => s.now === 362)!.mode).toBe("manual");
+      const start = snaps.find((s) => s.now === 361)!;
+      const end = snaps.find((s) => s.now === 380)!;
+      expect((end.x - start.x) * dx + (end.y - start.y) * dy).toBeGreaterThan(0);
+    }
+    // The displacement came from the keys: the same seconds without the
+    // hold leave the auto walker somewhere else.
+    const idle = runSnaps(60, 10, []).snaps.find((s) => s.now === 380)!;
+    const held = runs[0]!.find((s) => s.now === 380)!;
+    expect([held.x, held.y]).not.toEqual([idle.x, idle.y]);
+  }, 60_000);
+
+  test("a tap arrives at the goal at one exact tick at every rate", () => {
+    const goal = scoutGoal(362);
+    const runs = compareSnapsHz(12, [{ at: 362, goto: goal }]);
+    const arrivals = runs.map((snaps) => {
+      let seenGoto = false;
+      for (const s of snaps) {
+        if (s.mode === "goto") seenGoto = true;
+        else if (seenGoto) return s.now; // first digest after the arrival
+      }
+      return -1;
+    });
+    expect(new Set(arrivals).size).toBe(1);
+    expect(arrivals[0]).toBeGreaterThan(362);
+    for (const snaps of runs) {
+      const end = snaps[snaps.length - 1]!;
+      expect(Math.abs(end.x - goal.x) + Math.abs(end.y - goal.y)).toBeLessThanOrEqual(1);
+    }
+  }, 60_000);
+
+  test("a takeover scheduled mid-fold lands at exactly its tick at every rate", () => {
+    // 401 is a host-frame boundary at no rate but 60 (odd, 401 % 3 = 2,
+    // 401 % 15 = 11): the takeover must fire inside the folded frame.
+    const prefix: ScheduledInput[] = [{ at: 362, goto: scoutGoal(362) }];
+    const dir = scoutDirTape(401, prefix);
+    const runs = compareSnapsHz(12, [...prefix, { at: 401, buttons: dir }, { at: 420, buttons: 0 }]);
+    for (const snaps of runs) {
+      expect(snaps.find((s) => s.now === 401)!.mode).not.toBe("manual");
+      expect(snaps.find((s) => s.now === 402)!.mode).toBe("manual");
+    }
+  }, 60_000);
+
+  test("a scheduled reseed grows a new seed at exactly its tick and restarts the clock", () => {
+    const runs = compareSnapsHz(12, [{ at: 300, reseed: true }]);
+    for (const snaps of runs) {
+      // The old session's stream ends at the digest after tick 299
+      // (now=300); tick 300 reseeds and the next digest is the new
+      // session at now=1.
+      const oldEnd = snaps.find((s) => s.now === 300 && s.segment === 1)!;
+      const newStart = snaps.find((s) => s.now === 1 && s.segment === 2)!;
+      expect(snaps.indexOf(newStart)).toBe(snaps.indexOf(oldEnd) + 1);
+      expect([oldEnd.x, oldEnd.y]).not.toEqual([newStart.x, newStart.y]);
+    }
+    const sim = runSnaps(60, 12, [{ at: 300, reseed: true }]).sim;
+    expect(sim.seed).toBe((SEED + NEXT_SEED) >>> 0);
+    expect(sim.segment).toBe(2);
+    // The clock restarted at 0 on the reseed: 720 ticks total, 300 before.
+    expect(sim.now).toBe(12 * 60 - 300);
+  }, 60_000);
+});
+
+describe("wander sim: reseed epoch — same-frame inputs and the held mask", () => {
+  // A host that samples a whole frame at once (the shipped live path) enqueues
+  // a reseeding frame's remaining mask changes and taps at the new session's
+  // tick 0, and the held mask carries across the reseed without a fresh press
+  // edge. 362 is a host-frame boundary at no rate but 60, so the reseed fires
+  // mid-fold at 30/20/4 Hz here too.
+
+  test("a button held across a reseed keeps holding without a fresh press edge", () => {
+    // TRIANGLE pressed at 300 and never released; the world reseeds at 362 and
+    // the held mask is re-asserted at the new session's tick 0 (the tape a
+    // frame-sampling host records). The edge baseline must carry across the
+    // reseed, so the re-asserted hold fires no fresh press: fast (toggled at
+    // 300) stays on. The old boot() reset the baseline, so the re-asserted
+    // hold re-fired as a press and toggled fast back off (review probe 2).
+    const runs = compareSnapsHz(12, [
+      { at: 300, buttons: BTN.TRIANGLE },
+      { at: 362, reseed: true },
+      { at: 0, buttons: BTN.TRIANGLE },
+    ]);
+    for (const snaps of runs) {
+      expect(snaps.find((s) => s.now === 301 && s.segment === 1)!.fast).toBe(true); // edge at 300
+      // Every new-session snapshot keeps fast: no phantom edge at the reseed.
+      for (const s of snaps) if (s.segment === 2) expect(s.fast).toBe(true);
+    }
+  }, 60_000);
+
+  test("a face button pressed in the reseeding frame fires at the new session's tick 0", () => {
+    // The live path's tape for a same-frame SQUARE|TRIANGLE: reseed at the old
+    // tick, then TRIANGLE at the new session's tick 0 (review probe 1). The old
+    // code enqueued TRIANGLE at the old tick, so it sat at the tape's front
+    // until the new session caught up and the short press vanished entirely.
+    const runs = compareSnapsHz(12, [
+      { at: 362, reseed: true },
+      { at: 0, buttons: BTN.TRIANGLE },
+      { at: 1, buttons: 0 },
+    ]);
+    for (const snaps of runs) {
+      const oldEnd = snaps.find((s) => s.now === 362 && s.segment === 1)!;
+      const newStart = snaps.find((s) => s.now === 1 && s.segment === 2)!;
+      expect(snaps.indexOf(newStart)).toBe(snaps.indexOf(oldEnd) + 1);
+      expect(oldEnd.fast).toBe(false);
+      expect(newStart.fast).toBe(true); // edge at new tick 0
+      expect(snaps.find((s) => s.now === 2 && s.segment === 2)!.fast).toBe(true); // released at 1
+    }
+  }, 60_000);
+
+  test("a d-pad held in the reseeding frame walks the pressed way from tick 0", () => {
+    // Scout an open direction in the NEW world (the seed after the reseed).
+    const scout = new WanderSim({ seed: SEED, hz: 60, viewW: 480, viewH: 272 });
+    scout.schedule([{ at: 362, reseed: true }]);
+    while (scout.segment < 2 || scout.now < 1) scout.step(0);
+    const dir = dirFromStanding(scout);
+    const [, dx, dy] = DIRS.find(([b]) => b === dir)!;
+    const runs = compareSnapsHz(12, [
+      { at: 362, reseed: true },
+      { at: 0, buttons: dir },
+      { at: 30, buttons: 0 },
+    ]);
+    for (const snaps of runs) {
+      const start = snaps.find((s) => s.now === 1 && s.segment === 2)!;
+      expect(start.mode).toBe("manual"); // takeover at new tick 0
+      const end = snaps.find((s) => s.now === 30 && s.segment === 2)!;
+      expect((end.x - start.x) * dx + (end.y - start.y) * dy).toBeGreaterThan(0);
+    }
+  }, 60_000);
+
+  test("a tap in the reseeding frame walks to a tile of the new world", () => {
+    // Scout a reachable goal east of the player in the NEW world.
+    const scout = new WanderSim({ seed: SEED, hz: 60, viewW: 480, viewH: 272 });
+    scout.schedule([{ at: 362, reseed: true }]);
+    while (scout.segment < 2 || scout.now < 1) scout.step(0);
+    const table = scout.session.tables.get("wander")!;
+    const m = scout.state.move;
+    let goal = { x: scout.playerTile.x, y: scout.playerTile.y };
+    for (let r = 6; r < 14; r++) {
+      const lx = m.tx + r, ly = m.ty;
+      if (table.overrides[ly * 96 + lx] === 0) { goal = { x: scout.window.x0 + lx, y: scout.window.y0 + ly }; break; }
+    }
+    const runs = compareSnapsHz(16, [
+      { at: 362, reseed: true },
+      { at: 0, goto: goal },
+    ]);
+    for (const snaps of runs) {
+      expect(snaps.find((s) => s.now === 1 && s.segment === 2)!.mode).toBe("goto");
+      const end = snaps[snaps.length - 1]!;
+      expect(Math.abs(end.x - goal.x) + Math.abs(end.y - goal.y)).toBeLessThanOrEqual(1);
+    }
   }, 60_000);
 });
 
@@ -209,6 +628,117 @@ describe("wander sim: floating origin and the window document", () => {
 });
 
 describe("wander sim: takeover, idle resume and touch", () => {
+  const DX = [0, -1, 0, 1] as const;
+  const DY = [1, 0, -1, 0] as const;
+  const BUTTON = [BTN.DOWN, BTN.LEFT, BTN.UP, BTN.RIGHT] as const;
+  const SIDES: readonly (readonly [Dir4, Dir4])[] = [[1, 3], [0, 2], [3, 1], [2, 0]];
+
+  function manualFixture(): { sim: WanderSim; x: number; y: number } {
+    const sim = new WanderSim({ seed: SEED, hz: 60, viewW: 480, viewH: 272, manual: true });
+    const x = 48, y = 48;
+    const table = sim.session.tables.get("wander")!;
+    for (let yy = y - 3; yy <= y + 3; yy++) for (let xx = x - 3; xx <= x + 3; xx++) {
+      setPassageOverride(table, yy * table.width + xx, PASS);
+    }
+    const state = sim.state;
+    const sw = { ...state.sw, switches: {} };
+    sim.state = {
+      ...state,
+      sw,
+      interp: { ...state.interp, sw },
+      chars: { rng: state.chars.rng, chars: {} },
+      move: {
+        ...state.move,
+        tx: x, ty: y, px: x * 16, py: y * 16,
+        facing: 0, phase: 0, moving: false, walking: false, stepDir: 0,
+      },
+    };
+    return { sim, x, y };
+  }
+
+  test("a held cardinal direction slides around either hand of an obstacle corner within one tile step", () => {
+    for (const dir of [0, 1, 2, 3] as const) for (let hand = 0; hand < 2; hand++) {
+      const { sim, x, y } = manualFixture();
+      const table = sim.session.tables.get("wander")!;
+      const side = SIDES[dir]![hand]!;
+      const other = SIDES[dir]![1 - hand]!;
+      // The requested cell is blocked. Both immediate side cells are open,
+      // but only `side` has an open second leg past the obstacle corner.
+      setPassageOverride(table, (y + DY[dir]!) * table.width + x + DX[dir]!, BLOCK);
+      setPassageOverride(table, (y + DY[other]! + DY[dir]!) * table.width + x + DX[other]! + DX[dir]!, BLOCK);
+
+      for (let tick = 0; tick < 8; tick++) sim.step(BUTTON[dir]!);
+      expect([sim.state.move.tx, sim.state.move.ty], `dir ${dir}, hand ${hand}`).toEqual([x + DX[side]!, y + DY[side]!]);
+      expect(sim.state.move).toMatchObject({ phase: 0, moving: false });
+
+      // Keeping the original direction held takes the now-clear forward
+      // step; the helper must not replace the input for the whole side step.
+      for (let tick = 0; tick < 8; tick++) sim.step(BUTTON[dir]!);
+      expect([sim.state.move.tx, sim.state.move.ty]).toEqual([
+        x + DX[side]! + DX[dir]!,
+        y + DY[side]! + DY[dir]!,
+      ]);
+    }
+  });
+
+  test("a blocked front with both side cells blocked keeps the player in place and facing the wall", () => {
+    for (const dir of [0, 1, 2, 3] as const) {
+      const { sim, x, y } = manualFixture();
+      const table = sim.session.tables.get("wander")!;
+      setPassageOverride(table, (y + DY[dir]!) * table.width + x + DX[dir]!, BLOCK);
+      for (const side of SIDES[dir]!) {
+        setPassageOverride(table, (y + DY[side]!) * table.width + x + DX[side]!, BLOCK);
+      }
+      for (let tick = 0; tick < 24; tick++) sim.step(BUTTON[dir]!);
+      expect(sim.state.move).toMatchObject({
+        tx: x, ty: y, px: x * 16, py: y * 16,
+        facing: dir, phase: 0, moving: false, walking: false,
+      });
+    }
+  });
+
+  test("four-direction manual random walk has at most one long stall and at most twelve stalled seconds", () => {
+    const sim = new WanderSim({ seed: SEED, hz: 60, viewW: 960, viewH: 544, fast: true });
+    for (let frame = 0; frame < 300; frame++) sim.step(0);
+    for (let frame = 0; frame < 60; frame++) sim.step(BTN.RIGHT);
+
+    const random = (() => {
+      let a = 12345;
+      return () => {
+        a |= 0; a = (a + 0x6d2b79f5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    })();
+    const directions = [BTN.UP, BTN.RIGHT, BTN.DOWN, BTN.LEFT] as const; // E9: no idle direction.
+    let direction: number = directions[0], hold = 0;
+    let last = sim.playerTile, stillSince = 0;
+    const stalls: { from: number; to: number; frames: number; at: { x: number; y: number } }[] = [];
+    const finishStall = (to: number) => {
+      if (stillSince > 0 && to - stillSince > 240) stalls.push({ from: stillSince, to, frames: to - stillSince, at: last });
+    };
+    for (let frame = 0; frame < 7_200; frame++) {
+      if (hold <= 0) {
+        direction = directions[Math.floor(random() * directions.length)]!;
+        hold = 60 + Math.floor(random() * 300);
+      }
+      hold--;
+      sim.step(direction);
+      const at = sim.playerTile;
+      if (at.x !== last.x || at.y !== last.y) {
+        finishStall(frame);
+        last = at;
+        stillSince = 0;
+      } else if (stillSince === 0) stillSince = frame;
+    }
+    finishStall(7_200); // The research harness omitted a stall still active at EOF.
+
+    const totalFrames = stalls.reduce((sum, stall) => sum + stall.frames, 0);
+    expect(stalls.length, JSON.stringify(stalls)).toBeLessThanOrEqual(1);
+    expect(totalFrames, JSON.stringify(stalls)).toBeLessThanOrEqual(12 * 60);
+  }, 60_000);
+
   test("newly grown blockers update the live passage table", () => {
     // Regression for passage cooking: growth mutates the live override at a
     // deterministic cell after boot, and both the lookup and the player must
@@ -234,6 +764,10 @@ describe("wander sim: takeover, idle resume and touch", () => {
         moving: false,
       },
     };
+    // Block both side cells too, so the manual corner aid cannot
+    // correctly route around the passage update this regression exercises.
+    setPassageOverride(table, 36 * table.width + 46, BLOCK);
+    setPassageOverride(table, 36 * table.width + 48, BLOCK);
     for (let frame = 0; frame < 30; frame++) sim.step(BTN.DOWN);
     expect([sim.state.move.tx, sim.state.move.ty]).toEqual([47, 36]);
   });
