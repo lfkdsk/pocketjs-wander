@@ -25,6 +25,7 @@ import { jump } from "@pocketjs/framework/animation";
 import { onFrame } from "@pocketjs/framework/lifecycle";
 import { simulationHz } from "@pocketjs/framework/clock";
 import { BTN } from "@pocketjs/framework/input";
+import { getText as pakGetText } from "@pocketjs/framework/pak";
 import { WINDOW } from "../wander/window.ts";
 import { TILE } from "./net/protocol.ts";
 import { OnlineClient } from "./net/client.ts";
@@ -69,6 +70,22 @@ export interface OnlinePublished {
 
 const DEFAULT_URL = "ws://127.0.0.1:8080/ws";
 
+/** Server URL resolution: an injected global (tests, desktop --url builds)
+ *  wins; otherwise the app reads `online-config.json` from its pak (the
+ *  deploy-time config, same file on desktop and web); otherwise the
+ *  loopback default. The config file is what makes a hosted deployment
+ *  possible without rebuilding the engine: deploys overwrite it. */
+function resolveUrl(injected: string | undefined): string {
+  if (injected) return injected;
+  try {
+    const cfg = JSON.parse(pakGetText("online-config.json")) as { url?: unknown };
+    if (typeof cfg.url === "string" && cfg.url.length > 0) return cfg.url;
+  } catch {
+    // No config entry in the pak (older builds): fall through to default.
+  }
+  return DEFAULT_URL;
+}
+
 /** A bounded auto-walk driver: hold a direction for 1-3 s, sometimes stop.
  *  Stays within RADIUS tiles of `home` so demo clients remain in each
  *  other's viewport. Not deterministic (it reads the clock) — that is fine,
@@ -109,7 +126,7 @@ class AutoWalk {
 export function OnlineView() {
   const hz = simulationHz();
   const g = globalThis as { __onlineUrl?: string; __onlineName?: string; __onlineColor?: number; __onlinePerfOn?: boolean };
-  const url = g.__onlineUrl ?? DEFAULT_URL;
+  const url = resolveUrl(g.__onlineUrl);
   const name = g.__onlineName ?? `guest${Math.floor(Math.random() * 1000)}`;
   const color = (g.__onlineColor ?? Math.floor(Math.random() * 16)) & 0x0f;
   const client = new OnlineClient(url, name, color);
@@ -247,8 +264,16 @@ export function OnlineView() {
   const refreshHud = () => {
     const h = client.hud();
     const cam = camera();
+    // A hosted-server rejection replaces the status line: the reason plus,
+    // for slow-backoff retries, the countdown. Short tokens keep the text
+    // inside the plate (no truncation).
+    const status = h.status === "rejected" && h.rejectText
+      ? h.rejectText
+      : h.status === "retrying" && h.rejectText
+        ? `${h.rejectText} · RETRY ${Math.ceil(h.retryIn / 1000)}s`
+        : h.status.toUpperCase();
     batch(() => {
-      setStatusText(`${h.status.toUpperCase()}  #${h.myId}  RTT ${h.rtt}ms  CORR ${h.corrections}`);
+      setStatusText(`${status}  #${h.myId}  RTT ${h.rtt}ms  CORR ${h.corrections}`);
       setCountText(`ONLINE ${h.online}  UNACKED ${h.unacked}`);
       setPosText(`X ${cam.tx}  Y ${cam.ty}  ${autoMode ? "AUTO" : "YOU"}`);
     });

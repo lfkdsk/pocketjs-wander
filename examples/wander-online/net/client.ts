@@ -4,14 +4,19 @@
 //
 // One OnlineClient owns one PocketSocket. The view calls onFrame() once per
 // host frame with the held buttons; the client predicts one reference tick
-// per INPUT (60/hz per frame), sends each INPUT with a sequence number, and
-// reconciles against every STATE snapshot. Socket callbacks fire during the
-// framework's service pump (inside the host's frame loop), so all of this
-// runs on one thread with no races.
+// per INPUT (60/hz per frame) and packs every BATCH_SIZE ticks into one
+// INPUT_BATCH message (20 Hz wire rate at any host rate), each carrying the
+// first tick's sequence number. It reconciles against every STATE snapshot.
+// Socket callbacks fire during the framework's service pump (inside the
+// host's frame loop), so all of this runs on one thread with no races.
 //
 // Recovery model (after open-strike's CROSSPLAY.md):
 //   - onClose: backoff (1s, 2s, 4s, ... 10s cap) and reconnect. A server
 //     restart looks the same: connect retries until the server is back.
+//   - a close carrying a hosted-server reason (1008 + token) changes the
+//     policy: "full"/"rest" retry on a SLOW backoff (the condition clears in
+//     minutes, not seconds); "rate"/"ip"/"origin" do not reconnect at all
+//     (retrying would just be rejected again); "idle" reconnects normally.
 //   - 2 s without a STATE snapshot: freeze local gameplay (stop predicting
 //     and sending), then start a fresh join. The server is authoritative;
 //     a frozen client cannot diverge.
@@ -22,22 +27,46 @@
 import { openSocket, type PocketSocket } from "@pocketjs/framework/socket";
 import {
   BTN,
+  BATCH_SIZE,
   MSG,
   decodeState,
   decodeWelcome,
-  encodeInput,
+  encodeInputBatch,
   encodePing,
 } from "./protocol.ts";
 import { Predictor, type AuthoritativeMover } from "./predict.ts";
 import { Interpolator } from "./interpolate.ts";
 
-export type ConnStatus = "connecting" | "joined" | "reconnecting" | "frozen";
+export type ConnStatus = "connecting" | "joined" | "reconnecting" | "retrying" | "rejected" | "frozen";
 
 const FREEZE_MS = 2000;
 const PING_MS = 2000;
 const BACKOFF_MAX_MS = 10_000;
+/** Slow backoff for capacity/budget rejections: the room frees up or the
+ *  month rolls over on a timescale of minutes, so wait longer between
+ *  retries (15 s, 30 s, 60 s cap). */
+const SLOW_BACKOFF_START_MS = 15_000;
+const SLOW_BACKOFF_MAX_MS = 60_000;
 /** D-pad bits the arena understands. */
 const DPAD = BTN.up | BTN.right | BTN.down | BTN.left;
+
+/** Human-readable HUD text per hosted-server close token. Kept short so
+ *  the HUD plate never truncates. */
+export const REJECT_TEXT: Record<string, string> = {
+  full: "ROOM FULL",
+  rest: "CLOSED FOR THE MONTH",
+  rate: "RATE LIMITED",
+  ip: "TOO MANY CONNECTIONS",
+  origin: "ORIGIN DENIED",
+  idle: "IDLE DISCONNECT",
+};
+
+/** Reconnect policy per close token. Unknown tokens use the normal path. */
+function policyFor(reason: string): "slow" | "never" | "normal" {
+  if (reason === "full" || reason === "rest") return "slow";
+  if (reason === "rate" || reason === "ip" || reason === "origin") return "never";
+  return "normal";
+}
 
 /** Opens one PocketSocket. Injected by tests so the client lifecycle can be
  *  exercised without a PocketJS host; production code uses openSocket. */
@@ -57,6 +86,13 @@ export interface OnlineHud {
   rtt: number;
   corrections: number;
   unacked: number;
+  /** Hosted-server rejection token ("full", "rate", ...) when the last
+   *  close was a 1008 policy rejection, else null. */
+  rejectReason: string | null;
+  /** Human-readable rejection text for the HUD, null when not rejected. */
+  rejectText: string | null;
+  /** Milliseconds until the next reconnect attempt (0 when not waiting). */
+  retryIn: number;
 }
 
 export class OnlineClient {
@@ -72,6 +108,8 @@ export class OnlineClient {
   grid: Uint8Array | null = null;
   predictor: Predictor | null = null;
   readonly interp = new Interpolator();
+  /** Last 1008 rejection token, if any (cleared on a successful join). */
+  rejectReason: string | null = null;
 
   private socket: PocketSocket | null = null;
   private seq = 0;
@@ -79,9 +117,12 @@ export class OnlineClient {
   private lastPingAt = 0;
   private pingId = 0;
   private backoffMs = 1000;
+  private slowBackoffMs = SLOW_BACKOFF_START_MS;
   private reconnectAt = 0;
   private frozen = false;
   private stopped = false;
+  /** Predicted ticks waiting to be packed into the next INPUT_BATCH. */
+  private pending: { seq: number; buttons: number }[] = [];
   private now: () => number;
   private readonly socketFactory: SocketFactory;
 
@@ -107,21 +148,44 @@ export class OnlineClient {
     this.socket = sock;
     sock.onOpen = () => {
       this.backoffMs = 1000;
-      sock.send(JSON.stringify({ type: "join", name: this.name, color: this.color }));
+      // v:2 marks a batching client; v1 servers ignore the extra field.
+      sock.send(JSON.stringify({ type: "join", name: this.name, color: this.color, v: 2 }));
     };
     sock.onMessage = (data) => this.onMessage(data);
-    sock.onClose = () => {
+    sock.onClose = (ev) => {
       this.socket = null;
       this.predictor = null;
       this.grid = null;
       this.myId = 0;
       this.online = 0;
+      this.pending.length = 0;
       // Drop the previous epoch's remote entities so they cannot render
       // (or interpolate against the next epoch's snapshots) while away.
       this.interp.reset();
-      this.scheduleReconnect();
+      this.handleClose(ev?.code ?? 0, ev?.reason ?? "");
     };
     sock.onError = () => { /* onClose follows; the reconnect lives there */ };
+  }
+
+  /** Apply the reconnect policy for a close. A 1008 + token is a hosted
+   *  server's deliberate rejection: capacity/budget retries slowly,
+   *  policy violations do not retry, anything else reconnects normally. */
+  private handleClose(code: number, reason: string): void {
+    const token = code === 1008 && REJECT_TEXT[reason] ? reason : "";
+    if (token) this.rejectReason = token;
+    switch (policyFor(token)) {
+      case "never":
+        this.status = "rejected";
+        this.reconnectAt = 0;
+        return;
+      case "slow":
+        this.status = "retrying";
+        this.reconnectAt = this.now() + this.slowBackoffMs;
+        this.slowBackoffMs = Math.min(SLOW_BACKOFF_MAX_MS, this.slowBackoffMs * 2);
+        return;
+      case "normal":
+        this.scheduleReconnect();
+    }
   }
 
   private scheduleReconnect(): void {
@@ -155,6 +219,8 @@ export class OnlineClient {
       this.seq = 0;
       this.frozen = false;
       this.status = "joined";
+      this.rejectReason = null;
+      this.slowBackoffMs = SLOW_BACKOFF_START_MS;
       this.lastStateAt = this.now();
       // Fresh epoch: the interpolation buffer must not hold the previous
       // session's entities (push([]) alone would keep them until TTL).
@@ -215,11 +281,13 @@ export class OnlineClient {
     const live = buttons & DPAD;
     const mask = live !== 0 ? live : autoMask;
 
-    // Predict and send one INPUT per reference tick this frame.
+    // Predict one reference tick per INPUT as before, but pack every
+    // BATCH_SIZE ticks into one INPUT_BATCH message (20 Hz wire rate).
     const ticks = Math.max(1, Math.round(60 / hz));
     for (let t = 0; t < ticks; t++) {
       const seq = this.predictor.pushInput(mask);
-      this.send(encodeInput(seq, mask));
+      this.pending.push({ seq, buttons: mask });
+      if (this.pending.length >= BATCH_SIZE) this.flushPending();
     }
 
     // RTT probe.
@@ -231,11 +299,21 @@ export class OnlineClient {
     return mask;
   }
 
+  /** Send the accumulated reference ticks as one INPUT_BATCH. */
+  private flushPending(): void {
+    if (this.pending.length === 0) return;
+    const firstSeq = this.pending[0]!.seq;
+    const buttons = this.pending.map((p) => p.buttons);
+    this.pending.length = 0;
+    this.send(encodeInputBatch(firstSeq, buttons));
+  }
+
   private send(buf: ArrayBuffer): void {
     if (this.socket?.readyState === "open") this.socket.send(buf);
   }
 
   hud(): OnlineHud {
+    const retryIn = this.socket || this.reconnectAt === 0 ? 0 : Math.max(0, Math.round(this.reconnectAt - this.now()));
     return {
       status: this.status,
       myId: this.myId,
@@ -243,6 +321,9 @@ export class OnlineClient {
       rtt: this.rtt,
       corrections: this.corrections,
       unacked: this.predictor?.unacked ?? 0,
+      rejectReason: this.rejectReason,
+      rejectText: this.rejectReason ? (REJECT_TEXT[this.rejectReason] ?? this.rejectReason) : null,
+      retryIn,
     };
   }
 }

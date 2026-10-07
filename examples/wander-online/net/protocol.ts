@@ -7,8 +7,12 @@
 // an input sequence the server can acknowledge, so:
 //
 //   client -> server
-//     JOIN   text JSON {"type":"join","name":string,"color":uint8}
+//     JOIN   text JSON {"type":"join","name":string,"color":uint8,"v"?:2}
 //     INPUT  0x01 seq u32 buttons u16   (7 B; one per predicted reference tick)
+//     INPUT_BATCH 0x03 firstSeq u32 count u8 buttons[count] u16
+//                    (v2: up to BATCH_SIZE reference ticks packed in one
+//                    message, so a 60 Hz client sends at 20 Hz; firstSeq is
+//                    the seq of buttons[0], the rest follow consecutively)
 //     PING   0x02 id u32 t u32          (9 B; t = client millisecond clock)
 //   server -> client
 //     WELCOME 0x10 you u32 seed u32 x0 i32 y0 i32 grid[WINDOW*WINDOW] u8
@@ -35,11 +39,19 @@ import type { WindowBuild } from "../../wander/window.ts";
 export const MSG = {
   input: 0x01,
   ping: 0x02,
+  inputBatch: 0x03,
   welcome: 0x10,
   state: 0x20,
   pong: 0x30,
   bye: 0x40,
 } as const;
+
+/** Reference ticks packed into one INPUT_BATCH. The client predicts one
+ *  tick per INPUT as before; only the transport packing changes, so the
+ *  server still consumes one input per reference tick. 3 ticks at 60 Hz
+ *  reference = one 20 Hz message, which keeps a client under the hosted
+ *  server's per-connection message rate limit. */
+export const BATCH_SIZE = 3;
 
 /** D-pad bits, same values the kit's engine uses. */
 export const BTN = { up: 0x0010, right: 0x0020, down: 0x0040, left: 0x0080 } as const;
@@ -68,6 +80,20 @@ export function encodeInput(seq: number, buttons: number): ArrayBuffer {
   v.setUint8(0, MSG.input);
   v.setUint32(1, seq >>> 0, true);
   v.setUint16(5, buttons, true);
+  return b;
+}
+
+/** Pack up to BATCH_SIZE consecutive reference ticks into one message.
+ *  `firstSeq` is the sequence number of buttons[0]; the rest follow
+ *  consecutively (the server expands them into firstSeq..firstSeq+count-1). */
+export function encodeInputBatch(firstSeq: number, buttons: number[]): ArrayBuffer {
+  const count = Math.min(buttons.length, BATCH_SIZE);
+  const b = new ArrayBuffer(6 + count * 2);
+  const v = new DataView(b);
+  v.setUint8(0, MSG.inputBatch);
+  v.setUint32(1, firstSeq >>> 0, true);
+  v.setUint8(5, count);
+  for (let i = 0; i < count; i++) v.setUint16(6 + i * 2, buttons[i]!, true);
   return b;
 }
 
@@ -161,6 +187,23 @@ export interface DecodedInput {
 export function decodeInput(buf: ArrayBuffer | Uint8Array): DecodedInput {
   const v = buf instanceof Uint8Array ? new DataView(buf.buffer, buf.byteOffset, buf.byteLength) : new DataView(buf);
   return { seq: v.getUint32(1, true), buttons: v.getUint16(5, true) };
+}
+
+/** One decoded INPUT_BATCH (server direction). Returns null when the
+ *  payload is truncated or carries an empty/over-capacity batch. */
+export interface DecodedInputBatch {
+  firstSeq: number;
+  buttons: number[];
+}
+
+export function decodeInputBatch(buf: ArrayBuffer | Uint8Array): DecodedInputBatch | null {
+  const v = buf instanceof Uint8Array ? new DataView(buf.buffer, buf.byteOffset, buf.byteLength) : new DataView(buf);
+  if (buf.byteLength < 7) return null;
+  const count = v.getUint8(5);
+  if (count === 0 || count > BATCH_SIZE || buf.byteLength < 6 + count * 2) return null;
+  const buttons: number[] = [];
+  for (let i = 0; i < count; i++) buttons.push(v.getUint16(6 + i * 2, true));
+  return { firstSeq: v.getUint32(1, true), buttons };
 }
 
 /** One row of a decoded STATE snapshot (server -> client direction).

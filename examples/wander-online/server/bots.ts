@@ -1,20 +1,24 @@
 // examples/wander-online/server/bots.ts — headless bots for load tests.
 //
 // Each bot connects, joins, and walks randomly: hold a direction for 1-3 s,
-// sometimes stop, turn when stuck. Bots send INPUT at their reference-tick
-// rate (60 Hz) like the real client, and track RTT from PONG. They print a
-// JSON stats line on exit. Used by the acceptance demo's 100-bot scene.
+// sometimes stop, turn when stuck. By default bots send INPUT at their
+// reference-tick rate (60 Hz) like the v1 client; --batch packs every
+// BATCH_SIZE ticks into one INPUT_BATCH (20 Hz wire rate), which is what a
+// hosted server with a per-connection message rate limit requires. They
+// track RTT from PONG and print a JSON stats line on exit. Used by the
+// acceptance demo's 100-bot scene.
 //
 //   bun run examples/wander-online/server/bots.ts --url ws://127.0.0.1:8080/ws \
-//       --count 100 --seconds 45
+//       --count 100 --seconds 45 [--batch]
 
-import { BTN, MSG, decodeState, decodeWelcome, encodeInput, encodePing } from "../net/protocol.ts";
+import { BTN, BATCH_SIZE, MSG, decodeState, decodeWelcome, encodeInput, encodeInputBatch, encodePing } from "../net/protocol.ts";
 
 interface BotOpts {
   url: string;
   count: number;
   seconds: number;
   namePrefix: string;
+  batch: boolean;
 }
 
 function parseArgs(argv: string[]): BotOpts {
@@ -27,6 +31,7 @@ function parseArgs(argv: string[]): BotOpts {
     count: Number(flag("count", "100")),
     seconds: Number(flag("seconds", "45")),
     namePrefix: flag("name-prefix", "bot"),
+    batch: argv.includes("--batch"),
   };
 }
 
@@ -38,18 +43,21 @@ class Bot {
   private nextChange = 0;
   private lastPingAt = 0;
   private pingId = 0;
+  private readonly batch: boolean;
+  private pending: { seq: number; buttons: number }[] = [];
   rtt = 0;
   corrections = 0;
   lastAck = 0;
   seen = 0;
 
-  constructor(url: string, name: string, color: number) {
+  constructor(url: string, name: string, color: number, batch: boolean) {
     this.id = 0;
+    this.batch = batch;
     this.ws = new WebSocket(url);
     this.ws.binaryType = "arraybuffer";
     const now = () => (globalThis.performance ? globalThis.performance.now() : Date.now());
     this.ws.addEventListener("open", () => {
-      this.ws.send(JSON.stringify({ type: "join", name, color }));
+      this.ws.send(JSON.stringify({ type: "join", name, color, v: 2 }));
     });
     this.ws.addEventListener("message", (ev) => {
       const buf = ev.data as ArrayBuffer;
@@ -75,7 +83,15 @@ class Bot {
       this.nextChange = now + 1000 + Math.random() * 2000;
     }
     this.seq++;
-    this.ws.send(encodeInput(this.seq, this.mask));
+    if (this.batch) {
+      this.pending.push({ seq: this.seq, buttons: this.mask });
+      if (this.pending.length >= BATCH_SIZE) {
+        this.ws.send(encodeInputBatch(this.pending[0]!.seq, this.pending.map((p) => p.buttons)));
+        this.pending.length = 0;
+      }
+    } else {
+      this.ws.send(encodeInput(this.seq, this.mask));
+    }
     if (now - this.lastPingAt > 2000) {
       this.lastPingAt = now;
       this.pingId++;
@@ -92,7 +108,7 @@ export function runBots(opts: BotOpts): Promise<void> {
   return new Promise((resolve) => {
     const bots: Bot[] = [];
     for (let i = 0; i < opts.count; i++) {
-      bots.push(new Bot(opts.url, `${opts.namePrefix}${i}`, i & 0x0f));
+      bots.push(new Bot(opts.url, `${opts.namePrefix}${i}`, i & 0x0f, opts.batch));
     }
     const start = Date.now();
     const timer = setInterval(() => {

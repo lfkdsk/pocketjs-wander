@@ -72,8 +72,9 @@ Little-endian, single source in [`net/protocol.ts`](net/protocol.ts):
 
 | message | bytes | fields |
 | --- | ---: | --- |
-| JOIN (text) | — | `{"type":"join","name","color"}` |
+| JOIN (text) | — | `{"type":"join","name","color","v"?:2}` |
 | INPUT | 7 | `0x01` seq u32, buttons u16 |
+| INPUT_BATCH | 6 + 2n | `0x03` firstSeq u32, count u8, buttons[count] u16 (v2: up to 3 ticks per message) |
 | PING | 9 | `0x02` id u32, t u32 |
 | WELCOME | 17 + 9216 | `0x10` you u32, seed u32, x0 i32, y0 i32, grid |
 | STATE | 10 + 12n | `0x20` frame u32, ackSeq u32, n u8, entities |
@@ -84,6 +85,15 @@ Each entity: id u32, tile u8×2, pixel offset i8×2, facing u8, phase u8,
 stepDir u8, flags u8 (moving, walking, 4-bit colour). A full 255-entity
 snapshot is 3070 bytes, under the socket module's 64 KiB message limit.
 
+**Batching (v2).** The client predicts one reference tick per INPUT as
+before, but packs every 3 ticks (60 Hz reference) into one INPUT_BATCH
+message, so the wire rate is 20 Hz at any host rate. The server expands
+a batch into the same per-tick input queue, so prediction,
+reconciliation and the zero-correction lockstep are unchanged. Both
+servers decode INPUT_BATCH and plain INPUT (the bots still send plain
+INPUT by default), so a v1 client works against a v2 server; a v2 client
+needs a v2 server. JOIN carries `"v":2` so servers can tell them apart.
+
 ## Files
 
 | file | role |
@@ -92,10 +102,14 @@ snapshot is 3070 bytes, under the socket module's 64 KiB message limit.
 | [`net/world.ts`](net/world.ts) | the frozen window both sides predict through |
 | [`net/predict.ts`](net/predict.ts) | prediction + rollback-and-replay reconciliation |
 | [`net/interpolate.ts`](net/interpolate.ts) | remote entity interpolation |
-| [`net/client.ts`](net/client.ts) | the PocketJS net client (socket, reconnect, freeze) |
+| [`net/client.ts`](net/client.ts) | the PocketJS net client (socket, reconnect, freeze, rejection policy) |
 | [`server/area.ts`](server/area.ts) | the authoritative arena (input queues, AOI) |
 | [`server/server.ts`](server/server.ts) | Bun WebSocket server, loopback-only |
-| [`server/bots.ts`](server/bots.ts) | headless bots for load tests |
+| [`server/bots.ts`](server/bots.ts) | headless bots for load tests (`--batch` for hosted servers) |
+| [`shared/snapshot.ts`](shared/snapshot.ts) | the broadcast snapshot builder, shared by the Bun server and the Cloudflare Room DO |
+| [`shared/limits.ts`](shared/limits.ts) | admission limits (rate window, origin, room pick, IP, idle), pure |
+| [`shared/meter.ts`](shared/meter.ts) | monthly budget breaker + billing conversion, pure |
+| [`online-config.json`](online-config.json) | server URL baked into the pak (deploy config; `tools/desktop.ts --url`) |
 | [`OnlineView.tsx`](OnlineView.tsx) | the SolidJS view (grid, players, HUD) |
 
 ## Tests
@@ -111,6 +125,11 @@ snapshot is 3070 bytes, under the socket module's 64 KiB message limit.
   a real loopback server: join, transport-drop reconnect, server-restart
   rejoin, and the epoch reset (a fresh join rebuilds the predictor ring and
   clears the interpolator, so two sessions' entities never mix).
+- `tests/wander-online-shared.test.ts` — the shared hosted-server logic
+  under a fake clock: Origin whitelist, sliding-window rate limit, room
+  picker, IP counter, idle tracker, billing conversion, month ledger +
+  budget breaker, batch codec, snapshot builder. Each assertion is
+  mutation-checked.
 
 ## Acceptance demo
 
@@ -136,3 +155,43 @@ bash examples/wander-online/demo.sh --runs 1    # one mutual-visibility run
   CDP in `--watch` mode, the desktop via its log).
 - **Bots**: 100 headless bots plus one desktop host; QuickJS frame time stays
   under the 16.7 ms budget.
+
+## Cloudflare
+
+The same arena runs on Cloudflare Workers + Durable Objects, in the
+private `pocket-online-server` repository. It vendors this kit as a
+submodule and imports the shared modules above — the Worker adds only
+the routing, the hibernation-shaped wrappers and the limits; no game
+logic is copied.
+
+- **Architecture.** A Worker routes `/ws` upgrades to the least-loaded
+  Room DO (after an Origin whitelist) and serves `/health`. Each Room DO
+  runs one `Arena` behind the WebSocket Hibernation API: a 20 Hz alarm
+  ticks only while the room is occupied, so an empty room hibernates. A
+  single Meter DO bills raw room deltas to Cloudflare's units (inbound
+  messages 20:1 to requests, 128 MB-s to GB-s), accumulates per UTC
+  month in DO storage, and opens a budget breaker at 80 % of the plan
+  inclusion that refuses new joins ("closed for the month") while
+  existing sessions continue.
+- **Limits.** Up to 4 rooms (least-loaded), 32 players/room, 2
+  connections/IP, 30 inbound messages/s/connection (sliding window),
+  64 B/message, 5-minute idle kick — every refusal is a WebSocket close
+  with code 1008 and a reason token the client's HUD shows
+  (`full`/`rest` retry on a slow backoff; `rate`/`ip`/`origin` do not
+  reconnect). All limits are `wrangler.toml` vars.
+- **Server URL.** The client reads `online-config.json` from its pak
+  (committed default = the local Bun server). Point a build at the
+  Worker with `WANDER_ONLINE_URL=wss://… bun tools/desktop.ts
+  wander-online` (or `--url`); the web build reads the same pak file.
+- **Local run.** In the server repo: `bunx wrangler@3.99.0 dev`, then
+  point a client at `ws://127.0.0.1:8787/ws`. The server repo's
+  integration suite spawns `wrangler dev` and asserts the three-client
+  mutual-visibility flow plus every limit over real WebSockets.
+- **Deploy.** Push to the server repo's `main` (the workflow deploys
+  when the Worker changes) or dispatch it manually; secrets live in the
+  `cloudflare` GitHub environment. See the server repo's README for the
+  one-time setup. The kit side is not deployed by that workflow.
+
+The pure logic is tested here (`tests/wander-online-shared.test.ts`,
+fake clock, mutation-checked); the Worker-shaped wrappers and the
+`wrangler dev` integration live in the server repo.

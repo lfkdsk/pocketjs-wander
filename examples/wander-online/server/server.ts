@@ -23,17 +23,16 @@
 
 import { join } from "node:path";
 import { type ServerWebSocket } from "bun";
-import { Arena, type ArenaPlayer } from "./area.ts";
+import { Arena } from "./area.ts";
+import { snapshotFor } from "../shared/snapshot.ts";
 import {
-  MAX_AOI,
   MSG,
   decodeInput,
+  decodeInputBatch,
   encodeBye,
   encodePong,
-  encodeState,
   encodeWelcome,
   gridFromWindow,
-  type WireEntity,
 } from "../net/protocol.ts";
 
 export interface ServerOpts {
@@ -69,7 +68,6 @@ export interface ServerHandle {
   close: () => void;
 }
 
-const TILE_PX = 16; // kit tiles are 16x16 pixels
 const BACKPRESSURE_LIMIT = 256 * 1024; // bytes buffered before we drop a snapshot
 
 export function startServer(opts: ServerOpts): ServerHandle {
@@ -84,7 +82,6 @@ export function startServer(opts: ServerOpts): ServerHandle {
     bytesOut: 0,
     drops: 0,
     snapshots: 0,
-    entitiesSent: 0,
   };
 
   function send(conn: Conn, buf: ArrayBuffer): void {
@@ -103,27 +100,13 @@ export function startServer(opts: ServerOpts): ServerHandle {
     else send(conn, buf);
   }
 
-  function entityFor(p: ArenaPlayer): WireEntity {
-    const m = p.state.move;
-    // move.px/py are absolute pixels; the wire carries the offset from the tile.
-    return {
-      id: p.id, tx: m.tx, ty: m.ty,
-      px: m.px - m.tx * TILE_PX, py: m.py - m.ty * TILE_PX,
-      dir: m.facing, phase: m.phase, stepDir: m.stepDir,
-      moving: m.moving, walking: m.walking, color: p.color,
-    };
-  }
-
   function broadcast(): void {
     arena.indexPlayers();
     for (const p of arena.players.values()) {
       const conn = conns.get(p.id);
       if (!conn) continue;
-      const view = arena.aoi(p, opts.aoi, MAX_AOI);
-      const entities = view.map(entityFor);
-      stats.entitiesSent += entities.length;
       stats.snapshots++;
-      emit(conn, encodeState(arena.frame, p.lastSeq, entities));
+      emit(conn, snapshotFor(arena, p, opts.aoi));
     }
   }
 
@@ -164,6 +147,16 @@ export function startServer(opts: ServerOpts): ServerHandle {
       if (p) {
         const inp = decodeInput(msg);
         arena.pushInput(p, inp.seq, inp.buttons);
+      }
+    } else if (kind === MSG.inputBatch) {
+      // v2: one message carrying up to BATCH_SIZE consecutive reference
+      // ticks; expand into the same per-tick queue as plain INPUT.
+      const p = arena.players.get(conn.playerId);
+      const batch = decodeInputBatch(msg);
+      if (p && batch) {
+        for (let i = 0; i < batch.buttons.length; i++) {
+          arena.pushInput(p, batch.firstSeq + i, batch.buttons[i]!);
+        }
       }
     } else if (kind === MSG.ping) {
       emit(conn, encodePong(v.getUint32(1, true), v.getUint32(5, true)));
