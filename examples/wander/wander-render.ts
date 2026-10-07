@@ -240,6 +240,16 @@ export class RenderRing {
     return this.ground.cap + this.upper.cap + this.subs.cap + this.blocks.cap;
   }
 
+  /** Re-draw every cell of the current rect next frame (one-off decor such
+   *  as a helped town's plaza flowers). */
+  invalidateAll(): void {
+    if (!this.rect.valid) return;
+    const x1 = this.rect.x0 + this.cells.W - 1, y1 = this.rect.y0 + this.cells.H - 1;
+    for (let y = this.rect.y0; y <= y1; y++) {
+      for (let x = this.rect.x0; x <= x1; x++) this.refill.push(x, y);
+    }
+  }
+
   stats(): RenderStats {
     const layers = [this.blocks, this.subs, this.ground, this.upper];
     let visible = 0, dropped = 0;

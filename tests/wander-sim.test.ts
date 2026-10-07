@@ -125,13 +125,13 @@ describe("wander sim: determinism and budget", () => {
     const runs = [60, 30, 20, 4].map((hz) => runSim(hz, 50));
     for (const r of runs.slice(1)) expect(r.digests).toEqual(runs[0]!.digests);
     expect(new Bun.CryptoHasher("sha256").update(JSON.stringify(runs[0]!.digests)).digest("hex")).toBe(
-      "6c4e3a49a0b043d944eb61cbdbcb917d7c046ca1dd750d6f773f9e8d81e6dc12",
+      "7acc10992a13cf0b95086e515bdf29aa6e2ed65ed3f906a2ce5a9415f2af9fd7",
     );
     // Fast travel too.
     const fast = [60, 4].map((hz) => runSim(hz, 20, { fast: true }));
     expect(fast[1]!.digests).toEqual(fast[0]!.digests);
     expect(new Bun.CryptoHasher("sha256").update(JSON.stringify(fast[0]!.digests)).digest("hex")).toBe(
-      "1f3c357035d773e2f065f6739e0bb3579514a290a8610f22bc1ac647881ddc4d",
+      "707e52f7e9c21076359748e0b3dd310e40fc4c6680f0769d9ab2e889df2aee4a",
     );
   }, 60_000);
 
@@ -159,7 +159,9 @@ describe("wander sim: determinism and budget", () => {
       far = Math.max(far, Math.abs(p.x - start.x) + Math.abs(p.y - start.y));
     }
     const st = sim.stats();
-    expect(far).toBeGreaterThan(2_000);
+    // F2's auto-talk stops and errand detours intentionally slow the walker,
+    // so the straight-line distance is lower than the stock walker's.
+    expect(far).toBeGreaterThan(1_000);
     expect(sim.driver.arrivedTowns).toBeGreaterThan(15);
     expect(st.budgetViolations).toBe(0);
     expect(st.recentres).toBeGreaterThan(40);

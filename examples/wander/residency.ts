@@ -32,6 +32,7 @@
 import { CHUNK, REGION, REGION_CHUNKS, growHash, regionGates, regionHub, type RegionHub } from "./world.ts";
 import { chunkJob, COMPLETE, UNDISCOVERED, type ChunkData } from "./chunk.ts";
 import { GROWTH_TICK_FRAMES, planRegionJob, type RegionPlan } from "./region.ts";
+import { isWilderness, landmarkFor, landmarkRoll, type Landmark } from "./landmarks.ts";
 
 /** Largest slice any job may take (units; one unit is about a microsecond
  *  of desktop QuickJS). */
@@ -91,6 +92,8 @@ export interface ResidencyStats {
   maxResident: number;
   /** Largest per-tick spend so far. */
   maxSpent: number;
+  /** Regions whose pure landmark fact finished warming. */
+  factWarmed: number;
 }
 
 export class Residency {
@@ -123,8 +126,40 @@ export class Residency {
   maxSpent = 0;
   /** Chunks completed since the view last drained them. */
   readonly fresh: ChunkData[] = [];
+  /** Called once when a region plan finishes generating (the sim replays
+   *  session-only decor, e.g. a helped town's plaza flowers, so a plan
+   *  regenerated after eviction grows them back). Rare: a few times a
+   *  minute at most, never on the hot path. */
+  onPlan: ((plan: RegionPlan) => void) | null = null;
+
+  // -- pure landmark facts (town scans: dialog, errands, rumors) ----------
+  //
+  // The window build and the plaza offer read only READY facts (a cache the
+  // sim owns); computing one is a planRegion run, so it happens here, under
+  // the same per-tick budget as chunk and plan generation, never inside a
+  // window-build slice. Cheap regions (wilderness, no roll) finish in one
+  // slice; a developed region whose roll succeeded runs its plan in slices.
+  private readonly factQueue: [number, number][] = [];
+  private readonly factQueued = new Set<number>();
+  private factJob: { rx: number; ry: number; gen: Generator<number, RegionPlan> } | null = null;
+  /** Called when a fact finishes warming (the sim caches it). */
+  onFact: ((rx: number, ry: number, lm: Landmark | null) => void) | null = null;
+  /** Whether a region's fact is already cached (skips the queue). */
+  isFactWarm: ((rx: number, ry: number) => boolean) | null = null;
+  /** Regions whose fact finished warming. */
+  factWarmedTotal = 0;
 
   constructor(readonly seed: number) {}
+
+  /** Queue a region's pure landmark fact for budgeted warming. Deduped: a
+   *  region already cached or already queued is skipped. */
+  warmFact(rx: number, ry: number): void {
+    const k = regionKey(rx, ry);
+    if (this.factQueued.has(k)) return;
+    if (this.isFactWarm && this.isFactWarm(rx, ry)) return;
+    this.factQueued.add(k);
+    this.factQueue.push([rx, ry]);
+  }
 
   // -- region facts (pure, memoized) --------------------------------------
 
@@ -138,17 +173,24 @@ export class Residency {
     }
     return h;
   }
-  /** A region with nothing to grow never enters the seen set. */
+  /** A region with nothing to grow never enters the seen set. A pure
+   *  wilderness region (no town, no gate road) always grows: its landmark
+   *  roll is guaranteed (landmarks.ts), so the plan places one. */
   regionDeveloped(rx: number, ry: number): boolean {
     if (this.hub(rx, ry).town) return true;
     const g = regionGates(this.seed, rx, ry);
-    return g.w.active || g.e.active || g.n.active || g.s.active;
+    if (g.w.active || g.e.active || g.n.active || g.s.active) return true;
+    return isWilderness(this.seed, rx, ry);
   }
   plan(rx: number, ry: number): RegionPlan | undefined {
     const k = regionKey(rx, ry);
     const p = this.plans.get(k);
     if (p) this.planUsed.set(k, this.tick);
     return p;
+  }
+  /** Every resident plan (restore repaints helped plazas among them). */
+  eachPlan(): IterableIterator<RegionPlan> {
+    return this.plans.values();
   }
   chunk(cx: number, cy: number): ChunkData | undefined {
     return this.chunks.get(chunkKey(cx, cy));
@@ -318,8 +360,10 @@ export class Residency {
       const job = this.job;
       this.job = null;
       if (job.kind === "plan") {
-        this.plans.set(job.key, r.value as RegionPlan);
+        const plan = r.value as RegionPlan;
+        this.plans.set(job.key, plan);
         this.planUsed.set(job.key, now);
+        this.onPlan?.(plan);
       } else if (this.wanted.has(job.key)) {
         const c = r.value as ChunkData;
         this.chunks.set(job.key, c);
@@ -332,6 +376,40 @@ export class Residency {
         this.maxResident = Math.max(this.maxResident, this.chunks.size);
         this.evict();
       }
+    }
+    // Pure landmark facts (lowest priority): warm the town scans the
+    // on-demand dialog resolver and the plaza offer read. Cheap regions
+    // finish in one slice; a developed region whose roll succeeded runs
+    // its plan in slices, charged here like any other job — never inside
+    // a window-build slice.
+    while (spent + STEP_MAX <= budget) {
+      if (!this.factJob) {
+        const next = this.factQueue.shift();
+        if (!next) break;
+        const [frx, fry] = next;
+        this.factQueued.delete(regionKey(frx, fry));
+        if (this.isFactWarm && this.isFactWarm(frx, fry)) continue; // warmed while queued
+        if (isWilderness(this.seed, frx, fry)) {
+          this.onFact?.(frx, fry, landmarkFor(this.seed, frx, fry));
+          this.factWarmedTotal++;
+          spent += 8;
+          continue;
+        }
+        if (!landmarkRoll(this.seed, frx, fry)) {
+          this.onFact?.(frx, fry, null);
+          this.factWarmedTotal++;
+          spent += 8;
+          continue;
+        }
+        this.factJob = { rx: frx, ry: fry, gen: planRegionJob(this.seed, frx, fry) };
+      }
+      const r = this.factJob.gen.next();
+      if (!r.done) { spent += r.value; continue; }
+      spent += 8;
+      const plan = r.value;
+      this.onFact?.(this.factJob.rx, this.factJob.ry, plan.landmark ?? null);
+      this.factWarmedTotal++;
+      this.factJob = null;
     }
     while (this.recentGenerated.length && this.recentGenerated[0]! <= now - 60) this.recentGenerated.shift();
     this.maxSpent = Math.max(this.maxSpent, spent);
@@ -378,6 +456,7 @@ export class Residency {
       queued: this.queuedCount, generatedTotal: this.generatedTotal, evictedTotal: this.evictedTotal,
       generatedLastSecond: this.recentGenerated.length, seenRegions: this.seenCount,
       growing: this.growing.size, maxResident: this.maxResident, maxSpent: this.maxSpent,
+      factWarmed: this.factWarmedTotal,
     };
   }
 }

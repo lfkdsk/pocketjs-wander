@@ -99,6 +99,7 @@ export interface WanderPublished {
   mounted: number; visible: number; dropped: number; nodeCap: number;
   recentres: number; towns: number; walked: number; units: number; budget: number;
   maxFrameUnits: number; budgetViolations: number; growing: number; seen: number;
+  helped: number; errand: string;
 }
 
 interface Viewport { w: number; h: number }
@@ -107,6 +108,7 @@ function modeLabel(mode: WanderMode, sim: WanderSim): string {
   if (mode === "manual") return "YOU";
   if (mode === "goto") return "WALK TO TAP";
   const t = sim.driver.target;
+  if (t?.landmark) return "AUTO > LANDMARK";
   return t?.town ? `AUTO > ${regionName(sim.seed, t.rx, t.ry).toUpperCase()}` : "AUTO WANDER";
 }
 
@@ -115,7 +117,9 @@ export function WanderView() {
   const initial = hostViewport(getOps());
   let vp: Viewport = initial ? { ...initial } : { w: PSP_W, h: PSP_H };
   const [viewport, setViewport] = createSignal<Viewport>(vp);
-  const perfClock = globalThis.__wanderPerfOn && globalThis.performance ? () => globalThis.performance.now() : undefined;
+  const perfClock = globalThis.__wanderPerfOn
+    ? (globalThis.performance ? () => globalThis.performance.now() : () => Date.now())
+    : undefined;
   const budget = globalThis.__wanderBudget;
   const sim = new WanderSim({ seed: globalThis.__wanderSeed ?? 0x5eed_0001, hz, viewW: vp.w, viewH: vp.h, fast: globalThis.__wanderFast === true, budget, clock: perfClock });
   globalThis.__wanderSim = sim;
@@ -154,6 +158,10 @@ export function WanderView() {
     playerX = NaN; playerY = NaN;
     shownModal = null;
     lastMode = sim.mode;
+    lastLogVersion = -1;
+    lastEventVersion = 0;
+    lastImprovedVersion = 0;
+    journalIdx = 0;
     batch(() => { setSeedText(`SEED 0x${seedHex(sim.seed)}`); setModal(null); });
   };
 
@@ -184,14 +192,20 @@ export function WanderView() {
   const [genText, setGenText] = createSignal("");
   const [nodeText, setNodeText] = createSignal("");
   const [notice, setNotice] = createSignal("");
+  const [logText, setLogText] = createSignal("");
+  const [errandText, setErrandText] = createSignal("");
   const [modal, setModal] = createSignal<Modal | null>(null);
   let shownModal: Modal | null = null;
-  let noticeLeft = 0;
+  let noticeUntil = 0;
   let lastMode: WanderMode = sim.mode;
   let hudTimer = 0;
   let prevButtons = 0;
   let prevTouchIds = new Set<number>();
   let mouseDown = false;
+  let lastLogVersion = -1;
+  let lastEventVersion = 0;
+  let lastImprovedVersion = 0;
+  let journalIdx = 0;
 
   // Minimap: chunk cells, the player dot and the ring outlines.
   const mmRoot = createElement("view");
@@ -215,6 +229,15 @@ export function WanderView() {
   const dot = createElement("view");
   setProp(dot, "style", { posType: 1, insetL: 0, insetT: 0, width: 3, height: 3, bgColor: "#ffffff" });
   insertNode(mmRoot, dot);
+  // Gold dots for discovered landmarks (pooled; only in-window ones show).
+  const LM_DOTS = 16;
+  const lmDots: NodeMirror[] = [];
+  for (let d = 0; d < LM_DOTS; d++) {
+    const node = createElement("view");
+    setProp(node, "style", { posType: 1, insetL: 0, insetT: 0, width: 2, height: 2, bgColor: "#ffd75e" });
+    insertNode(mmRoot, node);
+    lmDots.push(node);
+  }
 
   const setBox = (b: ReturnType<typeof outline>, x: number, y: number, w: number, h: number) => {
     x = Math.round(x); y = Math.round(y); w = Math.max(2, Math.round(w)); h = Math.max(2, Math.round(h));
@@ -246,6 +269,17 @@ export function WanderView() {
     const p = toMap(sim.playerTile.x + 0.5, sim.playerTile.y + 0.5);
     jump(dot, "translateX", Math.round(p.x) - 1);
     jump(dot, "translateY", Math.round(p.y) - 1);
+    // Discovered landmarks inside the minimap window get a gold dot.
+    let di = 0;
+    for (const v of sim.log.found.values()) {
+      const m = toMap(v.x + 0.5, v.y + 0.5);
+      if (m.x < -2 || m.y < -2 || m.x > MM_W + 2 || m.y > MM_H + 2) continue;
+      if (di >= LM_DOTS) break;
+      jump(lmDots[di]!, "translateX", Math.round(m.x) - 1);
+      jump(lmDots[di]!, "translateY", Math.round(m.y) - 1);
+      di++;
+    }
+    for (; di < LM_DOTS; di++) { jump(lmDots[di]!, "translateX", -4); jump(lmDots[di]!, "translateY", -4); }
   };
 
   const camera = () => {
@@ -305,6 +339,8 @@ export function WanderView() {
     out.mounted = rs.mounted + 1 + npcs.size + npcFree.length; out.visible = rs.visible; out.dropped = rs.dropped; out.nodeCap = rs.cap;
     out.recentres = st.recentres; out.towns = sim.driver.arrivedTowns; out.walked = sim.walked; out.units = sim.lastFrame.units; out.budget = sim.lastFrame.budget;
     out.maxFrameUnits = st.maxFrameUnits; out.budgetViolations = st.budgetViolations; out.growing = st.growing; out.seen = st.seenRegions;
+    out.helped = sim.helpedCount;
+    out.errand = sim.errand ? `${sim.errand.kind}:${sim.errand.targetName}` : "";
     globalThis.__wanderState = out;
     return { st, rs };
   };
@@ -323,6 +359,15 @@ export function WanderView() {
       // Live image nodes (the pools also keep a few hidden spares, whose
       // high-water mark depends on the host rate; __wanderState.mounted).
       setNodeText(`NODES ${rs.visible}/${rs.cap}`);
+      // Travel log: total discoveries (never decreases) and the nearest rumor.
+      const entries = [...sim.log.found.values()];
+      const latest = entries.at(-1);
+      const rumor = sim.nearestRumor();
+      setLogText(`LOG ${sim.log.total} · ${latest ? latest.kind : "—"}    ${rumor ? `RUMOR: ${rumor.kind} ${rumor.dir} ${rumor.dist}` : "RUMOR: nothing nearby"}`);
+      // The active errand and the lifetime helped count.
+      setErrandText(sim.errand
+        ? `ERRAND: ${sim.errand.kind === "visit" ? sim.errand.what : `carry ${sim.errand.what}`} -> ${sim.errand.targetName}   HELPED ${sim.helpedCount}`
+        : `ERRAND: none   HELPED ${sim.helpedCount}`);
     });
     updateMinimap();
   };
@@ -380,7 +425,7 @@ export function WanderView() {
 
     // Opt-in wall-clock probe for the desktop benchmark; the world never
     // reads it.
-    const clock = globalThis.__wanderPerfOn ? globalThis.performance : undefined;
+    const clock = globalThis.__wanderPerfOn ? (globalThis.performance ?? Date) : undefined;
     const t0 = clock?.now() ?? 0;
     sim.step(buttons & ~BTN.SQUARE);
     const t1 = clock?.now() ?? 0;
@@ -397,11 +442,51 @@ export function WanderView() {
     const m = sim.state.interp.modal;
     if (modalChanged(shownModal, m)) { shownModal = m ? deepClone(m) : null; setModal(shownModal); }
     if (sim.mode !== lastMode) {
-      if (sim.mode === "manual" && buttons & TAKEOVER) { setNotice("YOU HAVE CONTROL"); noticeLeft = hz * NOTICE_FRAMES_SECONDS; }
-      else if (sim.mode === "auto") { setNotice("AUTO WANDER"); noticeLeft = hz * NOTICE_FRAMES_SECONDS; }
+      if (sim.mode === "manual" && buttons & TAKEOVER) { setNotice("YOU HAVE CONTROL"); noticeUntil = sim.now + 60 * NOTICE_FRAMES_SECONDS; }
+      else if (sim.mode === "auto") { setNotice("AUTO WANDER"); noticeUntil = sim.now + 60 * NOTICE_FRAMES_SECONDS; }
       lastMode = sim.mode;
     }
-    if (noticeLeft > 0 && --noticeLeft === 0) setNotice("");
+    // CROSS (outside dialogs): accept/deliver an errand on a plaza, else
+    // page through the travel log.
+    if ((pressed & BTN.CROSS) && !sim.state.interp.modal) {
+      if (sim.nearPlaza()) {
+        sim.pressAction();
+        if (sim.eventVersion !== lastEventVersion) {
+          lastEventVersion = sim.eventVersion;
+          setNotice(sim.lastEvent);
+          noticeUntil = sim.now + 60 * NOTICE_FRAMES_SECONDS * 2;
+        }
+      } else {
+        const entries = [...sim.log.found.values()];
+        if (entries.length) {
+          journalIdx = journalIdx % entries.length;
+          const v = entries[journalIdx]!;
+          setNotice(`LOG ${journalIdx + 1}/${entries.length}: ${v.kind} @ ${v.name}`);
+          noticeUntil = sim.now + 60 * 4;
+          journalIdx++;
+        } else {
+          setNotice("LOG: nothing found yet");
+          noticeUntil = sim.now + 60 * 2;
+        }
+      }
+    }
+    // A new discovery gets a longer notice (after the step so it is immediate).
+    if (sim.log.version !== lastLogVersion) {
+      lastLogVersion = sim.log.version;
+      if (sim.lastFind) { setNotice(`FOUND: ${sim.lastFind}`); noticeUntil = sim.now + 60 * NOTICE_FRAMES_SECONDS * 2; }
+    }
+    // An accept/deliver the driver made itself (auto mode) gets a notice.
+    if (sim.eventVersion !== lastEventVersion) {
+      lastEventVersion = sim.eventVersion;
+      setNotice(sim.lastEvent);
+      noticeUntil = sim.now + 60 * NOTICE_FRAMES_SECONDS * 2;
+    }
+    // Plaza flowers: repaint the ring's cells once.
+    if (sim.improvedVersion !== lastImprovedVersion) {
+      lastImprovedVersion = sim.improvedVersion;
+      ring.invalidateAll();
+    }
+    if (noticeUntil > 0 && sim.now >= noticeUntil) { noticeUntil = 0; setNotice(""); }
     if (++hudTimer >= Math.max(1, Math.round(HUD_EVERY * hz / 60)) || sim.lastFrame.recentred) { hudTimer = 0; refreshHud(); }
     else publish();
     if (clock) globalThis.__wanderPerf = { sim: t1 - t0, ring: t2 - t1, people: t3 - t2, hud: clock.now() - t3, fresh: fresh.length, ...sim.perf, layers: ring.stats().layers.join("/") as unknown as number };
@@ -423,8 +508,12 @@ export function WanderView() {
     <Text class="text-xs" style={{ posType: 1, insetT: MM_H + 26, insetR: 12, textColor: "#c8d6ea", lineHeight: 12, height: 12 }}>{genText()}</Text>
     <Text class="text-xs" style={{ posType: 1, insetT: MM_H + 39, insetR: 12, textColor: "#c8d6ea", lineHeight: 12, height: 12 }}>{nodeText()}</Text>
     <Show when={!modal()}>
-      <View class="absolute" style={{ posType: 1, insetB: 4, insetL: 6, width: 214, height: 16, bgColor: "#0b1626", opacity: 0.76 }} debugName="wander-help" />
-      <Text class="text-xs" style={{ posType: 1, insetB: 6, insetL: 12, textColor: "#c8d6ea", lineHeight: 12, height: 12 }}>SQR SEED  TRI FAST  SEL AUTO</Text>
+      <View class="absolute" style={{ posType: 1, insetB: 44, insetL: 6, insetR: 6, height: 16, bgColor: "#0b1626", opacity: 0.76 }} debugName="wander-logline" />
+      <Text class="text-xs" style={{ posType: 1, insetB: 46, insetL: 12, textColor: "#ffe97a", lineHeight: 12, height: 12 }}>{logText()}</Text>
+      <View class="absolute" style={{ posType: 1, insetB: 24, insetL: 6, insetR: 6, height: 16, bgColor: "#0b1626", opacity: 0.76 }} debugName="wander-errandline" />
+      <Text class="text-xs" style={{ posType: 1, insetB: 26, insetL: 12, textColor: "#ffb37a", lineHeight: 12, height: 12 }}>{errandText()}</Text>
+      <View class="absolute" style={{ posType: 1, insetB: 4, insetL: 6, width: 300, height: 16, bgColor: "#0b1626", opacity: 0.76 }} debugName="wander-help" />
+      <Text class="text-xs" style={{ posType: 1, insetB: 6, insetL: 12, textColor: "#c8d6ea", lineHeight: 12, height: 12 }}>SQR SEED  TRI FAST  SEL AUTO  X ACT/LOG</Text>
     </Show>
     <Show when={notice() !== ""}>
       <View class="absolute flex-row justify-center" style={{ posType: 1, insetT: 52, insetL: 0, insetR: 0 }} debugName="wander-notice">

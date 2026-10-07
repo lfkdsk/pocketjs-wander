@@ -27,7 +27,9 @@ import { decodePng } from "../vendor/pocketjs/framework/compiler/pak.ts";
 import { encodePNG } from "../vendor/pocketjs/tests/png.ts";
 import { BTN } from "../vendor/pocketjs/contracts/spec/spec.ts";
 import { canStepFrom } from "../src/engine/passability.ts";
-import { CHUNK } from "../examples/wander/world.ts";
+import { CHUNK, regionOf } from "../examples/wander/world.ts";
+import { clearOfHud, landmarkBox } from "../examples/wander/hud.ts";
+import { improvementCells } from "../examples/wander/towns.ts";
 import { WanderSim, type ScheduledInput } from "../examples/wander/wander-sim.ts";
 import type { WanderPublished } from "../examples/wander/WanderView.tsx";
 import { appBundle, appPreflight } from "./helpers/boot.ts";
@@ -142,7 +144,7 @@ simDescribe("wander render: the world on screen", () => {
   test("960x544: a grown town beside a snow border, walked into; golden", async () => {
     const w = await boot(960, 544);
     let maxMounted = 0;
-    for (let f = 0; f < 2100; f += 100) {
+    for (let f = 0; f < 1500; f += 100) {
       pump(w, 100);
       const st = pub();
       maxMounted = Math.max(maxMounted, st.mounted);
@@ -493,4 +495,147 @@ simDescribe("wander render: input", () => {
     };
     for (const hz of [60, 30, 20, 4]) expect(replay(hz)).toEqual(recorded);
   }, 90_000);
+});
+
+simDescribe("wander render: F2 talking towns and errands", () => {
+  // A helped town's plaza gains upper tiles (flowers/shrubs). The exact tile
+  // depends on the biome, so assert new pixels appear at the helped cells
+  // rather than a fixed color.
+  test("helping a town paints plaza flowers (before/after pixels)", async () => {
+    const w = await boot(480, 272);
+    pump(w, 60 * 40); // grow the start town to completion
+    const sim = live();
+    // Take manual control (hold a shoulder) so the camera holds still for the
+    // before/after comparison.
+    w.frame(BTN.LTRIGGER); w.frame(0);
+    pump(w, 10); // let the step settle
+    const sp = sim.playerTile;
+    const srx = Math.floor(sp.x / 96), sry = Math.floor(sp.y / 96);
+    const plan = sim.res.plan(srx, sry)!;
+    const cells = improvementCells(plan);
+    expect(cells.length).toBeGreaterThan(0);
+    const before = w.render().slice();
+    const beforeVisible = (globalThis as { __wanderState?: { visible: number } }).__wanderState!.visible;
+    sim.__helpForTest(srx, sry);
+    pump(w, 10); // let the view repaint (improvedVersion -> invalidateAll + res.fresh)
+    const after = w.render();
+    const afterVisible = (globalThis as { __wanderState?: { visible: number } }).__wanderState!.visible;
+    expect(sim.isHelped(srx, sry)).toBe(true);
+    // The helped cells' upper tiles are set in the model.
+    for (const c of cells) {
+      const i = (c.y - plan.y0) * 96 + (c.x - plan.x0);
+      expect(plan.upper![i]).toBe(c.tile);
+    }
+    // New upper nodes were mounted for the flowers.
+    expect(afterVisible).toBeGreaterThan(beforeVisible);
+    // Pixels changed somewhere (the flowers are visible, not just mounted).
+    let changed = 0;
+    for (let i = 0; i < after.length; i += 4) {
+      if (before[i] !== after[i] || before[i + 1] !== after[i + 1] || before[i + 2] !== after[i + 2]) changed++;
+    }
+    expect(changed).toBeGreaterThan(50);
+  }, 60_000);
+
+  test("a villager dialog opens with a role line (auto-talk)", async () => {
+    const w = await boot(480, 272);
+    const sim = live();
+    let opened = false;
+    for (let f = 0; f < 60 * 120 && !opened; f++) {
+      w.frame(0);
+      for (let t = 0; t < w.ticksPerFrame; t++) w.tick();
+      const m = sim.state.interp.modal;
+      if (m && m.kind === "text" && typeof m.lines?.[0] === "string" && m.lines[0].includes(":")) {
+        opened = true;
+      }
+    }
+    expect(opened).toBe(true);
+    // Let the typewriter lay down the role line, then check the tree.
+    pump(w, 30);
+    const roles = ["FARMER", "BAKER", "ELDER", "TRAVELER", "GUARD", "HERBALIST", "CHILD", "MASON"];
+    const tree = w.getTree();
+    const found = roles.some((r) => treeHasText(tree, `${r}:`));
+    expect(found).toBe(true);
+  }, 120_000);
+
+  test("an errand accepted at the plaza shows on the HUD", async () => {
+    const w = await boot(480, 272);
+    pump(w, 60 * 5);
+    const sim = live();
+    sim.pressAction();
+    expect(sim.errand).not.toBeNull();
+    pump(w, 8); // HUD refresh
+    const st = pub();
+    expect(st.helped).toBe(0);
+    // The ERRAND line is in the tree.
+    expect(treeHasText(w.getTree(), "ERRAND:")).toBe(true);
+  }, 60_000);
+
+  test("f1-found: the landmark is fully on screen, clear of the HUD, with its pixels visible", async () => {
+    // The review found the f1-found shot caught the landmark at the viewport
+    // edge or under the HUD bars. The capture now waits until the landmark
+    // centre sits in the central field band; this test pins that contract
+    // with a semantic pixel check at both viewport sizes.
+    for (const [W, H, tag] of [[480, 272, "480"], [960, 544, "960"]] as const) {
+      const w = await boot(W, H);
+      const sim = live();
+      pump(w, 120); // town grown, a rumor is on the HUD
+      const rumor = sim.nearestRumor();
+      expect(rumor).not.toBeNull();
+      sim.goto(rumor!.x, rumor!.y);
+      let captured = false;
+      for (let f = 0; f < 60 * 120 && !captured; f++) {
+        w.frame(0);
+        for (let t = 0; t < w.ticksPerFrame; t++) w.tick();
+        if (sim.log.version === 0) continue; // not discovered yet
+        const p = sim.playerPx;
+        const sx = rumor!.x * 16 - p.x + W / 2;
+        const sy = rumor!.y * 16 - p.y + H / 2;
+        const pt = sim.playerTile;
+        const dist = Math.abs(pt.x - rumor!.x) + Math.abs(pt.y - rumor!.y);
+        // The landmark's WHOLE 3 x 3 footprint must be clear of every HUD
+        // bar (the old centre-point band check passed by 0.16 px while the
+        // footprint sat under the LOG/RUMOR bar); the player is close enough
+        // that the landmark reads, but not standing on it.
+        if (sx > W * 0.18 && sx < W * 0.82 && clearOfHud(landmarkBox(sx, sy), W, H) && dist >= 3 && dist <= 16) {
+          const fb = w.render();
+          // Geometric contract: the whole 3 x 3 footprint is clear of every
+          // HUD bar at the captured frame (the old centre-point band check
+          // passed by 0.16 px while the footprint sat under the LOG bar).
+          expect(clearOfHud(landmarkBox(sx, sy), W, H), `${tag}: footprint clear of HUD at (${sx.toFixed(0)},${sy.toFixed(0)})`).toBe(true);
+          // Semantic pixel check: EVERY standing stone is visible. Each prop
+          // cell's 16x16 region must hold clearly more stone pixels than a
+          // control window off the footprint — the old total-count check
+          // passed almost anywhere because the predicate also matches
+          // shaded snow.
+          const lm = sim.placedLandmark(regionOf(rumor!.x), regionOf(rumor!.y));
+          expect(lm, `${tag}: placed landmark at the rumor`).not.toBeNull();
+          const p = sim.playerPx;
+          const stone = (r: number, g: number, b: number) =>
+            Math.abs(r - g) < 28 && Math.abs(g - b) < 28 && r < 175 && r > 60;
+          // Control: the max of four 16x16 field windows around the
+          // footprint (the predicate also matches a little shaded snow, so
+          // each stone must beat the local field, not an absolute floor).
+          const ccx = Math.round(sx), ccy = Math.round(sy);
+          const control = Math.max(
+            count(fb, W, stone, ccx + 40, ccx + 56, ccy - 8, ccy + 8),
+            count(fb, W, stone, ccx - 8, ccx + 8, ccy + 40, ccy + 56),
+            count(fb, W, stone, ccx - 56, ccx - 40, ccy - 8, ccy + 8),
+            count(fb, W, stone, ccx - 8, ccx + 8, ccy - 56, ccy - 40),
+          );
+          let cells = 0;
+          for (const cell of lm!.cells) {
+            if (!cell.upper) continue;
+            const x0 = Math.round((lm!.x + cell.dx) * 16 - p.x + W / 2);
+            const y0 = Math.round((lm!.y + cell.dy) * 16 - p.y + H / 2);
+            const n = count(fb, W, stone, x0, x0 + 16, y0, y0 + 16);
+            expect(n, `${tag}: stone cell (${cell.dx},${cell.dy}) at (${x0},${y0}), control ${control}`).toBeGreaterThan(Math.max(15, 2 * control));
+            cells++;
+          }
+          expect(cells, `${tag}: at least one prop cell checked`).toBeGreaterThan(0);
+          captured = true;
+        }
+      }
+      expect(captured, `${tag}: no good f1-found frame`).toBe(true);
+    }
+  }, 240_000);
 });

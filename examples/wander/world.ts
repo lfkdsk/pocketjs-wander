@@ -369,6 +369,15 @@ export function naturalCellAt(seed: number, x: number, y: number, s: NatureSampl
 const TOWN_CHANCE: readonly number[] = [0.78, 0.62, 0.5, 0.58]; // by hub biome
 const HUB_JITTER_X = 12, HUB_JITTER_Y = 10;
 
+/** Fraction of regions that are trackless wild: no town and no road grows
+ *  there, so a long walk leaves the settled country behind and finds only
+ *  landmarks. The roll is a pure hash both sides of every edge evaluate
+ *  identically, so suppressing a gate suppresses it from both regions. */
+const WILD_CHANCE = 0.06;
+export function isWild(seed: number, rx: number, ry: number): boolean {
+  return (growHash(seed, rx, ry, 0x3d1a) % 10007) / 10007 < WILD_CHANCE;
+}
+
 export interface RegionHub {
   rx: number; ry: number;
   /** World tile of the hub: a town's plaza, or a crossroads in the wild. */
@@ -385,7 +394,7 @@ export function regionHub(seed: number, rx: number, ry: number): RegionHub {
   const y = ry * REGION + REGION / 2 + jy;
   const biome = biomeAt(seed, x, y);
   const roll = (growHash(seed, rx, ry, 0x70e5) % 10007) / 10007;
-  return { rx, ry, x, y, biome, town: roll < TOWN_CHANCE[biome]! };
+  return { rx, ry, x, y, biome, town: roll < TOWN_CHANCE[biome]! && !isWild(seed, rx, ry) };
 }
 
 /** 0 inside a town site (so the plaza lands in a clearing, as grow's
@@ -414,7 +423,12 @@ export interface Gate {
 const GATE_CHANCE = 0.72;
 export function gateOf(seed: number, vertical: boolean, rx: number, ry: number): Gate {
   const h = growHash(seed, rx, ry, vertical ? 0x6a7e : 0x6a7f);
-  return { active: (h % 10007) / 10007 < GATE_CHANCE, at: 12 + ((h >>> 12) % 72) };
+  // The two regions this edge joins (both compute it identically): a wild
+  // region on either side keeps the edge closed, so no road enters it.
+  const arx = vertical ? rx - 1 : rx, ary = vertical ? ry : ry - 1;
+  const active = (h % 10007) / 10007 < GATE_CHANCE
+    && !isWild(seed, arx, ary) && !isWild(seed, rx, ry);
+  return { active, at: 12 + ((h >>> 12) % 72) };
 }
 
 /** Gates of region (rx, ry): west, east, north, south. */

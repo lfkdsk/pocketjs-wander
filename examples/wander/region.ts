@@ -36,6 +36,8 @@ import {
   GROW_TILE as T, REGION, growHash, regionGates, regionHub,
   type Biome, type Gate, type RegionHub,
 } from "./world.ts";
+import { BIOME_BASE_TILE } from "./world.ts";
+import { landmarkRoll, type Landmark } from "./landmarks.ts";
 
 export const F_ROAD = 1;
 /** A born developed upper cell keeps bodies out (houses, fences, props). */
@@ -85,6 +87,8 @@ export interface RegionPlan {
   flags: Uint8Array | null;
   villagers: VillagerPlan[];
   houses: number;
+  /** The region's landmark, if the roll placed one and a spot fit. */
+  landmark: Landmark | null;
   /** Growth ticks until the last cell is born (0 when empty). */
   totalTicks: number;
   /** Tail boxes of the four gates (active or not, inactive ones empty). */
@@ -97,11 +101,35 @@ export interface RegionPlan {
 
 // ---------------------------------------------------------------------------
 
-const SYL_A = ["Bram", "Oak", "Wil", "Fern", "Ash", "Thorn", "Mill", "Stone", "Elder", "Birch", "Frost", "Dune", "Reed", "Moss", "Hazel", "Pine"];
-const SYL_B = ["ford", "mere", "wick", "holt", "dale", "stead", "brook", "field", "haven", "cross", "well", "moor", "gate", "hollow", "by", "ton"];
+// 64 settlement roots and 64 suffixes, plus an optional qualifier: the name
+// space is 64 x 64 x 9 (with or without one of 8 qualifiers), so a 25 x 25
+// region census of ~380 towns collides well under 5% of the time.
+const NAME_A = [
+  "Bram", "Oak", "Wil", "Fern", "Ash", "Thorn", "Mill", "Stone",
+  "Elder", "Birch", "Frost", "Dune", "Reed", "Moss", "Hazel", "Pine",
+  "Alder", "Aspen", "Barley", "Beech", "Briar", "Brook", "Cinder", "Crag",
+  "Dew", "Elm", "Fen", "Gale", "Glen", "Gold", "Green", "Harrow",
+  "Hawthorn", "Heath", "Heron", "High", "Holly", "Iron", "Ivy", "Juniper",
+  "Knoll", "Lark", "Laurel", "Lea", "Lime", "Low", "Marlow", "Marsh",
+  "Meadow", "Mist", "Nettle", "Oat", "Old", "Orchard", "Owl", "Peak",
+  "Pear", "Quill", "Raven", "Red", "Ridge", "River", "Rock", "Rose",
+] as const;
+const NAME_B = [
+  "ford", "mere", "wick", "holt", "dale", "stead", "brook", "field",
+  "haven", "cross", "well", "moor", "gate", "hollow", "by", "ton",
+  "shire", "thorpe", "ham", "bury", "worth", "mound", "lea", "nook",
+  "rest", "vale", "fell", "cliff", "ridge", "bank", "shore", "marsh",
+  "fen", "wood", "grove", "orchard", "garden", "mill", "forge", "kiln",
+  "market", "fair", "bridge", "stone", "rock", "hill", "down", "rise",
+  "side", "end", "foot", "head", "mouth", "harbor", "landing", "ferry",
+  "way", "path", "walk", "hold", "keep", "watch", "light", "water",
+] as const;
+const NAME_QUAL = ["Great ", "Little ", "Old ", "New ", "Upper ", "Lower ", "East ", "West "] as const;
 export function regionName(seed: number, rx: number, ry: number): string {
   const h = growHash(seed, rx, ry, 0x7a3e);
-  return SYL_A[h % SYL_A.length]! + SYL_B[(h >>> 8) % SYL_B.length]!;
+  const base = NAME_A[h % NAME_A.length]! + NAME_B[(h >>> 8) % NAME_B.length]!;
+  const q = growHash(seed, rx, ry, 0x7a3f);
+  return (q % 10007) < 5000 ? NAME_QUAL[(q >>> 8) % NAME_QUAL.length]! + base : base;
 }
 
 /** Deterministic per-plan random stream (mulberry-style over growHash). */
@@ -390,12 +418,16 @@ export function* planRegionJob(seed: number, rx: number, ry: number): Generator<
   const x0 = rx * REGION, y0 = ry * REGION;
   const plan: RegionPlan = {
     seed, rx, ry, x0, y0, hub, name: regionName(seed, rx, ry), empty: true,
-    ground: null, upper: null, born: null, flags: null, villagers: [], houses: 0, totalTicks: 0,
+    ground: null, upper: null, born: null, flags: null, villagers: [], houses: 0, landmark: null, totalTicks: 0,
     corridors: ends.filter((e) => e.gate.active).map((e) => corridorOf(e.end)),
     devX0: hub.x, devY0: hub.y, devX1: hub.x, devY1: hub.y, bytes: 256,
   };
   const active = ends.filter((e) => e.gate.active);
-  if (!hub.town && active.length === 0) return plan;
+  const roll = landmarkRoll(seed, rx, ry);
+  const developed = hub.town || active.length > 0;
+  // A pure wilderness region (no town, no gate road) still grows a landmark
+  // when the roll placed one; otherwise it stays an empty plan.
+  if (!developed && !roll) return plan;
   yield 40;
 
   const cells = REGION * REGION;
@@ -407,92 +439,157 @@ export function* planRegionJob(seed: number, rx: number, ry: number): Generator<
   plan.ground = b.ground; plan.upper = b.upper; plan.born = b.born; plan.flags = b.flags;
   plan.bytes = cells * 5 + 512;
 
-  // 1. Trunk network: town streets (or the crossroads) and gate roads.
-  if (hub.town) buildTown(b, hub);
-  else setRoad(b, hub.x, hub.y, T.ROAD_CROSS);
-  yield 120;
-  for (const e of active) {
-    let start = { x: hub.x, y: hub.y };
-    let exit = { dx: e.end.tdx, dy: e.end.tdy, len: 2 };
-    if (hub.town) {
-      if (e.end.tdx !== 0) {
-        start = { x: hub.x + e.end.tdx * STREET_HALF, y: hub.y };
-        exit = { dx: e.end.tdx, dy: 0, len: 0 };
-      } else {
-        start = { x: hub.x + (e.end.x < hub.x ? -STREET_HALF : STREET_HALF), y: hub.y };
-        exit = { dx: 0, dy: e.end.tdy, len: e.end.tdy < 0 ? 14 : 8 };
+  let last = 0;
+  if (developed) {
+    // 1. Trunk network: town streets (or the crossroads) and gate roads.
+    if (hub.town) buildTown(b, hub);
+    else setRoad(b, hub.x, hub.y, T.ROAD_CROSS);
+    yield 120;
+    for (const e of active) {
+      let start = { x: hub.x, y: hub.y };
+      let exit = { dx: e.end.tdx, dy: e.end.tdy, len: 2 };
+      if (hub.town) {
+        if (e.end.tdx !== 0) {
+          start = { x: hub.x + e.end.tdx * STREET_HALF, y: hub.y };
+          exit = { dx: e.end.tdx, dy: 0, len: 0 };
+        } else {
+          start = { x: hub.x + (e.end.x < hub.x ? -STREET_HALF : STREET_HALF), y: hub.y };
+          exit = { dx: 0, dy: e.end.tdy, len: e.end.tdy < 0 ? 14 : 8 };
+        }
+      }
+      layTrunk(b, seed, start, exit, e.end, growHash(seed, rx, ry, 0x7700 + e.key));
+      yield 160;
+    }
+
+    // 2. Birth ticks: breadth-first from the hub over the trunk network.
+    const dist = new Int16Array(cells).fill(-1);
+    const hubIndex = localIndex(b, hub.x, hub.y);
+    const queue = new Int32Array(b.trunk.length + 1);
+    let head = 0, tail = 0;
+    dist[hubIndex] = 0; queue[tail++] = hubIndex;
+    while (head < tail) {
+      const i = queue[head++]!;
+      const lx = i % REGION, ly = (i - lx) / REGION;
+      for (let d = 0; d < 4; d++) {
+        const nx = lx + DX[d]!, ny = ly + DY[d]!;
+        if (nx < 0 || ny < 0 || nx >= REGION || ny >= REGION) continue;
+        const j = ny * REGION + nx;
+        if (dist[j] !== -1 || !(b.flags[j]! & F_ROAD)) continue;
+        dist[j] = dist[i]! + 1;
+        queue[tail++] = j;
+      }
+      if ((head & 255) === 0) yield 256;
+    }
+    let lastRoad = 0, streetDone = 0;
+    for (const i of b.trunk) {
+      const born = Math.floor(Math.max(0, dist[i]!) / ROAD_CELLS_PER_TICK);
+      b.born[i] = born;
+      lastRoad = Math.max(lastRoad, born);
+      const lx = i % REGION, ly = (i - lx) / REGION;
+      if (hub.town && ((ly + y0 === hub.y && Math.abs(lx + x0 - hub.x) <= STREET_HALF) || (lx + x0 === hub.x && Math.abs(ly + y0 - hub.y) <= 4))) {
+        streetDone = Math.max(streetDone, born);
       }
     }
-    layTrunk(b, seed, start, exit, e.end, growHash(seed, rx, ry, 0x7700 + e.key));
-    yield 160;
+    yield 200;
+
+    // 3. Town growth: plaza props, houses, plot, residents, bushes.
+    last = lastRoad;
+    if (hub.town) {
+      const propsTick = streetDone + 1;
+      setUpper(b, hub.x - 1, hub.y - 1, hub.biome === 3 ? T.FIREWOOD : T.WELL, propsTick, F_BLOCK);
+      setUpper(b, hub.x + 1, hub.y + 1, T.NOTICE, propsTick, F_BLOCK);
+      const { houses, plotTick } = yield* placeHousesAndPlot(b, seed, hub, propsTick + 1);
+      plan.houses = houses.length;
+      yield 160;
+      const box = { x0: hub.x - STREET_HALF, y0: hub.y - 12, x1: hub.x + STREET_HALF, y1: hub.y + 6 };
+      let tick = plotTick + 1;
+      for (let n = 0; n < houses.length; n++) {
+        const h = houses[n]!;
+        const route = villagerRoute(b, seed, rx, ry, n, h.doorX, h.frontY, box);
+        plan.villagers.push({ id: `v${rx}_${ry}_${n}`, x: h.doorX, y: h.frontY, route: route.steps, minX: route.minX, minY: route.minY, maxX: route.maxX, maxY: route.maxY, born: tick++, house: n });
+        yield 60;
+      }
+      // Bushes by the doors (grow's seedSettledDecor), walked under.
+      const decorTick = tick;
+      let placed = 0;
+      for (let n = 0; n < houses.length * 3 && placed < 10; n++) {
+        const h = houses[n % houses.length]!;
+        const r = growHash(seed, rx * 977 + n, ry, 0xdec0);
+        const dx = (r % 7) - 3, dy = ((r >>> 4) % 7) - 3;
+        if (Math.abs(dx) + Math.abs(dy) < 3) continue;
+        const x = h.doorX + dx, y = h.frontY + dy;
+        if (!free(b, x, y)) continue;
+        setUpper(b, x, y, hub.biome === 3 ? T.SNOW_SHRUB : T.BUSH, decorTick, F_DECOR);
+        placed++;
+      }
+      last = Math.max(last, decorTick);
+    } else {
+      setUpper(b, hub.x + 1, hub.y - 1, T.NOTICE, 1, F_BLOCK);
+      last = Math.max(last, 1);
+    }
   }
 
-  // 2. Birth ticks: breadth-first from the hub over the trunk network.
-  const dist = new Int16Array(cells).fill(-1);
-  const hubIndex = localIndex(b, hub.x, hub.y);
-  const queue = new Int32Array(b.trunk.length + 1);
-  let head = 0, tail = 0;
-  dist[hubIndex] = 0; queue[tail++] = hubIndex;
-  while (head < tail) {
-    const i = queue[head++]!;
-    const lx = i % REGION, ly = (i - lx) / REGION;
-    for (let d = 0; d < 4; d++) {
-      const nx = lx + DX[d]!, ny = ly + DY[d]!;
-      if (nx < 0 || ny < 0 || nx >= REGION || ny >= REGION) continue;
-      const j = ny * REGION + nx;
-      if (dist[j] !== -1 || !(b.flags[j]! & F_ROAD)) continue;
-      dist[j] = dist[i]! + 1;
-      queue[tail++] = j;
+  // 4. The region's landmark: the first candidate whose 3 x 3 box is still
+  //    free after the town and roads, with a walkable ring around it. It is
+  //    born at tick 0 (visible as soon as the region is discovered, ahead of
+  //    the town) and grows in with the region.
+  if (roll) {
+    let minDx = Infinity, maxDx = -Infinity, minDy = Infinity, maxDy = -Infinity;
+    for (const c of roll.cells) {
+      if (c.dx < minDx) minDx = c.dx;
+      if (c.dx > maxDx) maxDx = c.dx;
+      if (c.dy < minDy) minDy = c.dy;
+      if (c.dy > maxDy) maxDy = c.dy;
     }
-    if ((head & 255) === 0) yield 256;
-  }
-  let lastRoad = 0, streetDone = 0;
-  for (const i of b.trunk) {
-    const born = Math.floor(Math.max(0, dist[i]!) / ROAD_CELLS_PER_TICK);
-    b.born[i] = born;
-    lastRoad = Math.max(lastRoad, born);
-    const lx = i % REGION, ly = (i - lx) / REGION;
-    if (hub.town && ((ly + y0 === hub.y && Math.abs(lx + x0 - hub.x) <= STREET_HALF) || (lx + x0 === hub.x && Math.abs(ly + y0 - hub.y) <= 4))) {
-      streetDone = Math.max(streetDone, born);
+    for (const cand of roll.candidates) {
+      let fits = true;
+      for (let dy = minDy; dy <= maxDy && fits; dy++) {
+        for (let dx = minDx; dx <= maxDx && fits; dx++) {
+          const i = localIndex(b, cand.x + dx, cand.y + dy);
+          if (i < 0 || b.flags[i] !== 0) fits = false;
+        }
+      }
+      if (!fits) continue;
+      // The 1-cell ring around the box must stay walkable (no developed
+      // blocking cell): the landmark is approachable from every side.
+      let ringOk = true;
+      for (let dy = minDy - 1; dy <= maxDy + 1 && ringOk; dy++) {
+        for (let dx = minDx - 1; dx <= maxDx + 1 && ringOk; dx++) {
+          if (dx >= minDx && dx <= maxDx && dy >= minDy && dy <= maxDy) continue;
+          const i = localIndex(b, cand.x + dx, cand.y + dy);
+          if (i < 0 || (b.flags[i]! & F_BLOCK) !== 0) ringOk = false;
+        }
+      }
+      if (!ringOk) continue;
+      let born = 0;
+      for (const c of roll.cells) {
+        if (c.upper) setUpper(b, cand.x + c.dx, cand.y + c.dy, c.tile, born, c.block ? F_BLOCK : F_DECOR);
+        else setGround(b, cand.x + c.dx, cand.y + c.dy, c.tile, born);
+        born++;
+      }
+      // Reserve the walkable ring: any ring cell the town and roads did not
+      // develop is planned as the biome's base ground born at tick 0, so
+      // chunk generation clears natural stamps on it (a tree or boulder
+      // would otherwise block the promised ring, since nature is stamped
+      // after the plan). Already-developed ring cells (roads) stay as they
+      // are — they are walkable once grown.
+      for (let dy = minDy - 1; dy <= maxDy + 1; dy++) {
+        for (let dx = minDx - 1; dx <= maxDx + 1; dx++) {
+          if (dx >= minDx && dx <= maxDx && dy >= minDy && dy <= maxDy) continue;
+          const i = localIndex(b, cand.x + dx, cand.y + dy);
+          if (i >= 0 && b.flags[i] === 0) setGround(b, cand.x + dx, cand.y + dy, BIOME_BASE_TILE[hub.biome]!, 0);
+        }
+      }
+      plan.landmark = {
+        rx, ry, x: cand.x, y: cand.y, cx: cand.x + ((maxDx - minDx + 1) >> 1), cy: cand.y + ((maxDy - minDy + 1) >> 1),
+        kind: roll.kind, kindName: roll.kindName, cells: roll.cells, bornTick: 0,
+      };
+      last = Math.max(last, born - 1);
+      break;
     }
+    yield 80;
   }
-  yield 200;
 
-  // 3. Town growth: plaza props, houses, plot, residents, bushes.
-  let last = lastRoad;
-  if (hub.town) {
-    const propsTick = streetDone + 1;
-    setUpper(b, hub.x - 1, hub.y - 1, hub.biome === 3 ? T.FIREWOOD : T.WELL, propsTick, F_BLOCK);
-    setUpper(b, hub.x + 1, hub.y + 1, T.NOTICE, propsTick, F_BLOCK);
-    const { houses, plotTick } = yield* placeHousesAndPlot(b, seed, hub, propsTick + 1);
-    plan.houses = houses.length;
-    yield 160;
-    const box = { x0: hub.x - STREET_HALF, y0: hub.y - 12, x1: hub.x + STREET_HALF, y1: hub.y + 6 };
-    let tick = plotTick + 1;
-    for (let n = 0; n < houses.length; n++) {
-      const h = houses[n]!;
-      const route = villagerRoute(b, seed, rx, ry, n, h.doorX, h.frontY, box);
-      plan.villagers.push({ id: `v${rx}_${ry}_${n}`, x: h.doorX, y: h.frontY, route: route.steps, minX: route.minX, minY: route.minY, maxX: route.maxX, maxY: route.maxY, born: tick++, house: n });
-      yield 60;
-    }
-    // Bushes by the doors (grow's seedSettledDecor), walked under.
-    const decorTick = tick;
-    let placed = 0;
-    for (let n = 0; n < houses.length * 3 && placed < 10; n++) {
-      const h = houses[n % houses.length]!;
-      const r = growHash(seed, rx * 977 + n, ry, 0xdec0);
-      const dx = (r % 7) - 3, dy = ((r >>> 4) % 7) - 3;
-      if (Math.abs(dx) + Math.abs(dy) < 3) continue;
-      const x = h.doorX + dx, y = h.frontY + dy;
-      if (!free(b, x, y)) continue;
-      setUpper(b, x, y, hub.biome === 3 ? T.SNOW_SHRUB : T.BUSH, decorTick, F_DECOR);
-      placed++;
-    }
-    last = Math.max(last, decorTick);
-  } else {
-    setUpper(b, hub.x + 1, hub.y - 1, T.NOTICE, 1, F_BLOCK);
-    last = Math.max(last, 1);
-  }
   plan.totalTicks = last + 1;
 
   yield 60;

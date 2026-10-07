@@ -31,7 +31,8 @@ import { STAMP_END } from "../grow/grow-stamps.ts";
 import { blocksAt, groundAt, roadAt, upperAt, type ChunkData } from "./chunk.ts";
 import { regionKey, type Residency } from "./residency.ts";
 import { F_BLOCK, type RegionPlan } from "./region.ts";
-import { BIOME_BASE_TILE, CHUNK, REGION, REGION_CHUNKS, regionGates } from "./world.ts";
+import { BIOME_BASE_TILE, CHUNK, REGION, REGION_CHUNKS } from "./world.ts";
+import { plaqueToken, plaqueTokenKey, TALK_LINE_COUNT, PLAQUE_LINE_COUNT, villagerToken, villagerTokenKey } from "./towns.ts";
 
 export const WINDOW_CHUNKS = 3;
 export const WINDOW = CHUNK * WINDOW_CHUNKS; // 96 tiles
@@ -92,34 +93,26 @@ export function windowRegions(cx: number, cy: number): [number, number][] {
   return out;
 }
 
-function villagerLines(plan: RegionPlan, seed: number): string[] {
-  return [
-    `VILLAGER: Welcome to ${plan.name}.`,
-    `The road grew here when you came near,`,
-    `from seed 0x${seedHex(seed)}, region ${plan.rx},${plan.ry}.`,
-  ];
-}
-function plaqueLines(plan: RegionPlan, seed: number): string[] {
-  const g = regionGates(seed, plan.rx, plan.ry);
-  const roads = [g.n.active ? "north" : "", g.e.active ? "east" : "", g.s.active ? "south" : "", g.w.active ? "west" : ""].filter(Boolean);
-  return [
-    `<${plan.name}>`,
-    `Grown by rule from seed 0x${seedHex(seed)} the day you found it.`,
-    roads.length ? `Roads run ${roads.join(", ")}.` : "No road leaves this place.",
-  ];
-}
-
 /**
  * Build the window around chunk (cx, cy) in slices. Every chunk of the
  * window and the plans of every region it overlaps must be resident.
  * `tickOf` gives each region's growth tick at build time; `start` is the
  * player's world tile (the document's start cell).
+ *
+ * Dialog is NOT generated here: each villager and plaque event bakes
+ * `{x:…}` text tokens that the sim's textTokens resolver expands when a box
+ * opens (the talk frame). So the per-region line generation (townFacts /
+ * townErrand / townTalk / townPlaque) never runs in a build slice or on a
+ * window-swap frame. The (cheap) event objects are built one region at a
+ * time, interleaved with the terrain slices, so the swap frame's build
+ * slice is tiny.
  */
 export function* windowJob(
   res: Residency, seed: number, cx: number, cy: number,
   tickOf: (rx: number, ry: number) => number,
   start: { x: number; y: number; dir: "down" | "left" | "up" | "right" },
   includeUpper = false,
+  helpedOf: (rx: number, ry: number) => boolean = () => false,
 ): Generator<number, WindowBuild> {
   const { x0, y0 } = windowOrigin(cx, cy);
   const chunks: ChunkData[] = [];
@@ -135,6 +128,66 @@ export function* windowJob(
   const roads = new Uint8Array(WINDOW * WINDOW);
   const upper: [number, TileId][] = [];
   const passage: [number, "block"][] = [];
+  const events: GameEvent[] = [];
+  const actors: WindowActor[] = [];
+  // The exact {x:} keys this window bakes: the project's textTokens
+  // declaration is an exact-key allowlist (rpgkit-check warns on any key
+  // not listed), so it must list the tokens this window actually uses.
+  const tokenKeys = new Set<string>();
+  // One region's residents and plaque. Cheap: token lines only, no line
+  // generation (the textTokens resolver expands them at box-open time).
+  const buildRegion = (rx: number, ry: number): void => {
+    const plan = res.plan(rx, ry);
+    if (!plan) throw new Error(`wander: window plan ${rx},${ry} is not resident`);
+    if (plan.empty || !plan.hub.town) return;
+    // The helped flag is frozen at build time so the expanded lines match
+    // the old build-time bake; the errand offer is pure, so the baked pitch
+    // always matches the offer the player accepts at the plaza.
+    const helped = helpedOf(rx, ry);
+    for (const v of plan.villagers) {
+      // The whole walk must fit inside the window (the map edge blocks).
+      if (v.minX <= x0 || v.minY <= y0 || v.maxX >= x0 + WINDOW - 1 || v.maxY >= y0 + WINDOW - 1) continue;
+      const switchId = `b:${v.id}`;
+      const lines: string[] = [];
+      for (let i = 0; i < TALK_LINE_COUNT; i++) {
+        tokenKeys.add(villagerTokenKey(rx, ry, v.house, helped, i));
+        lines.push(villagerToken(rx, ry, v.house, helped, i));
+      }
+      events.push({
+        id: v.id,
+        name: `${plan.name} resident`,
+        x: v.x - x0,
+        y: v.y - y0,
+        pages: [{
+          condition: { switch: switchId },
+          trigger: "action",
+          sprite: "villager",
+          blocks: true,
+          moveRoute: { steps: [...v.route], repeat: true, skippable: false },
+          commands: [{ op: "text", lines }],
+        }],
+      });
+      actors.push({ id: v.id, switchId, born: v.born, rx, ry });
+    }
+    const px = plan.hub.x + 1, py = plan.hub.y + 1;
+    if (px > x0 && py > y0 && px < x0 + WINDOW - 1 && py < y0 + WINDOW - 1) {
+      const li = (py - plan.y0) * REGION + (px - plan.x0);
+      const born = plan.flags![li]! & F_BLOCK ? plan.born![li]! : 0;
+      const id = `plaque${rx}_${ry}`;
+      const lines: string[] = [];
+      for (let i = 0; i < PLAQUE_LINE_COUNT; i++) {
+        tokenKeys.add(plaqueTokenKey(rx, ry, helped, i));
+        lines.push(plaqueToken(rx, ry, helped, i));
+      }
+      events.push({
+        id, name: `${plan.name} plaque`, x: px - x0, y: py - y0,
+        pages: [{ condition: { switch: `b:${id}` }, trigger: "action", sprite: null, commands: [{ op: "text", lines }] }],
+      });
+      actors.push({ id, switchId: `b:${id}`, born, rx, ry });
+    }
+  };
+  const regions = windowRegions(cx, cy);
+  let regionIdx = 0;
   for (let wy = 0; wy < WINDOW; wy++) {
     const crow = Math.floor(wy / CHUNK) * WINDOW_CHUNKS;
     const ly = wy % CHUNK;
@@ -153,49 +206,21 @@ export function* windowJob(
       if (blocksAt(c, i, k)) passage.push([at, "block"]);
     }
     if ((wy & 3) === 3) yield 4 * WINDOW;
+    // Spread the event creation across the build: one region every 6 rows,
+    // so the content is ready before the swap and no build slice is heavy.
+    if (wy % 6 === 5 && regionIdx < regions.length) {
+      const [rx, ry] = regions[regionIdx++]!;
+      buildRegion(rx, ry);
+      yield 60;
+    }
   }
-
-  // Residents and plaques of every overlapping region.
-  const events: GameEvent[] = [];
-  const actors: WindowActor[] = [];
-  for (const [rx, ry] of windowRegions(cx, cy)) {
-    const plan = res.plan(rx, ry);
-    if (!plan) throw new Error(`wander: window plan ${rx},${ry} is not resident`);
-    if (plan.empty || !plan.hub.town) continue;
-    for (const v of plan.villagers) {
-      // The whole walk must fit inside the window (the map edge blocks).
-      if (v.minX <= x0 || v.minY <= y0 || v.maxX >= x0 + WINDOW - 1 || v.maxY >= y0 + WINDOW - 1) continue;
-      const switchId = `b:${v.id}`;
-      events.push({
-        id: v.id,
-        name: `${plan.name} resident`,
-        x: v.x - x0,
-        y: v.y - y0,
-        pages: [{
-          condition: { switch: switchId },
-          trigger: "action",
-          sprite: "villager",
-          blocks: true,
-          moveRoute: { steps: [...v.route], repeat: true, skippable: false },
-          commands: [{ op: "text", lines: villagerLines(plan, seed) }],
-        }],
-      });
-      actors.push({ id: v.id, switchId, born: v.born, rx, ry });
-    }
-    const px = plan.hub.x + 1, py = plan.hub.y + 1;
-    if (px > x0 && py > y0 && px < x0 + WINDOW - 1 && py < y0 + WINDOW - 1) {
-      const li = (py - plan.y0) * REGION + (px - plan.x0);
-      const born = plan.flags![li]! & F_BLOCK ? plan.born![li]! : 0;
-      const id = `plaque${rx}_${ry}`;
-      events.push({
-        id, name: `${plan.name} plaque`, x: px - x0, y: py - y0,
-        pages: [{ condition: { switch: `b:${id}` }, trigger: "action", sprite: null, commands: [{ op: "text", lines: plaqueLines(plan, seed) }] }],
-      });
-      actors.push({ id, switchId: `b:${id}`, born, rx, ry });
-    }
+  while (regionIdx < regions.length) {
+    const [rx, ry] = regions[regionIdx++]!;
+    buildRegion(rx, ry);
+    yield 60;
   }
   events.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  yield 200;
+  yield 40;
 
   const map: MapDef = {
     id: MAP_ID,
@@ -214,6 +239,20 @@ export function* windowJob(
     tileSize: 16,
     start: { map: MAP_ID, x: start.x - x0, y: start.y - y0, dir: start.dir },
     sheets: [{ ...SHEET }],
+    // Opt in to {x:} text-token expansion: the dialog lines are tokens the
+    // sim's resolver expands when a box opens (on-demand dialog). The
+    // declaration is an exact-key allowlist, so it lists the tokens this
+    // window actually baked (rpgkit-check is clean on every generated
+    // window).
+    system: { textTokens: [...tokenKeys].sort() },
+    // The actor switches (`b:<id>`) the sim seeds into the switch bank at
+    // runtime (wander-sim.ts applySwitches / applyGrowth): no document
+    // command ever sets them, so they are declared here in the project's
+    // switch directory. rpgkit-check does not yet treat catalog switches as
+    // host-written, so lint/switch-read-never-set still fires for them (see
+    // findings/WANDER-F2.md, 修复 5); the lint test exempts exactly this
+    // family until the checker honors the catalog.
+    switches: actors.map((a) => ({ id: a.switchId })).sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0)),
     items: [],
     sprites: { villager: { kind: "image", src: VILLAGER_SPRITE } },
     maps: [map],
@@ -226,8 +265,9 @@ export function buildWindow(
   tickOf: (rx: number, ry: number) => number,
   start: { x: number; y: number; dir: "down" | "left" | "up" | "right" },
   includeUpper = false,
+  helpedOf: (rx: number, ry: number) => boolean = () => false,
 ): WindowBuild {
-  const job = windowJob(res, seed, cx, cy, tickOf, start, includeUpper);
+  const job = windowJob(res, seed, cx, cy, tickOf, start, includeUpper, helpedOf);
   for (;;) {
     const r = job.next();
     if (r.done) return r.value;
