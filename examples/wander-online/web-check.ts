@@ -109,6 +109,7 @@ class Cdp {
 
 interface Target {
   type: string;
+  url?: string;
   webSocketDebuggerUrl: string;
 }
 
@@ -119,8 +120,15 @@ async function attach(): Promise<Cdp> {
     try {
       const res = await fetch(`${flags.cdp}/json`);
       const targets = (await res.json()) as Target[];
-      const page = targets.find((t) => t.type === "page" && t.webSocketDebuggerUrl);
-      if (page) return Cdp.connect(page.webSocketDebuggerUrl);
+      // Prefer the blank tab Chrome was started with: newer headless Chrome
+      // also lists internal pages, and navigating one of those never answers.
+      // Without a blank tab, open a fresh one.
+      let page = targets.find((t) => t.type === "page" && t.url === "about:blank" && t.webSocketDebuggerUrl);
+      if (!page) {
+        const created = await fetch(`${flags.cdp}/json/new?about:blank`, { method: "PUT" });
+        if (created.ok) page = (await created.json()) as Target;
+      }
+      if (page?.webSocketDebuggerUrl) return Cdp.connect(page.webSocketDebuggerUrl);
       last = "no page target yet";
     } catch (err) {
       last = String(err);
