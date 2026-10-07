@@ -12,8 +12,9 @@
 
 import { WanderSim } from "../../wander/wander-sim.ts";
 import { WINDOW } from "../../wander/window.ts";
-import type { Session } from "../../../src/engine/session.ts";
+import { startSession, type Session, type SessionState } from "../../../src/engine/session.ts";
 import type { WindowBuild } from "../../wander/window.ts";
+import type { Residency } from "../../wander/residency.ts";
 
 export interface ArenaWorld {
   readonly seed: number;
@@ -23,7 +24,19 @@ export interface ArenaWorld {
   readonly session: Session;
   readonly x0: number;
   readonly y0: number;
+  /** The residency the window was generated from. The world is frozen, so
+   *  the render ring reads its chunks directly (no streaming). */
+  readonly res: Residency;
+  /** The sim clock at the freeze point. The ring's growth ticks are read
+   *  against this fixed value, so the frozen world never ages. */
+  readonly bootNow: number;
+  /** Host-written birth switches at the shared arena's frozen age. */
+  readonly initialSwitches: Readonly<Record<string, boolean>>;
 }
+
+/** Five seconds grows the starting settlement through its resident births;
+ * the arena then freezes terrain and actor availability at this exact tick. */
+export const ARENA_FREEZE_TICKS = 300;
 
 export function buildArenaWorld(seed: number): ArenaWorld {
   const sim = new WanderSim({
@@ -33,5 +46,27 @@ export function buildArenaWorld(seed: number): ArenaWorld {
     viewH: WINDOW * 16,
     manual: true,
   });
-  return { seed: sim.seed, window: sim.window, session: sim.session, x0: sim.window.x0, y0: sim.window.y0 };
+  for (let i = 0; i < ARENA_FREEZE_TICKS; i++) sim.step(0);
+  return {
+    seed: sim.seed,
+    window: sim.window,
+    session: sim.session,
+    x0: sim.window.x0,
+    y0: sim.window.y0,
+    res: sim.res,
+    bootNow: sim.now,
+    initialSwitches: { ...sim.state.interp.sw.switches },
+  };
+}
+
+/** Start one player from the same mature frozen state on client and server.
+ * Terrain/passability live in the shared Session; actor birth switches live
+ * in each player's reducer state and therefore must be seeded together. */
+export function startArenaState(world: ArenaWorld): SessionState {
+  const state = startSession(world.window.project, world.session);
+  const sw = {
+    ...state.interp.sw,
+    switches: { ...state.interp.sw.switches, ...world.initialSwitches },
+  };
+  return { ...state, sw, interp: { ...state.interp, sw } };
 }

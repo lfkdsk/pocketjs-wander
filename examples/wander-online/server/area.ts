@@ -13,10 +13,10 @@
 // fold the kit's hosts use). Nothing here reads a clock: a recorded input
 // tape replays byte-identically.
 
-import { startSession, stepSession, type SessionState } from "../../../src/engine/session.ts";
+import { stepSession, type SessionState } from "../../../src/engine/session.ts";
 import { motionTicksPerFrame } from "../../../src/engine/motion-clock.ts";
 import { WINDOW } from "../../wander/window.ts";
-import { buildArenaWorld, type ArenaWorld } from "../net/world.ts";
+import { buildArenaWorld, startArenaState, type ArenaWorld } from "../net/world.ts";
 
 /** Per-player input queue bound. The client keeps at most 128 unacked
  *  inputs; a queue this deep means the server is badly stalled. */
@@ -31,6 +31,10 @@ export interface ArenaPlayer {
   id: number;
   name: string;
   color: number;
+  /** W-CHAR look id (0..63), from the player's profile. The v3 client
+   *  draws the walker sprite for this look; color stays for the wire's
+   *  4-bit field and older clients. */
+  look: number;
   state: SessionState;
   /** Held d-pad mask, the only thing clients may change. */
   buttons: number;
@@ -77,10 +81,10 @@ export class Arena {
     return this.world.y0;
   }
 
-  add(name: string, color: number): ArenaPlayer {
+  add(name: string, color: number, look = 0): ArenaPlayer {
     const id = this.nextId++;
-    const state = startSession(this.world.window.project, this.session);
-    const p: ArenaPlayer = { id, name, color, state, buttons: 0, lastSeq: 0, queue: [], dropped: 0 };
+    const state = startArenaState(this.world);
+    const p: ArenaPlayer = { id, name, color, look, state, buttons: 0, lastSeq: 0, queue: [], dropped: 0 };
     this.players.set(id, p);
     return p;
   }

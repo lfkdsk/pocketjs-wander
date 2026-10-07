@@ -12,6 +12,7 @@
 //       --count 100 --seconds 45 [--batch]
 
 import { BTN, BATCH_SIZE, MSG, decodeState, decodeWelcome, encodeInput, encodeInputBatch, encodePing } from "../net/protocol.ts";
+import { AUTH_PROTOCOL_VERSION } from "../shared/auth.ts";
 
 interface BotOpts {
   url: string;
@@ -57,7 +58,7 @@ class Bot {
     this.ws.binaryType = "arraybuffer";
     const now = () => (globalThis.performance ? globalThis.performance.now() : Date.now());
     this.ws.addEventListener("open", () => {
-      this.ws.send(JSON.stringify({ type: "join", name, color, v: 2 }));
+      this.ws.send(JSON.stringify({ type: "join", name, color, v: AUTH_PROTOCOL_VERSION }));
     });
     this.ws.addEventListener("message", (ev) => {
       const buf = ev.data as ArrayBuffer;

@@ -13,7 +13,8 @@
         "net.socket"
       ],
       "enhances": [
-        "display.viewport.live"
+        "display.viewport.live",
+        "data.fs"
       ]
     }
   },
@@ -28,6 +29,20 @@
           272
         ],
         "presentation": "integer-fit"
+      },
+      "dynamic": {
+        "default": [
+          960,
+          544
+        ],
+        "min": [
+          480,
+          272
+        ],
+        "max": [
+          4096,
+          4096
+        ]
       }
     }
   }

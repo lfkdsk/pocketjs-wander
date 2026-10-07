@@ -992,112 +992,112 @@
   "../grow/assets/grow-caravan.png": {
     "psm": 2
   },
-  "assets/stamp-tree-round.png": {
+  "../wander/assets/stamp-tree-round.png": {
     "psm": 2
   },
-  "assets/stamp-tree-pine.png": {
+  "../wander/assets/stamp-tree-pine.png": {
     "psm": 2
   },
-  "assets/stamp-tree-dead.png": {
+  "../wander/assets/stamp-tree-dead.png": {
     "psm": 2
   },
-  "assets/stamp-tree-snowpine-moss.png": {
+  "../wander/assets/stamp-tree-snowpine-moss.png": {
     "psm": 2
   },
-  "assets/stamp-tree-snowpine.png": {
+  "../wander/assets/stamp-tree-snowpine.png": {
     "psm": 2
   },
-  "assets/stamp-tree-snowround.png": {
+  "../wander/assets/stamp-tree-snowround.png": {
     "psm": 2
   },
-  "assets/stamp-tree-cherry.png": {
+  "../wander/assets/stamp-tree-cherry.png": {
     "psm": 2
   },
-  "assets/stamp-tree-round-b.png": {
+  "../wander/assets/stamp-tree-round-b.png": {
     "psm": 2
   },
-  "assets/stamp-tree-round-c.png": {
+  "../wander/assets/stamp-tree-round-c.png": {
     "psm": 2
   },
-  "assets/stamp-tree-small.png": {
+  "../wander/assets/stamp-tree-small.png": {
     "psm": 2
   },
-  "assets/stamp-stump-big.png": {
+  "../wander/assets/stamp-stump-big.png": {
     "psm": 2
   },
-  "assets/stamp-stump-big-b.png": {
+  "../wander/assets/stamp-stump-big-b.png": {
     "psm": 2
   },
-  "assets/stamp-boulder-brown.png": {
+  "../wander/assets/stamp-boulder-brown.png": {
     "psm": 2
   },
-  "assets/stamp-boulder-grey.png": {
+  "../wander/assets/stamp-boulder-grey.png": {
     "psm": 2
   },
-  "assets/stamp-bush-dark.png": {
+  "../wander/assets/stamp-bush-dark.png": {
     "psm": 2
   },
-  "assets/stamp-bush-snow.png": {
+  "../wander/assets/stamp-bush-snow.png": {
     "psm": 2
   },
-  "assets/stamp-palm.png": {
+  "../wander/assets/stamp-palm.png": {
     "psm": 2
   },
-  "assets/stamp-palm-b.png": {
+  "../wander/assets/stamp-palm-b.png": {
     "psm": 2
   },
-  "assets/stamp-market-red.png": {
+  "../wander/assets/stamp-market-red.png": {
     "psm": 2
   },
-  "assets/stamp-market-gold.png": {
+  "../wander/assets/stamp-market-gold.png": {
     "psm": 2
   },
-  "assets/stamp-house-orange.png": {
+  "../wander/assets/stamp-house-orange.png": {
     "psm": 2
   },
-  "assets/stamp-house-redtile.png": {
+  "../wander/assets/stamp-house-redtile.png": {
     "psm": 2
   },
-  "assets/stamp-house-beige.png": {
+  "../wander/assets/stamp-house-beige.png": {
     "psm": 2
   },
-  "assets/stamp-hut-wood.png": {
+  "../wander/assets/stamp-hut-wood.png": {
     "psm": 2
   },
-  "assets/stamp-hut-gable.png": {
+  "../wander/assets/stamp-hut-gable.png": {
     "psm": 2
   },
-  "assets/stamp-hut-thatch.png": {
+  "../wander/assets/stamp-hut-thatch.png": {
     "psm": 2
   },
-  "assets/stamp-dome-green.png": {
+  "../wander/assets/stamp-dome-green.png": {
     "psm": 2
   },
-  "assets/stamp-house-flat.png": {
+  "../wander/assets/stamp-house-flat.png": {
     "psm": 2
   },
-  "assets/stamp-house-round-beige.png": {
+  "../wander/assets/stamp-house-round-beige.png": {
     "psm": 2
   },
-  "assets/stamp-igloo.png": {
+  "../wander/assets/stamp-igloo.png": {
     "psm": 2
   },
-  "assets/stamp-igloo-b.png": {
+  "../wander/assets/stamp-igloo-b.png": {
     "psm": 2
   },
-  "assets/stamp-igloo-c.png": {
+  "../wander/assets/stamp-igloo-c.png": {
     "psm": 2
   },
-  "assets/fill64-0.png": {
+  "../wander/assets/fill64-0.png": {
     "psm": 2
   },
-  "assets/fill64-1.png": {
+  "../wander/assets/fill64-1.png": {
     "psm": 2
   },
-  "assets/fill64-2.png": {
+  "../wander/assets/fill64-2.png": {
     "psm": 2
   },
-  "assets/fill64-3.png": {
+  "../wander/assets/fill64-3.png": {
     "psm": 2
   }
 }

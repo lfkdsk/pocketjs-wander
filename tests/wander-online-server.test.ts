@@ -114,7 +114,7 @@ describe("wander-online server", () => {
   let port: number;
 
   beforeAll(async () => {
-    server = startServer({ port: 0, seed: SEED, hz: 20, broadcastHz: 10, aoi: 16, simLatency: 0, webRoot: "" });
+    server = startServer({ port: 0, seed: SEED, hz: 20, broadcastHz: 10, aoi: 16, simLatency: 0, webRoot: "", allowGuests: true });
     port = server.port;
     // Let the tick loop spin up.
     await new Promise((r) => setTimeout(r, 100));
@@ -145,8 +145,8 @@ describe("wander-online server", () => {
   test("two clients join and see each other in snapshots", async () => {
     const alice = await connect(`ws://127.0.0.1:${port}/ws`);
     const bob = await connect(`ws://127.0.0.1:${port}/ws`);
-    alice.send(JSON.stringify({ type: "join", name: "alice", color: 1 }));
-    bob.send(JSON.stringify({ type: "join", name: "bob", color: 2 }));
+    alice.send(JSON.stringify({ type: "join", v: 3, name: "alice", color: 1 }));
+    bob.send(JSON.stringify({ type: "join", v: 3, name: "bob", color: 2 }));
     const welcomeA = await alice.nextMessage() as ArrayBuffer;
     const welcomeB = await bob.nextMessage() as ArrayBuffer;
     expect(new DataView(welcomeA).getUint8(0)).toBe(MSG.welcome);
@@ -185,7 +185,7 @@ describe("wander-online server", () => {
 
   test("snapshot acks the client's input sequence", async () => {
     const c = await connect(`ws://127.0.0.1:${port}/ws`);
-    c.send(JSON.stringify({ type: "join", name: "ack", color: 3 }));
+    c.send(JSON.stringify({ type: "join", v: 3, name: "ack", color: 3 }));
     const welcome = (await c.nextMessage()) as ArrayBuffer;
     const you = decodeWelcome(welcome).you;
     let seq = 0;
@@ -209,7 +209,7 @@ describe("wander-online server", () => {
 
   test("PING gets a PONG with the same payload", async () => {
     const c = await connect(`ws://127.0.0.1:${port}/ws`);
-    c.send(JSON.stringify({ type: "join", name: "ping", color: 4 }));
+    c.send(JSON.stringify({ type: "join", v: 3, name: "ping", color: 4 }));
     await c.nextMessage();
     c.send(encodePing(9, 12345));
     const until = Date.now() + 2000;

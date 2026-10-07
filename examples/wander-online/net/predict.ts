@@ -21,9 +21,8 @@
 // packet delay or server stalls.
 
 import { stepSession, type Session, type SessionState } from "../../../src/engine/session.ts";
-import { startSession } from "../../../src/engine/session.ts";
 import type { Dir4 } from "../../../src/engine/passability.ts";
-import { buildArenaWorld, type ArenaWorld } from "./world.ts";
+import { buildArenaWorld, startArenaState, type ArenaWorld } from "./world.ts";
 
 /** Saved predicted states, oldest first. Bounded so a long stall cannot
  *  grow memory without limit; a snapshot older than the oldest entry is
@@ -60,7 +59,7 @@ export class Predictor {
   constructor(seed: number) {
     this.world = buildArenaWorld(seed);
     this.session = this.world.session;
-    this.state = startSession(this.world.window.project, this.session);
+    this.state = startArenaState(this.world);
   }
 
   /** Current predicted state (the mover the view renders). */

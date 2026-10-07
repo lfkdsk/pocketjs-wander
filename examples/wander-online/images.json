@@ -1,0 +1,110 @@
+{
+  "../wander/assets/stamp-tree-round.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-tree-pine.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-tree-dead.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-tree-snowpine-moss.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-tree-snowpine.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-tree-snowround.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-tree-cherry.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-tree-round-b.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-tree-round-c.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-tree-small.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-stump-big.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-stump-big-b.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-boulder-brown.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-boulder-grey.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-bush-dark.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-bush-snow.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-palm.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-palm-b.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-market-red.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-market-gold.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-house-orange.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-house-redtile.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-house-beige.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-hut-wood.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-hut-gable.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-hut-thatch.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-dome-green.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-house-flat.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-house-round-beige.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-igloo.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-igloo-b.png": {
+    "psm": 2
+  },
+  "../wander/assets/stamp-igloo-c.png": {
+    "psm": 2
+  },
+  "../wander/assets/fill64-0.png": {
+    "psm": 2
+  },
+  "../wander/assets/fill64-1.png": {
+    "psm": 2
+  },
+  "../wander/assets/fill64-2.png": {
+    "psm": 2
+  },
+  "../wander/assets/fill64-3.png": {
+    "psm": 2
+  }
+}

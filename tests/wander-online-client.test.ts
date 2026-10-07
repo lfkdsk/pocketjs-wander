@@ -24,7 +24,7 @@ describe("wander-online client reconnect", () => {
   const live: OnlineClient[] = [];
 
   beforeAll(async () => {
-    server = startServer({ port: 0, seed: SEED, hz: 20, broadcastHz: 10, aoi: 48, simLatency: 0, webRoot: "" });
+    server = startServer({ port: 0, seed: SEED, hz: 20, broadcastHz: 10, aoi: 48, simLatency: 0, webRoot: "", allowGuests: true });
     port = server.port;
     await sleep(150);
   });
@@ -56,7 +56,8 @@ describe("wander-online client reconnect", () => {
 
   const mk = (name: string, color: number): ClientHandle => {
     let current: BunPocketSocket | null = null;
-    const client = new OnlineClient(`ws://127.0.0.1:${port}/ws`, name, color, {
+    const client = new OnlineClient(`ws://127.0.0.1:${port}/ws`, {
+      name, color, auth: { kind: "guest" },
       socketFactory: (u) => {
         current = bunSocketFactory(u);
         return current;
@@ -143,7 +144,7 @@ describe("wander-online client reconnect", () => {
     // graceful shutdown). Both clients must reconnect and rejoin.
     server.close();
     await sleep(500);
-    server = startServer({ port, seed: SEED, hz: 20, broadcastHz: 10, aoi: 48, simLatency: 0, webRoot: "" });
+    server = startServer({ port, seed: SEED, hz: 20, broadcastHz: 10, aoi: 48, simLatency: 0, webRoot: "", allowGuests: true });
     await sleep(150);
     await waitFor(() => a.client.status === "joined" && a.client.online === 2, "a rejoined after restart");
     await waitFor(() => b.client.status === "joined" && b.client.online === 2, "b rejoined after restart");

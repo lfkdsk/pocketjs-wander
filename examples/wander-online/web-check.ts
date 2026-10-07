@@ -185,6 +185,12 @@ async function main(): Promise<void> {
   const cdp = await attach();
   await cdp.send("Page.enable");
   await cdp.send("Runtime.enable");
+  // The acceptance demo talks only to the loopback server started with
+  // --allow-guests. Install its explicit development credential before the
+  // player page evaluates any script; production pages never do this.
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+    source: 'globalThis.__onlineAuth={kind:"guest",name:"web-demo",color:1};',
+  });
   // 480x272 at 3x density, matching the desktop demo captures.
   await cdp.send("Emulation.setDeviceMetricsOverride", {
     width: 480,

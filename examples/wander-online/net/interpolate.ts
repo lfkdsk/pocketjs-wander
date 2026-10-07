@@ -36,7 +36,11 @@ export interface RenderPos {
   x: number;
   y: number;
   dir: number;
+  /** Movement animation state from the nearest bracketing snapshot. */
+  phase: number;
+  stepDir: number;
   moving: boolean;
+  walking: boolean;
   color: number;
 }
 
@@ -45,6 +49,9 @@ export class Interpolator {
   /** Last known position per entity, for hold-on-drop and TTL. */
   private last = new Map<number, TimedEntity>();
   private readonly delayMs: number;
+  /** Diagnostic counter for callers that materialize the id iterable. The
+   * render path must stay on forEach(); tests pin that invariant. */
+  private idArrayCount = 0;
 
   constructor(delayMs = INTERP_DELAY_MS) {
     this.delayMs = delayMs;
@@ -96,21 +103,48 @@ export class Interpolator {
     if (!eb) return this.posOf(ea);
     const span = b.at - a.at;
     const f = span <= 0 ? 1 : Math.min(1, Math.max(0, (t - a.at) / span));
+    // Position is continuous, but the mover/animation fields form one
+    // discrete state. Take all of them from the same nearest snapshot so a
+    // render pose never combines (for example) one step's phase with the
+    // other step's direction or walking flag.
+    const pose = f < 0.5 ? ea : eb;
     return {
       x: ea.tx * 16 + ea.px + (eb.tx * 16 + eb.px - (ea.tx * 16 + ea.px)) * f,
       y: ea.ty * 16 + ea.py + (eb.ty * 16 + eb.py - (ea.ty * 16 + ea.py)) * f,
-      dir: f < 0.5 ? ea.dir : eb.dir,
-      moving: f < 0.5 ? ea.moving : eb.moving,
-      color: ea.color,
+      dir: pose.dir,
+      phase: pose.phase,
+      stepDir: pose.stepDir,
+      moving: pose.moving,
+      walking: pose.walking,
+      color: pose.color,
     };
   }
 
   /** Ids of all entities currently known (for view node pooling). */
   ids(): number[] {
+    this.idArrayCount++;
     return [...this.last.keys()];
   }
 
+  get idArrayAllocations(): number {
+    return this.idArrayCount;
+  }
+
+  /** Iterate the known entity ids without allocating (the render path). */
+  forEach(cb: (id: number) => void): void {
+    for (const id of this.last.keys()) cb(id);
+  }
+
   private posOf(e: WireEntity): RenderPos {
-    return { x: e.tx * 16 + e.px, y: e.ty * 16 + e.py, dir: e.dir, moving: e.moving, color: e.color };
+    return {
+      x: e.tx * 16 + e.px,
+      y: e.ty * 16 + e.py,
+      dir: e.dir,
+      phase: e.phase,
+      stepDir: e.stepDir,
+      moving: e.moving,
+      walking: e.walking,
+      color: e.color,
+    };
   }
 }

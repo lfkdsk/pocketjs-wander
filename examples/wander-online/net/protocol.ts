@@ -29,12 +29,21 @@
 //             recipient — the reconciliation watermark.
 //     PONG    0x30 id u32 t u32
 //     BYE     0x40 id u32
+//     ROSTER  0x50 n u8
+//                    ( n x: id u32 nameLen u8 name[nameLen] u8 look u8 )
+//             Who is who: id -> chosen name and W-CHAR look id. Sent on join
+//             (the full roster to the newcomer, the one new entry to everyone
+//             else) and on profile changes; never in the per-frame STATE
+//             snapshots. Names are UTF-8, at most 12 code points (server-
+//             validated), so an entry is at most 42 B and a 32-player roster
+//             fits in one message. Clients reconcile by id.
 //
 // STATE is a full AOI snapshot every broadcast: idempotent, so a dropped
 // packet costs nothing but one frame, and clients reconcile by id set.
 
 import { WINDOW } from "../../wander/window.ts";
 import type { WindowBuild } from "../../wander/window.ts";
+import { stringToUtf8, utf8ToString } from "../shared/utf8.ts";
 
 export const MSG = {
   input: 0x01,
@@ -44,6 +53,7 @@ export const MSG = {
   state: 0x20,
   pong: 0x30,
   bye: 0x40,
+  roster: 0x50,
 } as const;
 
 /** Reference ticks packed into one INPUT_BATCH. The client predicts one
@@ -175,6 +185,76 @@ export function encodeBye(id: number): ArrayBuffer {
   new DataView(b).setUint8(0, MSG.bye);
   new DataView(b).setUint32(1, id >>> 0, true);
   return b;
+}
+
+/** One ROSTER row: a player's chosen name and W-CHAR look id. */
+export interface RosterEntry {
+  id: number;
+  name: string;
+  look: number;
+}
+
+export const ROSTER_MAX = 255;
+
+/** Encode a ROSTER message (id -> name, look). Names are UTF-8 and capped at
+ *  12 code points by the server, so an entry never exceeds 42 B. */
+export function encodeRoster(entries: readonly RosterEntry[]): ArrayBuffer {
+  const n = Math.min(entries.length, ROSTER_MAX);
+  const parts: ArrayBuffer[] = [];
+  let total = 2; // kind + count
+  for (let i = 0; i < n; i++) {
+    const e = entries[i]!;
+    const nameBytes = stringToUtf8(e.name);
+    const len = 4 + 1 + nameBytes.byteLength + 1;
+    const b = new ArrayBuffer(len);
+    const v = new DataView(b);
+    v.setUint32(0, e.id >>> 0, true);
+    v.setUint8(4, nameBytes.byteLength);
+    new Uint8Array(b, 5).set(nameBytes);
+    v.setUint8(5 + nameBytes.byteLength, e.look & 0xff);
+    parts.push(b);
+    total += len;
+  }
+  const out = new ArrayBuffer(total);
+  const ov = new DataView(out);
+  ov.setUint8(0, MSG.roster);
+  ov.setUint8(1, n);
+  let o = 2;
+  for (const p of parts) {
+    new Uint8Array(out, o).set(new Uint8Array(p));
+    o += p.byteLength;
+  }
+  return out;
+}
+
+/** Decode a ROSTER message. Returns null when the payload is truncated or
+ *  carries an over-capacity count, so a corrupt/garbage message is dropped
+ *  rather than crashing the client. */
+export function decodeRoster(buf: ArrayBuffer | Uint8Array): RosterEntry[] | null {
+  const v = buf instanceof Uint8Array ? new DataView(buf.buffer, buf.byteOffset, buf.byteLength) : new DataView(buf);
+  if (buf.byteLength < 2) return null;
+  const n = v.getUint8(1);
+  if (n > ROSTER_MAX) return null;
+  const entries: RosterEntry[] = [];
+  let o = 2;
+  for (let i = 0; i < n; i++) {
+    if (o + 5 > buf.byteLength) return null;
+    const id = v.getUint32(o, true);
+    const nameLen = v.getUint8(o + 4);
+    o += 5;
+    if (o + nameLen + 1 > buf.byteLength) return null;
+    let name: string;
+    if (buf instanceof Uint8Array) {
+      name = utf8ToString(buf.subarray(o, o + nameLen));
+    } else {
+      name = utf8ToString(new Uint8Array(buf, o, nameLen));
+    }
+    o += nameLen;
+    const look = v.getUint8(o);
+    o += 1;
+    entries.push({ id, name, look });
+  }
+  return entries;
 }
 
 /** One decoded INPUT (server direction). Accepts an ArrayBuffer or a

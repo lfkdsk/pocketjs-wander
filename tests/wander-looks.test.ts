@@ -27,6 +27,8 @@ import {
   LOOK_BASE_NAMES,
   LOOK_COUNT,
   LOOK_PALETTES,
+  cycleLookBase,
+  cycleLookPalette,
   lookFor,
   lookFromId,
   lookId,
@@ -80,6 +82,14 @@ describe("look pool: ids", () => {
   test("lookFromId clamps out-of-range ids to the pool", () => {
     expect(lookId(lookFromId(-1))).toBe(0);
     expect(lookId(lookFromId(999))).toBe(LOOK_COUNT - 1);
+  });
+
+  test("base and palette controls wrap within their own dimensions", () => {
+    expect(cycleLookPalette(3, 1)).toBe(0);
+    expect(cycleLookPalette(4, -1)).toBe(7);
+    expect(cycleLookBase(3, 1)).toBe(7);
+    expect(cycleLookBase(60, 1)).toBe(0);
+    expect(cycleLookBase(6, -1)).toBe(2);
   });
 });
 

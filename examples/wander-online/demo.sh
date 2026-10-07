@@ -59,7 +59,7 @@ CDP="http://127.0.0.1:9222"
 PAGE="http://127.0.0.1:9003/wander-online/"
 
 start_server() { # extra args...
-  (cd "$ROOT" && bun run examples/wander-online/server/server.ts --port 8080 --aoi 48 "$@") &
+  (cd "$ROOT" && bun run examples/wander-online/server/server.ts --port 8080 --aoi 48 --allow-guests "$@") &
   SERVER_PID=$!
   sleep 1
 }
@@ -145,7 +145,7 @@ assert_desktop() { # log
 }
 
 echo "== building desktop host + app =="
-(cd "$ROOT" && PATH="$HOME/.cargo/bin:$PATH" bun tools/desktop.ts wander-online --build-only 2>&1 | tail -2)
+(cd "$ROOT" && PATH="$HOME/.cargo/bin:$PATH" bun tools/desktop.ts wander-online --guest demo --build-only 2>&1 | tail -3)
 (cd "$ROOT" && bun tools/web.ts wander-online 2>&1 | tail -2)
 
 # Serve the web build for the chrome tab (all phases).

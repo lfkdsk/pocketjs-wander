@@ -71,6 +71,20 @@ export function lookFromId(id: number): CharacterLook {
   return { base: Math.floor(i / LOOK_PALETTES), palette: i % LOOK_PALETTES };
 }
 
+/** Cycle the base character without crossing or changing its palette. */
+export function cycleLookBase(id: number, delta: number): number {
+  const look = lookFromId(id);
+  const base = (look.base + delta % LOOK_BASES + LOOK_BASES) % LOOK_BASES;
+  return base * LOOK_PALETTES + look.palette;
+}
+
+/** Cycle only the palette within the selected base character. */
+export function cycleLookPalette(id: number, delta: number): number {
+  const look = lookFromId(id);
+  const palette = (look.palette + delta % LOOK_PALETTES + LOOK_PALETTES) % LOOK_PALETTES;
+  return look.base * LOOK_PALETTES + palette;
+}
+
 /** A small deterministic 32-bit integer mixer (splitmix32-style finalizer
  *  over folded inputs). Pure integer ops, so it agrees on every host. */
 function mix32(...xs: number[]): number {

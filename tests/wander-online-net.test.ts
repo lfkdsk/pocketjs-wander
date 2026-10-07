@@ -18,6 +18,8 @@ import {
   encodeInput,
   encodePing,
   encodePong,
+  encodeRoster,
+  decodeRoster,
   encodeState,
   encodeWelcome,
   gridFromWindow,
@@ -193,7 +195,7 @@ describe("wander-online prediction", () => {
       const mask = MASKS[tick % MASKS.length]!;
       seq++;
       pred.pushInput(mask);
-      if (!disagreed && !sp.state.move.moving && mask !== 0) {
+      if (!disagreed && !sp.state.move.moving && mask === BTN.down) {
         disagreed = true;
         arena.pushInput(sp, seq, 0);
       } else {
@@ -259,7 +261,7 @@ describe("wander-online prediction", () => {
       const mask = MASKS[tick % MASKS.length]!;
       seq++;
       pred.pushInput(mask);
-      if (!disagreed && !sp.state.move.moving && mask !== 0) {
+      if (!disagreed && !sp.state.move.moving && mask === BTN.down) {
         disagreed = true;
         arena.pushInput(sp, seq, 0);
       } else {
@@ -366,6 +368,27 @@ describe("wander-online interpolation", () => {
     expect(p!.y).toBe(10 * 16);
   });
 
+  test("keeps phase, step direction and walking as one discrete render pose", () => {
+    const interp = new Interpolator(100);
+    const early: WireEntity = {
+      ...ent(1, 10, 10), dir: 1, phase: 2, stepDir: 1,
+      moving: true, walking: true, color: 3,
+    };
+    const late: WireEntity = {
+      ...ent(1, 11, 10), dir: 2, phase: 7, stepDir: 2,
+      moving: true, walking: false, color: 4,
+    };
+    interp.push([early], 1000);
+    interp.push([late], 1100);
+
+    expect(interp.renderAt(1, 1149)).toMatchObject({
+      dir: 1, phase: 2, stepDir: 1, moving: true, walking: true, color: 3,
+    });
+    expect(interp.renderAt(1, 1150)).toMatchObject({
+      dir: 2, phase: 7, stepDir: 2, moving: true, walking: false, color: 4,
+    });
+  });
+
   test("clamps to the oldest snapshot before the render time", () => {
     const interp = new Interpolator(100);
     interp.push([ent(1, 10, 10)], 1000);
@@ -382,6 +405,7 @@ describe("wander-online interpolation", () => {
     const p = interp.renderAt(2, 1150);
     expect(p).not.toBeNull();
     expect(p!.x).toBe(20 * 16);
+    expect(p).toMatchObject({ phase: 0, stepDir: 0, walking: false });
   });
 
   test("expires entities unseen past the TTL", () => {
@@ -397,5 +421,43 @@ describe("wander-online interpolation", () => {
     const interp = new Interpolator(100);
     interp.push([ent(1, 10, 10)], 1000);
     expect(interp.renderAt(99, 1100)).toBeNull();
+  });
+});
+
+describe("wander-online ROSTER codec", () => {
+  test("round trips names and looks, including CJK", () => {
+    const entries = [
+      { id: 1, name: "lfkdsk", look: 0 },
+      { id: 42, name: "口袋妖怪", look: 63 },
+      { id: 7, name: "a b-c_d.E", look: 17 },
+    ];
+    const buf = encodeRoster(entries);
+    expect(buf.byteLength).toBe(2 + (4 + 1 + 6 + 1) + (4 + 1 + 12 + 1) + (4 + 1 + 9 + 1));
+    const back = decodeRoster(buf);
+    expect(back).toEqual(entries); // mutation: drop the UTF-8 encode -> CJK names mojibake
+  });
+
+  test("the kind byte is 0x50 and the count is first", () => {
+    const buf = encodeRoster([{ id: 1, name: "x", look: 0 }]);
+    const v = new DataView(buf);
+    expect(v.getUint8(0)).toBe(MSG.roster);
+    expect(v.getUint8(1)).toBe(1); // mutation: count after entries -> decode reads 0
+  });
+
+  test("truncated and oversized payloads decode to null, not a crash", () => {
+    const good = encodeRoster([{ id: 1, name: "abc", look: 0 }]);
+    expect(decodeRoster(good.slice(0, good.byteLength - 1))).toBeNull();
+    expect(decodeRoster(new ArrayBuffer(1))).toBeNull();
+    const bad = new ArrayBuffer(3);
+    new DataView(bad).setUint8(0, MSG.roster);
+    new DataView(bad).setUint8(1, 5); // claims 5 entries, has none
+    expect(decodeRoster(bad)).toBeNull(); // mutation: trust the count -> reads past the buffer
+  });
+
+  test("a full 32-player roster fits one message", () => {
+    const entries = Array.from({ length: 32 }, (_, i) => ({ id: i + 1, name: `player${i}`, look: i % 64 }));
+    const buf = encodeRoster(entries);
+    expect(buf.byteLength).toBeLessThan(64 * 1024);
+    expect(decodeRoster(buf)!.length).toBe(32);
   });
 });

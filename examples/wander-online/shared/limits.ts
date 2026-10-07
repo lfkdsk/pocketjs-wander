@@ -45,14 +45,12 @@ export function checkOrigin(origin: string | null | undefined, policy: OriginPol
 }
 
 function isLoopbackOrigin(origin: string): boolean {
-  let u: URL;
-  try {
-    u = new URL(origin);
-  } catch {
-    return false;
-  }
-  if (u.protocol !== "http:") return false;
-  const host = u.hostname;
+  // Manual parse: the desktop QuickJS guest has no URL global. An origin
+  // is scheme://host[:port]; loopback is http://127.0.0.1, localhost or
+  // the IPv6 ::1.
+  const m = /^http:\/\/(\[[^\]]+\]|[^:/?#]+)(:\d+)?[/?#]?$/.exec(origin);
+  if (!m) return false;
+  const host = m[1]!;
   return host === "127.0.0.1" || host === "localhost" || host === "[::1]" || host === "::1";
 }
 
