@@ -100,6 +100,19 @@ export function pickLeastLoaded(counts: readonly number[], cap: number): number 
   return best;
 }
 
+/** Filling admission: index of the fullest room that still has a free
+ *  slot (ties: lowest index), or -1 when every room is at its cap. Players
+ *  land together, so the first players to arrive can see each other; a
+ *  second room only opens once the first is full. */
+export function pickFilling(counts: readonly number[], cap: number): number {
+  let best = -1;
+  for (let i = 0; i < counts.length; i++) {
+    if (counts[i]! >= cap) continue;
+    if (best < 0 || counts[i]! > counts[best]!) best = i;
+  }
+  return best;
+}
+
 // --- Per-IP connection accounting --------------------------------------------
 
 /** Best-effort concurrent-connection count per IP. The Worker keeps this

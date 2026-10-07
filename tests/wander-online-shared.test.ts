@@ -13,6 +13,7 @@ import {
   IpCounter,
   SlidingWindow,
   checkOrigin,
+  pickFilling,
   pickLeastLoaded,
 } from "../examples/wander-online/shared/limits.ts";
 import {
@@ -94,6 +95,15 @@ describe("shared: room selection", () => {
   test("returns -1 when every room is full", () => {
     expect(pickLeastLoaded([32, 32, 32, 32], 32)).toBe(-1);
     expect(pickLeastLoaded([1], 1)).toBe(-1);
+  });
+
+  test("pickFilling packs players into the fullest room with space", () => {
+    expect(pickFilling([0, 0, 0, 0], 32)).toBe(0); // the first player opens room 0
+    expect(pickFilling([1, 0, 0, 0], 32)).toBe(0); // the second joins them
+    expect(pickFilling([5, 2, 9, 3], 32)).toBe(2);
+    expect(pickFilling([32, 4, 32, 7], 32)).toBe(3); // full rooms are skipped
+    expect(pickFilling([32, 32, 32, 32], 32)).toBe(-1);
+    expect(pickFilling([3, 3, 0, 0], 32)).toBe(0); // ties: lowest index
   });
 });
 
