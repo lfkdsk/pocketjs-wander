@@ -24,8 +24,8 @@
 // values fetched once per lattice cell; its results are bit-identical to the
 // point function, which the order-independence tests rely on.
 
-import { growHash, GROW_TILE } from "../grow/grow.ts";
-import { STAMPS, stampCell } from "../grow/grow-stamps.ts";
+import { growHash, GROW_TILE } from "../../vendor/pocket-rpgkit/examples/grow/grow.ts";
+import { STAMPS, stampCell } from "../../vendor/pocket-rpgkit/examples/grow/grow-stamps.ts";
 
 export { growHash };
 

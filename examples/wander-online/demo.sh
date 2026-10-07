@@ -51,7 +51,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-BIN="$ROOT/vendor/pocketjs/hosts/desktop/target/release/pocket-desktop-host"
+BIN="$ROOT/vendor/pocket-rpgkit/vendor/pocketjs/hosts/desktop/target/release/pocket-desktop-host"
 JS="$ROOT/dist/linux-app/wander-online.js"
 PAK="$ROOT/dist/linux-app/wander-online.pak"
 DESKTOP_FLAGS="--app wander-online --app-id dev.lfkdsk.pocket-rpgkit-wander-online --viewport 480x272 --fixed"

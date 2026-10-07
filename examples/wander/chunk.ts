@@ -19,7 +19,7 @@
 // Visibility at a region growth tick k (-1 before discovery, COMPLETE after):
 // developed cells show when k >= devBorn, wilderness shows while k < natHide.
 
-import { STAMPS } from "../grow/grow-stamps.ts";
+import { STAMPS } from "../../vendor/pocket-rpgkit/examples/grow/grow-stamps.ts";
 import {
   BiomeGrid, CHUNK, CHUNK_CELLS, NOISE, NoiseGrid, REGION, blockOrigin, blockStamp,
   regionHub, regionOf, townClearingFrom, type Biome, type NatureSampler, type RegionHub,

@@ -28,7 +28,7 @@
 // RGB match, so flat cell shading is preserved with no halo or bleed.
 
 import { readFileSync } from "node:fs";
-import { decodePng } from "../../vendor/pocketjs/framework/compiler/pak.ts";
+import { decodePng } from "../../vendor/pocket-rpgkit/vendor/pocketjs/framework/compiler/pak.ts";
 
 const TILE = 16;
 

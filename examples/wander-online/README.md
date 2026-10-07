@@ -159,8 +159,8 @@ bash examples/wander-online/demo.sh --runs 1    # one mutual-visibility run
 ## Cloudflare
 
 The same arena runs on Cloudflare Workers + Durable Objects, in the
-private `pocket-online-server` repository. It vendors this kit as a
-submodule and imports the shared modules above — the Worker adds only
+private `pocket-online-server` repository, which vendors this repository
+as a submodule and imports the shared modules above — the Worker adds only
 the routing, the hibernation-shaped wrappers and the limits; no game
 logic is copied.
 

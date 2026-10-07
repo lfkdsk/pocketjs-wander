@@ -21,12 +21,12 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { bootWorld, fnv1a, treeHasText } from "../vendor/pocketjs/hosts/sim/sim.ts";
-import { __packTouch } from "../vendor/pocketjs/framework/src/touch.ts";
-import { decodePng } from "../vendor/pocketjs/framework/compiler/pak.ts";
-import { encodePNG } from "../vendor/pocketjs/tests/png.ts";
-import { BTN } from "../vendor/pocketjs/contracts/spec/spec.ts";
-import { canStepFrom } from "../src/engine/passability.ts";
+import { bootWorld, fnv1a, treeHasText } from "../vendor/pocket-rpgkit/vendor/pocketjs/hosts/sim/sim.ts";
+import { __packTouch } from "../vendor/pocket-rpgkit/vendor/pocketjs/framework/src/touch.ts";
+import { decodePng } from "../vendor/pocket-rpgkit/vendor/pocketjs/framework/compiler/pak.ts";
+import { encodePNG } from "../vendor/pocket-rpgkit/vendor/pocketjs/tests/png.ts";
+import { BTN } from "../vendor/pocket-rpgkit/vendor/pocketjs/contracts/spec/spec.ts";
+import { canStepFrom } from "../vendor/pocket-rpgkit/src/engine/passability.ts";
 import { CHUNK, regionOf } from "../examples/wander/world.ts";
 import { clearOfHud, landmarkBox } from "../examples/wander/hud.ts";
 import { improvementCells } from "../examples/wander/towns.ts";

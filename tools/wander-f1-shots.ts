@@ -19,9 +19,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { bootWorld } from "../vendor/pocketjs/hosts/sim/sim.ts";
-import { BTN } from "../vendor/pocketjs/contracts/spec/spec.ts";
-import { encodePNG } from "../vendor/pocketjs/tests/png.ts";
+import { bootWorld } from "../vendor/pocket-rpgkit/vendor/pocketjs/hosts/sim/sim.ts";
+import { BTN } from "../vendor/pocket-rpgkit/vendor/pocketjs/contracts/spec/spec.ts";
+import { encodePNG } from "../vendor/pocket-rpgkit/vendor/pocketjs/tests/png.ts";
 import { appBundle } from "../tests/helpers/boot.ts";
 import { clearOfHud, landmarkBox } from "../examples/wander/hud.ts";
 

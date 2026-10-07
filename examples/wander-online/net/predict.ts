@@ -20,9 +20,9 @@
 // visible as a small position snap, which is the correct behaviour under
 // packet delay or server stalls.
 
-import { stepSession, type Session, type SessionState } from "../../../src/engine/session.ts";
-import { startSession } from "../../../src/engine/session.ts";
-import type { Dir4 } from "../../../src/engine/passability.ts";
+import { stepSession, type Session, type SessionState } from "../../../vendor/pocket-rpgkit/src/engine/session.ts";
+import { startSession } from "../../../vendor/pocket-rpgkit/src/engine/session.ts";
+import type { Dir4 } from "../../../vendor/pocket-rpgkit/src/engine/passability.ts";
 import { buildArenaWorld, type ArenaWorld } from "./world.ts";
 
 /** Saved predicted states, oldest first. Bounded so a long stall cannot

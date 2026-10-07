@@ -17,9 +17,9 @@
 //             resumes; a touch target is walked to
 
 import { describe, expect, test } from "bun:test";
-import { BLOCK, PASS, canEnter, setPassageOverride, type Dir4 } from "../src/engine/passability.ts";
-import { validateSchema } from "../src/engine/schema-validate.ts";
-import { BTN } from "../vendor/pocketjs/contracts/spec/spec.ts";
+import { BLOCK, PASS, canEnter, setPassageOverride, type Dir4 } from "../vendor/pocket-rpgkit/src/engine/passability.ts";
+import { validateSchema } from "../vendor/pocket-rpgkit/src/engine/schema-validate.ts";
+import { BTN } from "../vendor/pocket-rpgkit/vendor/pocketjs/contracts/spec/spec.ts";
 import { CHUNK, REGION, regionOf } from "../examples/wander/world.ts";
 import { generateChunk } from "../examples/wander/chunk.ts";
 import { planRegion } from "../examples/wander/region.ts";
@@ -27,7 +27,7 @@ import { GROWING_CAP, Residency, TICK_BUDGET, type Focus } from "../examples/wan
 import { buildWindow } from "../examples/wander/window.ts";
 import { FAST_SPEED, GROW_RING_H, GROW_RING_W, NEXT_SEED, WALK_SPEED, WanderSim, type ScheduledInput, type WanderMode } from "../examples/wander/wander-sim.ts";
 
-const schema = await Bun.file(new URL("../src/data/schema.json", import.meta.url)).json() as Record<string, unknown>;
+const schema = await Bun.file(new URL("../vendor/pocket-rpgkit/src/data/schema.json", import.meta.url)).json() as Record<string, unknown>;
 const SEED = 0x5eed_0001;
 
 function chunkSig(c: { terrain: Uint8Array; devBorn: Uint8Array; natUpper: Uint16Array; natHide: Uint8Array }): string {

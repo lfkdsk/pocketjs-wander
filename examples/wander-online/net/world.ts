@@ -12,7 +12,7 @@
 
 import { WanderSim } from "../../wander/wander-sim.ts";
 import { WINDOW } from "../../wander/window.ts";
-import type { Session } from "../../../src/engine/session.ts";
+import type { Session } from "../../../vendor/pocket-rpgkit/src/engine/session.ts";
 import type { WindowBuild } from "../../wander/window.ts";
 
 export interface ArenaWorld {

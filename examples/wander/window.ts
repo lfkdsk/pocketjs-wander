@@ -26,8 +26,8 @@
 // small and exact and nothing on screen moves. Residents present in both
 // windows keep their walk state; new ones spawn at their door.
 
-import type { GameEvent, MapDef, Project, TileId } from "../../src/engine/types.ts";
-import { STAMP_END } from "../grow/grow-stamps.ts";
+import type { GameEvent, MapDef, Project, TileId } from "../../vendor/pocket-rpgkit/src/engine/types.ts";
+import { STAMP_END } from "../../vendor/pocket-rpgkit/examples/grow/grow-stamps.ts";
 import { blocksAt, groundAt, roadAt, upperAt, type ChunkData } from "./chunk.ts";
 import { regionKey, type Residency } from "./residency.ts";
 import { F_BLOCK, type RegionPlan } from "./region.ts";
@@ -37,7 +37,7 @@ import { plaqueToken, plaqueTokenKey, TALK_LINE_COUNT, PLAQUE_LINE_COUNT, villag
 export const WINDOW_CHUNKS = 3;
 export const WINDOW = CHUNK * WINDOW_CHUNKS; // 96 tiles
 export const MAP_ID = "wander";
-export const VILLAGER_SPRITE = "../grow/assets/grow-villager.png";
+export const VILLAGER_SPRITE = "../../vendor/pocket-rpgkit/examples/grow/assets/grow-villager.png";
 
 const SHEET = { id: "ninja", cols: 256, rows: Math.max(1, Math.ceil(STAMP_END / 256)), pak: "chunks" } as const;
 /** Interned tile id strings: the window build copies references only. */
