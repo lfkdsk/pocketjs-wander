@@ -1,0 +1,94 @@
+name: Pages
+
+# Build the browser-playable wander site (`bun run web`) and publish
+# dist/web to GitHub Pages at https://lfkdsk.github.io/pocketjs-wander/.
+# The repository's Pages source must be set to "GitHub Actions".
+#
+# wander-online stays a local demo (it needs the loopback server) and is
+# not part of the published site.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One Pages deployment at a time. A newer run queues behind one in flight
+# instead of cancelling it halfway through a deployment.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.x
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache the wasm core build
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            vendor/pocket-rpgkit/vendor/pocketjs/engine/wasm/target
+          key: ${{ runner.os }}-pocketjs-wasm-${{ hashFiles('vendor/pocket-rpgkit/vendor/pocketjs/engine/wasm/Cargo.lock', 'vendor/pocket-rpgkit/vendor/pocketjs/engine/wasm/Cargo.toml', 'vendor/pocket-rpgkit/vendor/pocketjs/engine/core/Cargo.toml', 'vendor/pocket-rpgkit/vendor/pocketjs/engine/wasm/src/**', 'vendor/pocket-rpgkit/vendor/pocketjs/engine/core/src/**') }}
+          restore-keys: ${{ runner.os }}-pocketjs-wasm-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build the wasm core
+        run: bun run build:wasm
+
+      - name: Build the site
+        run: bun run web
+
+      # The kit's web-verify assumes the site's first game ships a chaptered
+      # demo tape (its phone test opens a demo menu wander does not have), so
+      # this single-game site gets a smoke check instead: the landing page,
+      # the player page and the wasm core all answer, and games.json lists
+      # wander. The sim side is covered in CI by the golden render tests.
+      - name: Smoke the built site
+        run: |
+          python3 -m http.server 9123 --directory dist/web >/dev/null 2>&1 &
+          HTTP_PID=$!
+          sleep 1
+          curl -fsS http://127.0.0.1:9123/ >/dev/null
+          curl -fsS http://127.0.0.1:9123/wander/ >/dev/null
+          curl -fsS http://127.0.0.1:9123/pocketjs.wasm >/dev/null
+          test "$(curl -fsS http://127.0.0.1:9123/games.json | bun -e 'const j = await Bun.stdin.json(); process.exit(j.some((g) => g.id === "wander") ? 0 : 1)')"
+          kill "$HTTP_PID"
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

@@ -1,0 +1,18 @@
+node_modules/
+dist/
+
+# Bun / editor noise
+.DS_Store
+*.swp
+
+# desktop build plans (tools/desktop.ts)
+.pocket/
+
+# Wander look frames are generated in memory by examples/wander/look-assets.ts
+# (a pure function of base/palette/pose/facing); the shipped artifacts are the
+# CLUT8 tilesets under examples/wander/assets/look/tilesets/. Never commit the
+# per-frame PNGs.
+examples/wander/assets/look/b[0-9][0-9]/
+
+# Downloaded font sources
+.cache/
