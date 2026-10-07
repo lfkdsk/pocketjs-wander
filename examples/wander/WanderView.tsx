@@ -38,12 +38,15 @@ import { touches, BTN } from "@pocketjs/framework/input";
 import { deepClone } from "../../src/engine/clone.ts";
 import { modalChanged, type Modal } from "../../src/engine/interpreter.ts";
 import { walkPose } from "../../src/engine/movement.ts";
-import { playerImageKey } from "../../src/ui/PlayerSprite.tsx";
+import { playerImageKey, type PlayerFrames } from "../../src/ui/PlayerSprite.tsx";
 import { DialogBox } from "../../src/ui/DialogBox.tsx";
-import { WANDER_PLAYER, WANDER_VILLAGER } from "./assets-wander.ts";
+import { TileTextureCache } from "../../src/ui/tile-texture-cache.ts";
+import { WANDER_LOOKS, WANDER_PLAYER } from "./assets-wander.ts";
+import { lookFor, lookFromId, lookId, parseVillagerId, playerLook } from "./looks.ts";
 import { RenderRing, OVERSCAN_LEAD, OVERSCAN_TRAIL, TILE } from "./wander-render.ts";
 import { TAKEOVER, WanderSim, type ScheduledInput, type WanderMode } from "./wander-sim.ts";
 import { BIOME_NAMES, CHUNK, biomeAt } from "./world.ts";
+import { noticeRect } from "./hud.ts";
 import { seedHex } from "./window.ts";
 import { regionName } from "./region.ts";
 import type { ChunkState } from "./residency.ts";
@@ -89,6 +92,21 @@ declare global {
   /** Test hook: generation units per reference tick. */
   // eslint-disable-next-line no-var
   var __wanderBudget: number | undefined;
+  /** Player look override: "tiny16" for the Sharm walker, or a look id
+   *  number from the WANDER_LOOKS pool. Undefined: the pool look the seed
+   *  picks (playerLook). Read once per session/reseed. */
+  // eslint-disable-next-line no-var
+  var __wanderPlayerLook: string | number | undefined;
+  /** Test hook: set to an object to record each visible villager's look id
+   *  and screen position (updated every frame while assigned). */
+  // eslint-disable-next-line no-var
+  var __wanderVillagerLooks: Record<string, { lookId: number; sx: number; sy: number }> | undefined;
+  /** Test hook: a count of villager look resolutions (parseVillagerId plus
+   *  lookFor). A look is resolved once, when the villager's node is born,
+   *  and cached on the record; steady frames with a stable visible set add
+   *  zero. Set it to 0 before boot to start counting. */
+  // eslint-disable-next-line no-var
+  var __wanderLookResolves: number | undefined;
 }
 
 export interface WanderPublished {
@@ -154,7 +172,11 @@ export function WanderView() {
   sim.onReseed = () => {
     const s = sim.playerTile;
     ring.reset(sim.res, sim.seed, Math.floor(s.x / CHUNK) * CHUNK, Math.floor(s.y / CHUNK) * CHUNK);
-    for (const [id, rec] of npcs) { setProp(rec.node, "src", null, WANDER_VILLAGER); npcFree.push(rec.node); npcs.delete(id); }
+    for (const [id, rec] of npcs) { releaseLook(rec.node, rec); npcFree.push(rec.node); npcs.delete(id); }
+    if (playerTileRef !== null) { getOps().setImage(player.id, -1); lookCache.release(playerTileRef); playerTileRef = null; }
+    playerTileIdx = -1;
+    playerSrc = null;
+    playerSel = pickPlayerSel();
     playerX = NaN; playerY = NaN;
     shownModal = null;
     lastMode = sim.mode;
@@ -180,9 +202,38 @@ export function WanderView() {
   setProp(player, "debugName", "wander-player");
   insertNode(ring.sprites, player);
   let playerSrc: string | null = null;
+  let playerTileRef: string | null = null;
+  let playerTileIdx = -1;
   let playerX = NaN, playerY = NaN;
-  const npcs = new Map<string, { node: NodeMirror; x: number; y: number; live: boolean }>();
+  // The player's walker: a pool look by default (playerLook(seed)), drawn
+  // from the look TILESETs, or the Sharm "Tiny 16" set (eager ui:img
+  // strings) when __wanderPlayerLook === "tiny16". Re-picked per reseed.
+  const pickPlayerSel = (): { kind: "tiles"; base: number; palette: number } | { kind: "strings"; frames: PlayerFrames } => {
+    const override = globalThis.__wanderPlayerLook;
+    if (override === "tiny16") return { kind: "strings", frames: WANDER_PLAYER };
+    if (typeof override === "number") return { kind: "tiles", ...lookFromId(override) };
+    return { kind: "tiles", ...playerLook(sim.seed) };
+  };
+  let playerSel = pickPlayerSel();
+  // Bounded LRU for the CLUT8 walker frames: a town shows a handful of
+  // residents, each holding one frame at a time, and a walk cycle's frames
+  // stay warm between steps. Eviction frees the host texture.
+  const lookCache = new TileTextureCache({ maxEntries: 64, maxBytes: 96 * 1024 });
+  // WalkPose (0 idle, 1 walkL, 2 walkR) -> the manifest's frames key.
+  const LOOK_POSE_KEY = ["idle", "walkL", "walkR"] as const;
+  // A resident's look is resolved once, when its node is born, and cached on
+  // the record: (seed, town, villager index) is fixed for the id, and a
+  // reseed clears the table, so a steady frame only compares the cached tile.
+  const npcs = new Map<string, { node: NodeMirror; x: number; y: number; live: boolean; villager: boolean; lookId: number; tileRef: string | null; tileIdx: number }>();
   const npcFree: NodeMirror[] = [];
+  /** Detach a record's borrowed tile texture from its node and release it. */
+  const releaseLook = (node: NodeMirror, rec: { tileRef: string | null; tileIdx: number }): void => {
+    if (rec.tileRef === null) return;
+    getOps().setImage(node.id, -1);
+    lookCache.release(rec.tileRef);
+    rec.tileRef = null;
+    rec.tileIdx = -1;
+  };
 
   // -- HUD state ------------------------------------------------------------
   const [seedText, setSeedText] = createSignal(`SEED 0x${seedHex(sim.seed)}`);
@@ -290,8 +341,27 @@ export function WanderView() {
   const syncPeople = () => {
     const s = sim.state;
     const ox = (sim.window.x0 - ring.ox) * TILE, oy = (sim.window.y0 - ring.oy) * TILE;
-    const src = playerImageKey(walkPose(s.move.phase), s.move.facing, WANDER_PLAYER);
-    if (src !== playerSrc) { setProp(player, "src", src, playerSrc); playerSrc = src; }
+    const pose = walkPose(s.move.phase);
+    if (playerSel.kind === "tiles") {
+      const look = WANDER_LOOKS[lookId(playerSel)]!;
+      const idx = look.frames[LOOK_POSE_KEY[pose]!][s.move.facing]!;
+      if (idx !== playerTileIdx) {
+        if (playerTileRef !== null) { getOps().setImage(player.id, -1); lookCache.release(playerTileRef); }
+        if (playerSrc !== null) { setProp(player, "src", null, playerSrc); playerSrc = null; }
+        const ref = `${look.tileset}#${idx}`;
+        const handle = lookCache.acquire({ kind: "tile", ref, sourceWidth: TILE, sourceHeight: TILE });
+        getOps().setImage(player.id, handle);
+        playerTileRef = ref;
+        playerTileIdx = idx;
+      }
+    } else {
+      const src = playerImageKey(pose, s.move.facing, playerSel.frames);
+      if (src !== playerSrc) {
+        if (playerTileRef !== null) { getOps().setImage(player.id, -1); lookCache.release(playerTileRef); playerTileRef = null; playerTileIdx = -1; }
+        setProp(player, "src", src, playerSrc);
+        playerSrc = src;
+      }
+    }
     const px = ox + s.move.px, py = oy + s.move.py;
     if (px !== playerX) { jump(player, "translateX", px); playerX = px; }
     if (py !== playerY) { jump(player, "translateY", py); playerY = py; }
@@ -305,25 +375,58 @@ export function WanderView() {
       if (x < camRx - TILE || y < camRy - TILE || x > camRx + vp.w || y > camRy + vp.h) continue;
       let rec = npcs.get(id);
       if (!rec) {
+        // The resident's look is a pure function of (seed, town, villager
+        // index), parsed out of its id once when the node is born; the same
+        // villager wears the same face on every machine and every visit,
+        // and a steady frame never re-resolves it (a reseed clears the
+        // table, so the cached id cannot go stale across worlds).
+        const v = parseVillagerId(id);
+        const look = v ? lookFor(sim.seed, v.rx, v.ry, v.n) : null;
+        if (look && globalThis.__wanderLookResolves !== undefined) globalThis.__wanderLookResolves++;
         let node = npcFree.pop();
         if (!node) {
           node = createElement("image");
           setProp(node, "style", { posType: 1, insetL: 0, insetT: 0, width: TILE, height: TILE });
           insertNode(ring.sprites, node);
         }
-        setProp(node, "src", WANDER_VILLAGER, null);
-        rec = { node, x: NaN, y: NaN, live: true };
+        rec = { node, x: NaN, y: NaN, live: true, villager: look !== null, lookId: look ? lookId(look) : 0, tileRef: null, tileIdx: -1 };
         npcs.set(id, rec);
       }
       rec.live = true;
+      if (rec.villager) {
+        const idx = WANDER_LOOKS[rec.lookId]!.frames[LOOK_POSE_KEY[walkPose(ch.phase)]!][ch.facing]!;
+        if (idx !== rec.tileIdx) {
+          releaseLook(rec.node, rec);
+          const ref = `${WANDER_LOOKS[rec.lookId]!.tileset}#${idx}`;
+          const handle = lookCache.acquire({ kind: "tile", ref, sourceWidth: TILE, sourceHeight: TILE });
+          getOps().setImage(rec.node.id, handle);
+          rec.tileRef = ref;
+          rec.tileIdx = idx;
+        }
+      } else if (rec.tileRef !== null) {
+        releaseLook(rec.node, rec);
+      }
       if (x !== rec.x) { jump(rec.node, "translateX", x); rec.x = x; }
       if (y !== rec.y) { jump(rec.node, "translateY", y); rec.y = y; }
     }
     for (const [id, rec] of npcs) {
       if (rec.live) continue;
-      setProp(rec.node, "src", null, WANDER_VILLAGER);
+      releaseLook(rec.node, rec);
       npcFree.push(rec.node);
       npcs.delete(id);
+    }
+    // Test hook: the visible villagers' looks and screen positions, so a
+    // render test can count distinct looks in one scene from the pixels.
+    // Screen position = node translate + ring-root offset - camera. Reads
+    // the cached birth-time look; the hook itself resolves nothing.
+    if (globalThis.__wanderVillagerLooks !== undefined) {
+      const out: Record<string, { lookId: number; sx: number; sy: number }> = {};
+      const oxScreen = ring.ox * TILE - cam.x, oyScreen = ring.oy * TILE - cam.y;
+      for (const [id, rec] of npcs) {
+        if (!rec.live || !rec.villager) continue;
+        out[id] = { lookId: rec.lookId, sx: Math.round(rec.x + oxScreen), sy: Math.round(rec.y + oyScreen) };
+      }
+      globalThis.__wanderVillagerLooks = out;
     }
   };
 
@@ -516,7 +619,7 @@ export function WanderView() {
       <Text class="text-xs" style={{ posType: 1, insetB: 6, insetL: 12, textColor: "#c8d6ea", lineHeight: 12, height: 12 }}>SQR SEED  TRI FAST  SEL AUTO  X ACT/LOG</Text>
     </Show>
     <Show when={notice() !== ""}>
-      <View class="absolute flex-row justify-center" style={{ posType: 1, insetT: 52, insetL: 0, insetR: 0 }} debugName="wander-notice">
+      <View class="absolute flex-row justify-center" style={{ posType: 1, insetT: noticeRect(viewport().w, viewport().h).y0, insetL: 0, insetR: 0 }} debugName="wander-notice">
         <View style={{ bgColor: "#0b1626", paddingL: 10, paddingR: 10, paddingT: 2, paddingB: 2 }}>
           <Text class="text-sm" style={{ textColor: "#8ad0ff", lineHeight: 18, height: 18 }}>{notice()}</Text>
         </View>

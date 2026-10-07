@@ -1,0 +1,66 @@
+[
+  {
+    "key": "ui:tile.wander-look-b00",
+    "file": "assets/look/tilesets/b00.pkts"
+  },
+  {
+    "key": "ui:tile.wander-look-b01",
+    "file": "assets/look/tilesets/b01.pkts"
+  },
+  {
+    "key": "ui:tile.wander-look-b02",
+    "file": "assets/look/tilesets/b02.pkts"
+  },
+  {
+    "key": "ui:tile.wander-look-b03",
+    "file": "assets/look/tilesets/b03.pkts"
+  },
+  {
+    "key": "ui:tile.wander-look-b04",
+    "file": "assets/look/tilesets/b04.pkts"
+  },
+  {
+    "key": "ui:tile.wander-look-b05",
+    "file": "assets/look/tilesets/b05.pkts"
+  },
+  {
+    "key": "ui:tile.wander-look-b06",
+    "file": "assets/look/tilesets/b06.pkts"
+  },
+  {
+    "key": "ui:tile.wander-look-b07",
+    "file": "assets/look/tilesets/b07.pkts"
+  },
+  {
+    "key": "ui:tile.wander-look-b08",
+    "file": "assets/look/tilesets/b08.pkts"
+  },
+  {
+    "key": "ui:tile.wander-look-b09",
+    "file": "assets/look/tilesets/b09.pkts"
+  },
+  {
+    "key": "ui:tile.wander-look-b10",
+    "file": "assets/look/tilesets/b10.pkts"
+  },
+  {
+    "key": "ui:tile.wander-look-b11",
+    "file": "assets/look/tilesets/b11.pkts"
+  },
+  {
+    "key": "ui:tile.wander-look-b12",
+    "file": "assets/look/tilesets/b12.pkts"
+  },
+  {
+    "key": "ui:tile.wander-look-b13",
+    "file": "assets/look/tilesets/b13.pkts"
+  },
+  {
+    "key": "ui:tile.wander-look-b14",
+    "file": "assets/look/tilesets/b14.pkts"
+  },
+  {
+    "key": "ui:tile.wander-look-b15",
+    "file": "assets/look/tilesets/b15.pkts"
+  }
+]

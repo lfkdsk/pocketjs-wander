@@ -22,15 +22,23 @@
 //
 // Outputs (deterministic; rerunning reproduces them byte for byte):
 //   assets/stamp-*.png, assets/fill64-*.png
+//   assets/look/tilesets/*.pkts one CLUT8 TILESET per look base (what ships)
 //   assets-wander.ts  the manifest WanderView reads (full literals)
 //   images.json       PSM_4444 marks (grow's, re-keyed, plus the composites)
+//   pak.json          the look TILESET blobs, spliced into dist/wander.pak
+//
+// The 768 look frames themselves are NOT written: look-assets.ts generates
+// them in memory (a pure function of base/palette/pose/facing), both here
+// for the TILESET cook and in tests/wander-looks.test.ts.
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { decodePng } from "../../vendor/pocketjs/framework/compiler/pak.ts";
+import { decodePng, encodeTilesetEntry } from "../../vendor/pocketjs/framework/compiler/pak.ts";
+import { TILESET_FLAG_RLE, keyTileset } from "../../vendor/pocketjs/contracts/spec/spec.ts";
 import { encodePNG } from "../../vendor/pocketjs/tests/png.ts";
 import { GROW_GROUND, GROW_NPC, GROW_PLAYER, GROW_TERRAIN, GROW_TERRAIN_BLOCK, GROW_UPPER } from "../grow/assets-grow.ts";
 import { STAMP_LIST } from "../grow/grow-stamps.ts";
+import { LOOK_BASES, LOOK_PALETTE_COUNT, LOOK_PALETTES, LOOK_POSE_BASE, LOOK_TILES_PER_BASE, POSES, lookPalette, lookTileWords } from "./look-assets.ts";
 
 const HERE = new URL(".", import.meta.url).pathname;
 const GROW = join(HERE, "../grow");
@@ -88,6 +96,56 @@ for (let b = 0; b < 4; b++) {
   fills.push(path);
 }
 
+// --- Character look pool: CLUT8 TILESET cooking ----------------------------
+//
+// The 768 look frames used to ship as 768 PSM_4444 IMG entries (~399 KB of
+// pak). Each base now cooks to ONE TILESET entry: 48 tiles (4 palettes x 12
+// frames) sharing one palette, with PackBits-RLE index streams, streamed on
+// demand through the view's TileTextureCache (only visible villagers' frames
+// are texture-resident). The frames come from look-assets.ts' pure
+// lookFrameRGBA — the same function the look-pool tests call in memory — so
+// no per-frame PNGs are written or committed.
+//
+// Pixel parity with the old PSM_4444 path: palette words are quantized to 4
+// bits per channel exactly like encodeImageEntry's PSM_4444 path (c >> 4,
+// GE-expanded n*17), so a CLUT8-rendered villager is byte-identical to a
+// PSM_4444-rendered one (pinned by tests/wander-render.test.ts's goldens).
+
+interface LookManifest {
+  id: number; base: number; palette: number; name: string;
+  tileset: string;
+  frames: Record<(typeof POSES)[number], number[]>;
+  thumb: number;
+}
+const lookManifests: LookManifest[] = [];
+const lookTilesets: { key: string; file: string }[] = [];
+mkdirSync(join(HERE, "assets", "look", "tilesets"), { recursive: true });
+for (let b = 0; b < LOOK_BASES.length; b++) {
+  const base = LOOK_BASES[b]!;
+  const bb = String(b).padStart(2, "0");
+  const tileWords = lookTileWords(b);
+  for (let p = 0; p < LOOK_PALETTE_COUNT; p++) {
+    const id = b * LOOK_PALETTE_COUNT + p;
+    const frames: Record<string, number[]> = { idle: [], walkL: [], walkR: [] };
+    for (const pose of POSES) for (let f = 0; f < 4; f++) frames[pose]!.push(p * 12 + LOOK_POSE_BASE[pose] + f);
+    lookManifests.push({
+      id, base: b, palette: p, name: base.name,
+      tileset: keyTileset(`wander-look-b${bb}`),
+      frames, thumb: p * 12,
+    });
+  }
+  const { palette, indexByWord } = lookPalette(tileWords);
+  const tiles = tileWords.map((words) => ({
+    kind: "pixels" as const,
+    indices: Uint8Array.from(words, (w) => indexByWord.get(w)!),
+  }));
+  const blob = encodeTilesetEntry({ tileW: TILE, tileH: TILE, cols: LOOK_TILES_PER_BASE, rows: 1, flags: TILESET_FLAG_RLE, palette, tiles });
+  const file = `assets/look/tilesets/b${bb}.pkts`;
+  writeFileSync(join(HERE, file), blob);
+  lookTilesets.push({ key: keyTileset(`wander-look-b${bb}`), file });
+}
+const lookFrames = LOOK_BASES.length * LOOK_PALETTE_COUNT * 12;
+
 const q = (s: string) => JSON.stringify(s);
 const dense = (name: string, doc: string, rec: Record<number, string>): string => {
   const keys = Object.keys(rec).map(Number).sort((a, b) => a - b);
@@ -131,13 +189,52 @@ ${stamps.map((s) => `  [${s.base}, ${s.w}, ${s.h}, ${q(s.path)}],`).join("\n")}
 export const WANDER_VILLAGER = ${q(rebase(GROW_NPC.villager!))};
 
 // Player walker frames (Sharm "Tiny 16"), facing order 0 down, 1 left,
-// 2 up, 3 right.
+// 2 up, 3 right. Kept as an alternate player look; the default player look
+// comes from the WANDER_LOOKS pool (see WanderView).
 export const WANDER_PLAYER = {
   idle: [${GROW_PLAYER.idle.map((p) => q(rebase(p))).join(", ")}],
   walkL: [${GROW_PLAYER.walkL.map((p) => q(rebase(p))).join(", ")}],
   walkR: [${GROW_PLAYER.walkR.map((p) => q(rebase(p))).join(", ")}],
 } as const;
+
+// The character look pool: ${LOOK_BASES.length} Ninja Adventure walkers x
+// ${LOOK_PALETTE_COUNT} palettes = ${lookManifests.length} looks, indexed by
+// the stable id base*${LOOK_PALETTE_COUNT}+palette (see examples/wander/looks.ts).
+// Each look's twelve frames are tile indices into its base's CLUT8 TILESET
+// (tile = palette*12 + pose*4 + facing); the pak ships one TILESET per base,
+// streamed on demand (see examples/wander/gen-assets.ts).
+export const WANDER_LOOK_BASES = [
+${LOOK_BASES.map((b, i) => `  ${q(b.name)}, // ${i}`).join("\n")}
+] as const;
+
+export const WANDER_LOOK_PALETTES = [
+${LOOK_PALETTES.map(([n], i) => `  ${q(n)}, // ${i}`).join("\n")}
+] as const;
+
+export interface WanderLook {
+  /** Stable published id: base * ${LOOK_PALETTE_COUNT} + palette. Never reorder. */
+  id: number;
+  base: number;
+  palette: number;
+  name: string;
+  /** TILESET pak key holding this base's 48 frames (ui:tile.wander-look-b<NN>). */
+  tileset: string;
+  /** Tile index per pose and facing (0 down, 1 left, 2 up, 3 right):
+   *  palette*12 + pose*4 + facing. */
+  frames: {
+    idle: readonly [number, number, number, number];
+    walkL: readonly [number, number, number, number];
+    walkR: readonly [number, number, number, number];
+  };
+  /** Tile index of the down-facing idle frame, for the create-character scene and ROSTER. */
+  thumb: number;
+}
+
+export const WANDER_LOOKS: readonly WanderLook[] = [
+${lookManifests.map((l) => `  { id: ${l.id}, base: ${l.base}, palette: ${l.palette}, name: ${q(l.name)}, tileset: ${q(l.tileset)}, frames: { idle: [${l.frames.idle!.join(", ")}], walkL: [${l.frames.walkL!.join(", ")}], walkR: [${l.frames.walkR!.join(", ")}] }, thumb: ${l.thumb} },`).join("\n")}
+];
 `;
 writeFileSync(join(HERE, "assets-wander.ts"), out);
 writeFileSync(join(HERE, "images.json"), JSON.stringify(images, null, 2) + "\n");
-console.log(`wander gen-assets: ${stamps.length} stamps, ${fills.length} fills, ${Object.keys(images).length} image marks`);
+writeFileSync(join(HERE, "pak.json"), JSON.stringify(lookTilesets, null, 2) + "\n");
+console.log(`wander gen-assets: ${stamps.length} stamps, ${fills.length} fills, ${lookFrames} look frames cooked into ${lookTilesets.length} tilesets (${LOOK_BASES.length} bases x ${LOOK_PALETTE_COUNT} palettes), ${Object.keys(images).length} image marks`);

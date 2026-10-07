@@ -168,9 +168,128 @@ export const WANDER_STAMPS: readonly (readonly [number, number, number, string])
 export const WANDER_VILLAGER = "../grow/assets/grow-villager.png";
 
 // Player walker frames (Sharm "Tiny 16"), facing order 0 down, 1 left,
-// 2 up, 3 right.
+// 2 up, 3 right. Kept as an alternate player look; the default player look
+// comes from the WANDER_LOOKS pool (see WanderView).
 export const WANDER_PLAYER = {
   idle: ["../grow/assets/player-dir0.png", "../grow/assets/player-dir1.png", "../grow/assets/player-dir2.png", "../grow/assets/player-dir3.png"],
   walkL: ["../grow/assets/player-pose0-l.png", "../grow/assets/player-pose1-l.png", "../grow/assets/player-pose2-l.png", "../grow/assets/player-pose3-l.png"],
   walkR: ["../grow/assets/player-pose0-r.png", "../grow/assets/player-pose1-r.png", "../grow/assets/player-pose2-r.png", "../grow/assets/player-pose3-r.png"],
 } as const;
+
+// The character look pool: 16 Ninja Adventure walkers x
+// 4 palettes = 64 looks, indexed by
+// the stable id base*4+palette (see examples/wander/looks.ts).
+// Each look's twelve frames are tile indices into its base's CLUT8 TILESET
+// (tile = palette*12 + pose*4 + facing); the pak ships one TILESET per base,
+// streamed on demand (see examples/wander/gen-assets.ts).
+export const WANDER_LOOK_BASES = [
+  "Villager", // 0
+  "Villager2", // 1
+  "Villager3", // 2
+  "Villager4", // 3
+  "Boy", // 4
+  "Woman", // 5
+  "ManGreen", // 6
+  "OldMan", // 7
+  "OldMan2", // 8
+  "Monk", // 9
+  "Monk2", // 10
+  "Hunter", // 11
+  "Eskimo", // 12
+  "Noble", // 13
+  "Samurai", // 14
+  "SamuraiBlue", // 15
+] as const;
+
+export const WANDER_LOOK_PALETTES = [
+  "original", // 0
+  "rust", // 1
+  "azure", // 2
+  "forest", // 3
+] as const;
+
+export interface WanderLook {
+  /** Stable published id: base * 4 + palette. Never reorder. */
+  id: number;
+  base: number;
+  palette: number;
+  name: string;
+  /** TILESET pak key holding this base's 48 frames (ui:tile.wander-look-b<NN>). */
+  tileset: string;
+  /** Tile index per pose and facing (0 down, 1 left, 2 up, 3 right):
+   *  palette*12 + pose*4 + facing. */
+  frames: {
+    idle: readonly [number, number, number, number];
+    walkL: readonly [number, number, number, number];
+    walkR: readonly [number, number, number, number];
+  };
+  /** Tile index of the down-facing idle frame, for the create-character scene and ROSTER. */
+  thumb: number;
+}
+
+export const WANDER_LOOKS: readonly WanderLook[] = [
+  { id: 0, base: 0, palette: 0, name: "Villager", tileset: "ui:tile.wander-look-b00", frames: { idle: [0, 1, 2, 3], walkL: [4, 5, 6, 7], walkR: [8, 9, 10, 11] }, thumb: 0 },
+  { id: 1, base: 0, palette: 1, name: "Villager", tileset: "ui:tile.wander-look-b00", frames: { idle: [12, 13, 14, 15], walkL: [16, 17, 18, 19], walkR: [20, 21, 22, 23] }, thumb: 12 },
+  { id: 2, base: 0, palette: 2, name: "Villager", tileset: "ui:tile.wander-look-b00", frames: { idle: [24, 25, 26, 27], walkL: [28, 29, 30, 31], walkR: [32, 33, 34, 35] }, thumb: 24 },
+  { id: 3, base: 0, palette: 3, name: "Villager", tileset: "ui:tile.wander-look-b00", frames: { idle: [36, 37, 38, 39], walkL: [40, 41, 42, 43], walkR: [44, 45, 46, 47] }, thumb: 36 },
+  { id: 4, base: 1, palette: 0, name: "Villager2", tileset: "ui:tile.wander-look-b01", frames: { idle: [0, 1, 2, 3], walkL: [4, 5, 6, 7], walkR: [8, 9, 10, 11] }, thumb: 0 },
+  { id: 5, base: 1, palette: 1, name: "Villager2", tileset: "ui:tile.wander-look-b01", frames: { idle: [12, 13, 14, 15], walkL: [16, 17, 18, 19], walkR: [20, 21, 22, 23] }, thumb: 12 },
+  { id: 6, base: 1, palette: 2, name: "Villager2", tileset: "ui:tile.wander-look-b01", frames: { idle: [24, 25, 26, 27], walkL: [28, 29, 30, 31], walkR: [32, 33, 34, 35] }, thumb: 24 },
+  { id: 7, base: 1, palette: 3, name: "Villager2", tileset: "ui:tile.wander-look-b01", frames: { idle: [36, 37, 38, 39], walkL: [40, 41, 42, 43], walkR: [44, 45, 46, 47] }, thumb: 36 },
+  { id: 8, base: 2, palette: 0, name: "Villager3", tileset: "ui:tile.wander-look-b02", frames: { idle: [0, 1, 2, 3], walkL: [4, 5, 6, 7], walkR: [8, 9, 10, 11] }, thumb: 0 },
+  { id: 9, base: 2, palette: 1, name: "Villager3", tileset: "ui:tile.wander-look-b02", frames: { idle: [12, 13, 14, 15], walkL: [16, 17, 18, 19], walkR: [20, 21, 22, 23] }, thumb: 12 },
+  { id: 10, base: 2, palette: 2, name: "Villager3", tileset: "ui:tile.wander-look-b02", frames: { idle: [24, 25, 26, 27], walkL: [28, 29, 30, 31], walkR: [32, 33, 34, 35] }, thumb: 24 },
+  { id: 11, base: 2, palette: 3, name: "Villager3", tileset: "ui:tile.wander-look-b02", frames: { idle: [36, 37, 38, 39], walkL: [40, 41, 42, 43], walkR: [44, 45, 46, 47] }, thumb: 36 },
+  { id: 12, base: 3, palette: 0, name: "Villager4", tileset: "ui:tile.wander-look-b03", frames: { idle: [0, 1, 2, 3], walkL: [4, 5, 6, 7], walkR: [8, 9, 10, 11] }, thumb: 0 },
+  { id: 13, base: 3, palette: 1, name: "Villager4", tileset: "ui:tile.wander-look-b03", frames: { idle: [12, 13, 14, 15], walkL: [16, 17, 18, 19], walkR: [20, 21, 22, 23] }, thumb: 12 },
+  { id: 14, base: 3, palette: 2, name: "Villager4", tileset: "ui:tile.wander-look-b03", frames: { idle: [24, 25, 26, 27], walkL: [28, 29, 30, 31], walkR: [32, 33, 34, 35] }, thumb: 24 },
+  { id: 15, base: 3, palette: 3, name: "Villager4", tileset: "ui:tile.wander-look-b03", frames: { idle: [36, 37, 38, 39], walkL: [40, 41, 42, 43], walkR: [44, 45, 46, 47] }, thumb: 36 },
+  { id: 16, base: 4, palette: 0, name: "Boy", tileset: "ui:tile.wander-look-b04", frames: { idle: [0, 1, 2, 3], walkL: [4, 5, 6, 7], walkR: [8, 9, 10, 11] }, thumb: 0 },
+  { id: 17, base: 4, palette: 1, name: "Boy", tileset: "ui:tile.wander-look-b04", frames: { idle: [12, 13, 14, 15], walkL: [16, 17, 18, 19], walkR: [20, 21, 22, 23] }, thumb: 12 },
+  { id: 18, base: 4, palette: 2, name: "Boy", tileset: "ui:tile.wander-look-b04", frames: { idle: [24, 25, 26, 27], walkL: [28, 29, 30, 31], walkR: [32, 33, 34, 35] }, thumb: 24 },
+  { id: 19, base: 4, palette: 3, name: "Boy", tileset: "ui:tile.wander-look-b04", frames: { idle: [36, 37, 38, 39], walkL: [40, 41, 42, 43], walkR: [44, 45, 46, 47] }, thumb: 36 },
+  { id: 20, base: 5, palette: 0, name: "Woman", tileset: "ui:tile.wander-look-b05", frames: { idle: [0, 1, 2, 3], walkL: [4, 5, 6, 7], walkR: [8, 9, 10, 11] }, thumb: 0 },
+  { id: 21, base: 5, palette: 1, name: "Woman", tileset: "ui:tile.wander-look-b05", frames: { idle: [12, 13, 14, 15], walkL: [16, 17, 18, 19], walkR: [20, 21, 22, 23] }, thumb: 12 },
+  { id: 22, base: 5, palette: 2, name: "Woman", tileset: "ui:tile.wander-look-b05", frames: { idle: [24, 25, 26, 27], walkL: [28, 29, 30, 31], walkR: [32, 33, 34, 35] }, thumb: 24 },
+  { id: 23, base: 5, palette: 3, name: "Woman", tileset: "ui:tile.wander-look-b05", frames: { idle: [36, 37, 38, 39], walkL: [40, 41, 42, 43], walkR: [44, 45, 46, 47] }, thumb: 36 },
+  { id: 24, base: 6, palette: 0, name: "ManGreen", tileset: "ui:tile.wander-look-b06", frames: { idle: [0, 1, 2, 3], walkL: [4, 5, 6, 7], walkR: [8, 9, 10, 11] }, thumb: 0 },
+  { id: 25, base: 6, palette: 1, name: "ManGreen", tileset: "ui:tile.wander-look-b06", frames: { idle: [12, 13, 14, 15], walkL: [16, 17, 18, 19], walkR: [20, 21, 22, 23] }, thumb: 12 },
+  { id: 26, base: 6, palette: 2, name: "ManGreen", tileset: "ui:tile.wander-look-b06", frames: { idle: [24, 25, 26, 27], walkL: [28, 29, 30, 31], walkR: [32, 33, 34, 35] }, thumb: 24 },
+  { id: 27, base: 6, palette: 3, name: "ManGreen", tileset: "ui:tile.wander-look-b06", frames: { idle: [36, 37, 38, 39], walkL: [40, 41, 42, 43], walkR: [44, 45, 46, 47] }, thumb: 36 },
+  { id: 28, base: 7, palette: 0, name: "OldMan", tileset: "ui:tile.wander-look-b07", frames: { idle: [0, 1, 2, 3], walkL: [4, 5, 6, 7], walkR: [8, 9, 10, 11] }, thumb: 0 },
+  { id: 29, base: 7, palette: 1, name: "OldMan", tileset: "ui:tile.wander-look-b07", frames: { idle: [12, 13, 14, 15], walkL: [16, 17, 18, 19], walkR: [20, 21, 22, 23] }, thumb: 12 },
+  { id: 30, base: 7, palette: 2, name: "OldMan", tileset: "ui:tile.wander-look-b07", frames: { idle: [24, 25, 26, 27], walkL: [28, 29, 30, 31], walkR: [32, 33, 34, 35] }, thumb: 24 },
+  { id: 31, base: 7, palette: 3, name: "OldMan", tileset: "ui:tile.wander-look-b07", frames: { idle: [36, 37, 38, 39], walkL: [40, 41, 42, 43], walkR: [44, 45, 46, 47] }, thumb: 36 },
+  { id: 32, base: 8, palette: 0, name: "OldMan2", tileset: "ui:tile.wander-look-b08", frames: { idle: [0, 1, 2, 3], walkL: [4, 5, 6, 7], walkR: [8, 9, 10, 11] }, thumb: 0 },
+  { id: 33, base: 8, palette: 1, name: "OldMan2", tileset: "ui:tile.wander-look-b08", frames: { idle: [12, 13, 14, 15], walkL: [16, 17, 18, 19], walkR: [20, 21, 22, 23] }, thumb: 12 },
+  { id: 34, base: 8, palette: 2, name: "OldMan2", tileset: "ui:tile.wander-look-b08", frames: { idle: [24, 25, 26, 27], walkL: [28, 29, 30, 31], walkR: [32, 33, 34, 35] }, thumb: 24 },
+  { id: 35, base: 8, palette: 3, name: "OldMan2", tileset: "ui:tile.wander-look-b08", frames: { idle: [36, 37, 38, 39], walkL: [40, 41, 42, 43], walkR: [44, 45, 46, 47] }, thumb: 36 },
+  { id: 36, base: 9, palette: 0, name: "Monk", tileset: "ui:tile.wander-look-b09", frames: { idle: [0, 1, 2, 3], walkL: [4, 5, 6, 7], walkR: [8, 9, 10, 11] }, thumb: 0 },
+  { id: 37, base: 9, palette: 1, name: "Monk", tileset: "ui:tile.wander-look-b09", frames: { idle: [12, 13, 14, 15], walkL: [16, 17, 18, 19], walkR: [20, 21, 22, 23] }, thumb: 12 },
+  { id: 38, base: 9, palette: 2, name: "Monk", tileset: "ui:tile.wander-look-b09", frames: { idle: [24, 25, 26, 27], walkL: [28, 29, 30, 31], walkR: [32, 33, 34, 35] }, thumb: 24 },
+  { id: 39, base: 9, palette: 3, name: "Monk", tileset: "ui:tile.wander-look-b09", frames: { idle: [36, 37, 38, 39], walkL: [40, 41, 42, 43], walkR: [44, 45, 46, 47] }, thumb: 36 },
+  { id: 40, base: 10, palette: 0, name: "Monk2", tileset: "ui:tile.wander-look-b10", frames: { idle: [0, 1, 2, 3], walkL: [4, 5, 6, 7], walkR: [8, 9, 10, 11] }, thumb: 0 },
+  { id: 41, base: 10, palette: 1, name: "Monk2", tileset: "ui:tile.wander-look-b10", frames: { idle: [12, 13, 14, 15], walkL: [16, 17, 18, 19], walkR: [20, 21, 22, 23] }, thumb: 12 },
+  { id: 42, base: 10, palette: 2, name: "Monk2", tileset: "ui:tile.wander-look-b10", frames: { idle: [24, 25, 26, 27], walkL: [28, 29, 30, 31], walkR: [32, 33, 34, 35] }, thumb: 24 },
+  { id: 43, base: 10, palette: 3, name: "Monk2", tileset: "ui:tile.wander-look-b10", frames: { idle: [36, 37, 38, 39], walkL: [40, 41, 42, 43], walkR: [44, 45, 46, 47] }, thumb: 36 },
+  { id: 44, base: 11, palette: 0, name: "Hunter", tileset: "ui:tile.wander-look-b11", frames: { idle: [0, 1, 2, 3], walkL: [4, 5, 6, 7], walkR: [8, 9, 10, 11] }, thumb: 0 },
+  { id: 45, base: 11, palette: 1, name: "Hunter", tileset: "ui:tile.wander-look-b11", frames: { idle: [12, 13, 14, 15], walkL: [16, 17, 18, 19], walkR: [20, 21, 22, 23] }, thumb: 12 },
+  { id: 46, base: 11, palette: 2, name: "Hunter", tileset: "ui:tile.wander-look-b11", frames: { idle: [24, 25, 26, 27], walkL: [28, 29, 30, 31], walkR: [32, 33, 34, 35] }, thumb: 24 },
+  { id: 47, base: 11, palette: 3, name: "Hunter", tileset: "ui:tile.wander-look-b11", frames: { idle: [36, 37, 38, 39], walkL: [40, 41, 42, 43], walkR: [44, 45, 46, 47] }, thumb: 36 },
+  { id: 48, base: 12, palette: 0, name: "Eskimo", tileset: "ui:tile.wander-look-b12", frames: { idle: [0, 1, 2, 3], walkL: [4, 5, 6, 7], walkR: [8, 9, 10, 11] }, thumb: 0 },
+  { id: 49, base: 12, palette: 1, name: "Eskimo", tileset: "ui:tile.wander-look-b12", frames: { idle: [12, 13, 14, 15], walkL: [16, 17, 18, 19], walkR: [20, 21, 22, 23] }, thumb: 12 },
+  { id: 50, base: 12, palette: 2, name: "Eskimo", tileset: "ui:tile.wander-look-b12", frames: { idle: [24, 25, 26, 27], walkL: [28, 29, 30, 31], walkR: [32, 33, 34, 35] }, thumb: 24 },
+  { id: 51, base: 12, palette: 3, name: "Eskimo", tileset: "ui:tile.wander-look-b12", frames: { idle: [36, 37, 38, 39], walkL: [40, 41, 42, 43], walkR: [44, 45, 46, 47] }, thumb: 36 },
+  { id: 52, base: 13, palette: 0, name: "Noble", tileset: "ui:tile.wander-look-b13", frames: { idle: [0, 1, 2, 3], walkL: [4, 5, 6, 7], walkR: [8, 9, 10, 11] }, thumb: 0 },
+  { id: 53, base: 13, palette: 1, name: "Noble", tileset: "ui:tile.wander-look-b13", frames: { idle: [12, 13, 14, 15], walkL: [16, 17, 18, 19], walkR: [20, 21, 22, 23] }, thumb: 12 },
+  { id: 54, base: 13, palette: 2, name: "Noble", tileset: "ui:tile.wander-look-b13", frames: { idle: [24, 25, 26, 27], walkL: [28, 29, 30, 31], walkR: [32, 33, 34, 35] }, thumb: 24 },
+  { id: 55, base: 13, palette: 3, name: "Noble", tileset: "ui:tile.wander-look-b13", frames: { idle: [36, 37, 38, 39], walkL: [40, 41, 42, 43], walkR: [44, 45, 46, 47] }, thumb: 36 },
+  { id: 56, base: 14, palette: 0, name: "Samurai", tileset: "ui:tile.wander-look-b14", frames: { idle: [0, 1, 2, 3], walkL: [4, 5, 6, 7], walkR: [8, 9, 10, 11] }, thumb: 0 },
+  { id: 57, base: 14, palette: 1, name: "Samurai", tileset: "ui:tile.wander-look-b14", frames: { idle: [12, 13, 14, 15], walkL: [16, 17, 18, 19], walkR: [20, 21, 22, 23] }, thumb: 12 },
+  { id: 58, base: 14, palette: 2, name: "Samurai", tileset: "ui:tile.wander-look-b14", frames: { idle: [24, 25, 26, 27], walkL: [28, 29, 30, 31], walkR: [32, 33, 34, 35] }, thumb: 24 },
+  { id: 59, base: 14, palette: 3, name: "Samurai", tileset: "ui:tile.wander-look-b14", frames: { idle: [36, 37, 38, 39], walkL: [40, 41, 42, 43], walkR: [44, 45, 46, 47] }, thumb: 36 },
+  { id: 60, base: 15, palette: 0, name: "SamuraiBlue", tileset: "ui:tile.wander-look-b15", frames: { idle: [0, 1, 2, 3], walkL: [4, 5, 6, 7], walkR: [8, 9, 10, 11] }, thumb: 0 },
+  { id: 61, base: 15, palette: 1, name: "SamuraiBlue", tileset: "ui:tile.wander-look-b15", frames: { idle: [12, 13, 14, 15], walkL: [16, 17, 18, 19], walkR: [20, 21, 22, 23] }, thumb: 12 },
+  { id: 62, base: 15, palette: 2, name: "SamuraiBlue", tileset: "ui:tile.wander-look-b15", frames: { idle: [24, 25, 26, 27], walkL: [28, 29, 30, 31], walkR: [32, 33, 34, 35] }, thumb: 24 },
+  { id: 63, base: 15, palette: 3, name: "SamuraiBlue", tileset: "ui:tile.wander-look-b15", frames: { idle: [36, 37, 38, 39], walkL: [40, 41, 42, 43], walkR: [44, 45, 46, 47] }, thumb: 36 },
+];

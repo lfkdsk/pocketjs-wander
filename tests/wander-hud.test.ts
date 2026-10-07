@@ -11,7 +11,7 @@
 // below go red.
 
 import { describe, expect, test } from "bun:test";
-import { clearOfHud, hudBarRects, landmarkBox, type HudRect } from "../examples/wander/hud.ts";
+import { clearOfHud, hudBarRects, landmarkBox, noticeRect, type HudRect } from "../examples/wander/hud.ts";
 
 /** A zero-size box on the anchor: true when the anchor point alone is clear
  *  of every HUD bar (the "anchor in the view band" condition). */
@@ -94,4 +94,26 @@ describe("wander HUD: landmark occlusion judgment", () => {
     expect((box.x0 + box.x1) / 2).toBe(100);
     expect((box.y0 + box.y1) / 2).toBe(100);
   });
+});
+
+describe("wander HUD: the floating notice never covers a panel", () => {
+  // The notice (FOUND / LOG / ERRAND captions) used to sit centred at plate
+  // height, so on the 480x272 layout a long caption covered the ring plate's
+  // CHUNKS line. The view now draws it from hud.noticeRect; pin that the
+  // rect is disjoint from every HUD bar at both shipped resolutions.
+  for (const [w, h, tag] of [[480, 272, "PSP"], [960, 544, "2x desktop"]] as const) {
+    test(`${tag} (${w}x${h}): the notice rect is disjoint from every HUD bar`, () => {
+      const notice = noticeRect(w, h);
+      for (const bar of hudBarRects(w, h)) {
+        expect(intersects(notice, bar), `notice ${JSON.stringify(notice)} intersects bar ${JSON.stringify(bar)}`).toBe(false);
+      }
+    });
+
+    test(`${tag} (${w}x${h}): the notice sits below both top plates`, () => {
+      const [seedPlate, ringPlate] = hudBarRects(w, h);
+      const notice = noticeRect(w, h);
+      expect(notice.y0).toBeGreaterThanOrEqual(seedPlate!.y1);
+      expect(notice.y0).toBeGreaterThanOrEqual(ringPlate!.y1);
+    });
+  }
 });

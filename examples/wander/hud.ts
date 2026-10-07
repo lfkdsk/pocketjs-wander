@@ -26,6 +26,18 @@ export function clearOfHud(box: HudRect, w: number, h: number): boolean {
   return hudBarRects(w, h).every((r) => box.x1 <= r.x0 || box.x0 >= r.x1 || box.y1 <= r.y0 || box.y0 >= r.y1);
 }
 
+/** The transient floating notice band (FOUND / LOG / mode captions). It sits
+ *  just below the taller top plate and spans the full width with the caption
+ *  centred, so it can never cover either top plate at any viewport width —
+ *  a centred caption at plate height used to overlap the ring plate on the
+ *  480x272 layout. The view draws its notice from this same rect. */
+export function noticeRect(w: number, h: number): HudRect {
+  const bars = hudBarRects(w, h);
+  const top = Math.max(bars[0]!.y1, bars[1]!.y1); // below both top plates
+  const NOTICE_H = 22; // padding 2 + 2 over an 18 px text line
+  return { x0: 0, y0: top + 2, x1: w, y1: top + 2 + NOTICE_H };
+}
+
 /** A landmark's 3 x 3 tile footprint centred on its centre cell, in screen
  *  px (every kind fills at least a 3 x 3 box; 3 tiles = 48 px). */
 export function landmarkBox(centrePxX: number, centrePxY: number): HudRect {

@@ -30,6 +30,9 @@ import { canStepFrom } from "../src/engine/passability.ts";
 import { CHUNK, regionOf } from "../examples/wander/world.ts";
 import { clearOfHud, landmarkBox } from "../examples/wander/hud.ts";
 import { improvementCells } from "../examples/wander/towns.ts";
+import { lookId, playerLook } from "../examples/wander/looks.ts";
+import { lookFrameRGBA } from "../examples/wander/look-assets.ts";
+import { WANDER_LOOKS } from "../examples/wander/assets-wander.ts";
 import { WanderSim, type ScheduledInput } from "../examples/wander/wander-sim.ts";
 import type { WanderPublished } from "../examples/wander/WanderView.tsx";
 import { appBundle, appPreflight } from "./helpers/boot.ts";
@@ -69,8 +72,28 @@ function count(fb: Uint8Array, stride: number, pred: (r: number, g: number, b: n
 // grow's road / plaza earth after PSM_4444 packing.
 const road = (r: number, g: number, b: number) => r === 170 && g === 153 && b === 119;
 const black = (r: number, g: number, b: number) => r === 0 && g === 0 && b === 0;
-// The Ninja samurai villager's red-orange hat band.
+// A villager garment after PSM_4444 packing: the red-orange robe several
+// pool looks share (replaced per-look, but always present in a town).
 const villagerHat = (r: number, g: number, b: number) => r >= 200 && g >= 120 && g <= 170 && b <= 90;
+
+/** The PSM_4444-rendered opaque colors of the player's default pool look
+ *  (playerLook of the start seed). The pak quantizes each channel to 4 bits
+ *  and the GE expands n -> n*17, so the framebuffer sees these values. The
+ *  look ships as CLUT8 tiles, but its palette words are quantized the same
+ *  way, so lookFrameRGBA's in-memory frame (what the tileset is cooked
+ *  from) carries the same colors. */
+function playerLookColors(): Set<string> {
+  const look = playerLook(0x5eed_0001);
+  const rgba = lookFrameRGBA(look.base, look.palette, "idle", "d");
+  const colors = new Set<string>();
+  for (let i = 0; i < rgba.length; i += 4) {
+    if (rgba[i + 3]! < 128) continue;
+    const q = (c: number) => (c >> 4) * 17;
+    colors.add(`${q(rgba[i]!)},${q(rgba[i + 1]!)},${q(rgba[i + 2]!)}`);
+  }
+  return colors;
+}
+const PLAYER_COLORS = playerLookColors();
 
 /** Field pixels outside the HUD plates (top 110 rows at the corners and the
  *  bottom help strip are overlays). */
@@ -82,12 +105,8 @@ function fieldBlack(fb: Uint8Array, w: number, h: number): number {
  *  semantic pixel check: terrain may move under the camera, but a capture
  *  called a movement frame must still contain the actual player sprite. */
 function playerPixels(fb: Uint8Array, w: number, h: number): number {
-  const colors = new Set([
-    "20,12,28", "210,170,153", "117,113,97", "210,125,44",
-    "133,76,48", "218,212,94", "222,238,214",
-  ]);
   const x0 = (w >> 1) - 8, y0 = (h >> 1) - 8;
-  return count(fb, w, (r, g, b) => colors.has(`${r},${g},${b}`), x0, x0 + 16, y0, y0 + 16);
+  return count(fb, w, (r, g, b) => PLAYER_COLORS.has(`${r},${g},${b}`), x0, x0 + 16, y0, y0 + 16);
 }
 
 function scale3(src: Uint8Array, w: number, h: number): Uint8Array {
@@ -119,7 +138,7 @@ async function golden(name: string, fb: Uint8Array, w: number, h: number): Promi
 
 simDescribe("wander render: the world on screen", () => {
   test("480x272: the start town grows around the player; no gaps; golden", async () => {
-    const w = await boot(480, 272);
+    const w = await boot(480, 272, 60, { __wanderVillagerLooks: {} });
     pump(w, 1);
     const early = w.render().slice();
     const earlyRoad = count(early, 480, road, 0, 480, 0, 272);
@@ -135,6 +154,16 @@ simDescribe("wander render: the world on screen", () => {
     expect(fieldBlack(fb, 480, 272)).toBe(0);
     expect(st.dropped).toBe(0);
     expect(st.mounted).toBeLessThan(st.nodeCap);
+    // The same town shows at least three distinct villager looks, both by
+    // the assigned look ids and by the torso pixels actually on screen.
+    const looks = (globalThis as { __wanderVillagerLooks?: Record<string, { lookId: number; sx: number; sy: number }> }).__wanderVillagerLooks ?? {};
+    const visible = Object.values(looks);
+    expect(new Set(visible.map((v) => v.lookId)).size).toBeGreaterThanOrEqual(3);
+    const torsoColors = new Set(visible.map((v) => {
+      const i = ((v.sy + 8) * 480 + (v.sx + 8)) * 4;
+      return `${fb[i]},${fb[i + 1]},${fb[i + 2]}`;
+    }));
+    expect(torsoColors.size).toBeGreaterThanOrEqual(3);
     const g = await golden("wander.480.300", fb, 480, 272);
     expect(fnv1a(fb)).toBe(fnv1a(g));
     // Semantic check of the pinned frame itself.
@@ -187,6 +216,45 @@ simDescribe("wander render: rate portability", () => {
       expect(new Set(hashes).size).toBe(1);
     }
   }, 60_000);
+});
+
+simDescribe("wander render: look resolution", () => {
+  test("a villager's look is resolved once at birth; steady frames resolve nothing", async () => {
+    // The review found syncPeople re-parsing the resident id and re-running
+    // lookFor for every visible villager every frame (regex match + object
+    // allocations on the steady path). The look is now resolved once when
+    // the node is born and cached; this test pins that contract with a
+    // counter: a stretch of frames that neither scrolls the window nor
+    // gains a villager must not resolve a single look.
+    const w = await boot(480, 272, 60, { __wanderVillagerLooks: {}, __wanderLookResolves: 0 });
+    pump(w, 360); // the start town grows around the player
+    // Stand still in manual mode so the window stops scrolling villagers
+    // through the viewport (auto-wander would keep the visible set churning).
+    pump(w, 2, BTN.UP);
+    pump(w, 1);
+    const sim = live();
+    const looks = (): string[] =>
+      Object.keys((globalThis as { __wanderVillagerLooks?: Record<string, unknown> }).__wanderVillagerLooks ?? {}).sort();
+    const resolves = (): number => (globalThis as { __wanderLookResolves?: number }).__wanderLookResolves ?? 0;
+    // Wait for growth to settle (nothing queued, nothing generated in the
+    // last second) so the standing scene is static; keep nudging manual
+    // mode so the 10 s idle resume does not hand the walk back mid-wait.
+    let settled = 0;
+    for (let f = 0; f < 60 * 90 && settled < 120; f++) {
+      pump(w, 1);
+      if (f % 240 === 0) { sim.mode = "manual"; sim.idle = 0; sim.driver.reset(); }
+      const st = pub();
+      settled = st.queued === 0 && st.generatedLastSecond === 0 ? settled + 1 : 0;
+    }
+    expect(settled, "growth settles within the wait").toBe(120);
+    expect(looks().length, "villagers are on screen").toBeGreaterThanOrEqual(3);
+    const beforeKeys = looks().join(",");
+    const beforeResolves = resolves();
+    expect(beforeResolves, "births did resolve looks").toBeGreaterThan(0);
+    pump(w, 180);
+    expect(resolves(), "no look resolved across 180 steady frames").toBe(beforeResolves);
+    expect(looks().join(","), "the visible set is stable").toBe(beforeKeys);
+  }, 90_000);
 });
 
 simDescribe("wander render: streaming under a starved budget", () => {
