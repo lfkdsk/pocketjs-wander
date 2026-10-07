@@ -211,20 +211,14 @@ describe("F2-2b: dialog facts are pure in (seed, region) regardless of residency
     expect(townTalk(seed, purePlan, 0, townFacts(seed, purePlan, pureLook), townErrand(seed, town.rx, town.ry), false).lines.join("\n")).toBe(pureLines);
   });
 
-  test("generated windows are lint-clean apart from the sim-seeded actor switches (10 seeds x several windows)", () => {
+  test("generated windows are completely lint-clean (10 seeds x every window walked)", () => {
     // The actor switches (`b:<id>`) are seeded into the switch bank by the
     // sim at runtime (wander-sim.ts applySwitches on a window build and
-    // applyGrowth as a region grows) — no document command ever sets them,
-    // so lint/switch-read-never-set fires for each. rpgkit-check has no
-    // project-data declaration that marks a switch host-written: the
-    // project.switches catalog (which the window now fills) is
-    // editor-facing and the checker does not consult it, and the schema has
-    // no host-switch field (see findings/WANDER-F2.md, 修复 5). Strict zero
-    // warnings is therefore blocked on that generic lint fix; this asserts
-    // the strongest honest contract across 10 seeds x every window each
-    // seed walks through: zero errors, and the ONLY warnings are
-    // switch-read-never-set for a switch the sim actually seeds — nothing
-    // else, on any window.
+    // applyGrowth as a region grows) — no document command ever sets them.
+    // Each window declares them in its switch directory with
+    // writtenBy:"host", so lint/switch-read-never-set skips exactly this
+    // family and every generated window is clean: zero errors AND zero
+    // warnings across 10 seeds x every window each seed walks through.
     let windows = 0;
     for (const seed of SEEDS) {
       const sim = new WanderSim({ seed, hz: 60, viewW: 960, viewH: 544 });
@@ -236,25 +230,11 @@ describe("F2-2b: dialog facts are pure in (seed, region) regardless of residency
         lastKey = key;
         windows++;
         const report = lintProject(sim.window.project);
-        expect(report.findings.filter((x) => x.severity === "error").map((x) => x.message)).toEqual([]);
-        const actorIds = new Set(sim.window.actors.map((a) => a.switchId));
-        const warnings = report.findings.filter((x) => x.severity === "warning");
-        // Every warning is the actor-switch family, naming a switch the sim
-        // seeds (so the warning set is exactly the seeded set — no spurious
-        // reads, no other warning kind on any generated window).
-        for (const w of warnings) {
-          expect(w.check).toBe("lint/switch-read-never-set");
-          const id = w.message.match(/switch "([^"]+)"/)?.[1];
-          expect(id, `warned switch is a seeded actor switch (${w.message})`).toBeTruthy();
-          expect(actorIds.has(id!), `warned switch ${id} is a seeded actor switch`).toBe(true);
-        }
-        // The text-token allowlist is exact: a wrong/placeholder list would
-        // fire lint/text-token-* warnings, which the "only actor-switch
-        // warnings" check above rejects. (A townless window bakes no tokens,
-        // so its allowlist is correctly empty.)
-        // The warning set is exactly the seeded actor set — no actor switch
-        // is set in the document, so every one is read-never-set.
-        expect(warnings.length, `window ${key} warns exactly its ${actorIds.size} actor switches`).toBe(actorIds.size);
+        const bad = report.findings.filter((x) => x.severity === "error" || x.severity === "warning");
+        expect(
+          bad.map((x) => `${x.severity} ${x.check}: ${x.message}`),
+          `window ${key} (seed ${seed}) is lint-clean`,
+        ).toEqual([]);
       }
     }
     // 10 seeds, several windows each (auto walk crosses ~10 chunks in 60 s).

@@ -247,12 +247,12 @@ export function* windowJob(
     system: { textTokens: [...tokenKeys].sort() },
     // The actor switches (`b:<id>`) the sim seeds into the switch bank at
     // runtime (wander-sim.ts applySwitches / applyGrowth): no document
-    // command ever sets them, so they are declared here in the project's
-    // switch directory. rpgkit-check does not yet treat catalog switches as
-    // host-written, so lint/switch-read-never-set still fires for them (see
-    // findings/WANDER-F2.md, 修复 5); the lint test exempts exactly this
-    // family until the checker honors the catalog.
-    switches: actors.map((a) => ({ id: a.switchId })).sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0)),
+    // command ever sets them, so each declaration carries
+    // writtenBy:"host" — the static checker then skips
+    // lint/switch-read-never-set for exactly this family.
+    switches: actors
+      .map((a) => ({ id: a.switchId, writtenBy: "host" as const }))
+      .sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0)),
     items: [],
     sprites: { villager: { kind: "image", src: VILLAGER_SPRITE } },
     maps: [map],
