@@ -12,7 +12,7 @@ import { RealmArena, type RealmPlayer } from "../examples/wander-online/server/r
 import { entityFor } from "../examples/wander-online/shared/snapshot.ts";
 
 const SEED = 0x5eed_0001;
-const EPOCH = 0x3795_a001;
+const EPOCH = 0x4e57_a001;
 const LEGACY_MIN = 0;
 const LEGACY_MAX = 95;
 
@@ -226,7 +226,7 @@ describe("wander-online realm acceptance", () => {
       }
     }
 
-    let random = 0x3795_a001;
+    let random = 0x4e57_a001;
     for (let sample = 0; sample < 1_000; sample++) {
       random = (Math.imul(random, 1_664_525) + 1_013_904_223) >>> 0;
       const centre = centers[random % centers.length]!;
