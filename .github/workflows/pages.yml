@@ -1,11 +1,8 @@
 name: Pages
 
-# Build the browser-playable wander site (`bun run web`) and publish
+# Build the browser-playable wander and wander-online site (`bun run web`) and publish
 # dist/web to GitHub Pages at https://lfkdsk.github.io/pocketjs-wander/.
 # The repository's Pages source must be set to "GitHub Actions".
-#
-# wander-online stays a local demo (it needs the loopback server) and is
-# not part of the published site.
 
 on:
   push:
@@ -56,22 +53,27 @@ jobs:
 
       - name: Build the site
         run: bun run web
+        env:
+          WANDER_ONLINE_URL: wss://wander-online.lfk-dsk.workers.dev/ws
 
       # The kit's web-verify assumes the site's first game ships a chaptered
       # demo tape (its phone test opens a demo menu wander does not have), so
-      # this single-game site gets a smoke check instead: the landing page,
-      # the player page and the wasm core all answer, and games.json lists
-      # wander. The sim side is covered in CI by the golden render tests.
+      # this site gets a focused smoke check instead: the landing page, both
+      # player pages and the wasm core all answer, and games.json lists both
+      # apps. The sim side is covered in CI by the render/auth tests.
       - name: Smoke the built site
         run: |
           python3 -m http.server 9123 --directory dist/web >/dev/null 2>&1 &
           HTTP_PID=$!
+          trap 'kill "$HTTP_PID"' EXIT
           sleep 1
           curl -fsS http://127.0.0.1:9123/ >/dev/null
           curl -fsS http://127.0.0.1:9123/wander/ >/dev/null
+          curl -fsS http://127.0.0.1:9123/wander-online/ >/dev/null
           curl -fsS http://127.0.0.1:9123/pocketjs.wasm >/dev/null
-          test "$(curl -fsS http://127.0.0.1:9123/games.json | bun -e 'const j = await Bun.stdin.json(); process.exit(j.some((g) => g.id === "wander") ? 0 : 1)')"
-          kill "$HTTP_PID"
+          curl -fsS http://127.0.0.1:9123/games.json | bun -e 'const j = await Bun.stdin.json(); const ids = j.map((g) => g.id).sort(); process.exit(JSON.stringify(ids) === JSON.stringify(["wander", "wander-online"].sort()) ? 0 : 1)'
+          grep -aFq 'wss://wander-online.lfk-dsk.workers.dev/ws' dist/web/wander-online/wander-online.pak
+          grep -Fq '"clientId":"Ov23liCg29llKxJ7b0jv","worker":"https://auth.lfkdsk.org/wander-online"' dist/web/wander-online/index.html
 
       - uses: actions/configure-pages@v6
 
