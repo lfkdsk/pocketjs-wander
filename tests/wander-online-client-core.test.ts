@@ -149,4 +149,28 @@ describe("wander-online client core", () => {
     ]);
     linkedClient.stop();
   });
+
+  test("late auth replies cannot revive a stopped client", () => {
+    const harness = socketHarness();
+    const tickets: [string, string][] = [];
+    const creates: [string, string][] = [];
+    const client = new OnlineClient("ws://unit.test/ws", {
+      auth: { kind: "github", token: "one-shot" },
+      socketFactory: harness.factory,
+      onTicket: (ticket, source) => tickets.push([ticket, source]),
+      onNeedCreate: (login, ticket) => creates.push([login, ticket]),
+    });
+    harness.open();
+    const sentBeforeStop = harness.sent.length;
+    client.stop();
+
+    harness.message(JSON.stringify({ type: "needCreate", login: "late", ticket: "create-ticket" }));
+    harness.message(JSON.stringify({ type: "ready", ticket: "ready-ticket" }));
+    harness.message(JSON.stringify({ type: "linked", ticket: "linked-ticket" }));
+
+    expect(client.auth).toEqual({ kind: "github", token: "one-shot" });
+    expect(tickets).toEqual([]);
+    expect(creates).toEqual([]);
+    expect(harness.sent).toHaveLength(sentBeforeStop);
+  });
 });

@@ -297,6 +297,7 @@ export class OnlineClient {
   }
 
   private onMessage(data: string | Uint8Array): void {
+    if (this.stopped) return;
     if (typeof data === "string") {
       // Server text replies: needCreate, ready, createError, linkCode,
       // linked, linkError, deleted. Each is a one-shot JSON object.
