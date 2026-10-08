@@ -1,0 +1,35 @@
+{
+  "name": "pocketjs-wander",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "An endless grown world on PocketJS and Pocket RPG Kit: streamed chunks, talking towns, and a local multiplayer demo",
+  "workspaces": [
+    "vendor/pocket-rpgkit/vendor/pocketjs"
+  ],
+  "scripts": {
+    "setup": "git submodule update --init --recursive && bun install",
+    "gen-assets": "bun examples/wander/gen-assets.ts",
+    "build": "bun tools/build.ts",
+    "build:wasm": "bun vendor/pocket-rpgkit/vendor/pocketjs/tools/wasm.ts",
+    "desktop": "bun tools/desktop.ts",
+    "web": "bun tools/web.ts",
+    "test": "bun test tests/",
+    "tsc": "bunx tsc --noEmit",
+    "check": "bun test && bunx tsc --noEmit",
+    "shots:f1": "bun tools/wander-f1-shots.ts",
+    "shots:f2": "bun tools/wander-f2-shots.ts",
+    "shots:char": "bun tools/wander-char-shots.ts",
+    "online:demo": "bash examples/wander-online/demo.sh"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "@vue-jsx-vapor/runtime": "3.2.19",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "@pocketjs/framework": "workspace:*",
+    "solid-js": "^1.9"
+  }
+}

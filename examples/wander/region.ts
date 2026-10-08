@@ -30,8 +30,8 @@
 // (corridor boxes); a 2 x 2 wilderness block reaches at most one tile over
 // an edge, so a chunk never needs a neighbouring region's plan.
 
-import type { MoveStep } from "../../src/engine/types.ts";
-import { HOUSE_STAMPS, STAMPS, stampCell } from "../grow/grow-stamps.ts";
+import type { MoveStep } from "../../vendor/pocket-rpgkit/src/engine/types.ts";
+import { HOUSE_STAMPS, STAMPS, stampCell } from "../../vendor/pocket-rpgkit/examples/grow/grow-stamps.ts";
 import {
   GROW_TILE as T, REGION, growHash, regionGates, regionHub,
   type Biome, type Gate, type RegionHub,

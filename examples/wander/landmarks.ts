@@ -11,7 +11,7 @@
 // Kinds use only tiles already in the wander asset set (WANDER_UPPER /
 // WANDER_GROUND / WANDER_STAMPS), so no new art ships with this feature.
 
-import { STAMPS } from "../grow/grow-stamps.ts";
+import { STAMPS } from "../../vendor/pocket-rpgkit/examples/grow/grow-stamps.ts";
 import { GROW_TILE as T, REGION, growHash, regionGates, regionHub, regionOf } from "./world.ts";
 
 export const LANDMARK_CHANCE = 0.6;

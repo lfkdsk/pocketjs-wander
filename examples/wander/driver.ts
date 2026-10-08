@@ -23,9 +23,9 @@
 // The driver is folded once per 60 Hz reference tick by WanderSim, so the
 // trajectory is identical at 60/30/20/4 Hz.
 
-import type { MovementState } from "../../src/engine/movement.ts";
-import type { PassageTable } from "../../src/engine/passability.ts";
-import { BLOCK } from "../../src/engine/passability.ts";
+import type { MovementState } from "../../vendor/pocket-rpgkit/src/engine/movement.ts";
+import type { PassageTable } from "../../vendor/pocket-rpgkit/src/engine/passability.ts";
+import { BLOCK } from "../../vendor/pocket-rpgkit/src/engine/passability.ts";
 import { REGION, growHash, regionOf, type RegionHub } from "./world.ts";
 import { WINDOW } from "./window.ts";
 import { regionKey } from "./residency.ts";

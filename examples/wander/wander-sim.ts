@@ -39,10 +39,10 @@ import {
   stepSession,
   type Session,
   type SessionState,
-} from "../../src/engine/session.ts";
-import { keyedRecord } from "../../src/engine/clone.ts";
-import { MOTION_HZ, motionTicksPerFrame } from "../../src/engine/motion-clock.ts";
-import { BLOCK, canStepFrom, setPassageOverride, type Dir4, type PassageTable } from "../../src/engine/passability.ts";
+} from "../../vendor/pocket-rpgkit/src/engine/session.ts";
+import { keyedRecord } from "../../vendor/pocket-rpgkit/src/engine/clone.ts";
+import { MOTION_HZ, motionTicksPerFrame } from "../../vendor/pocket-rpgkit/src/engine/motion-clock.ts";
+import { BLOCK, canStepFrom, setPassageOverride, type Dir4, type PassageTable } from "../../vendor/pocket-rpgkit/src/engine/passability.ts";
 import { blocksAt, roadAt, type ChunkData } from "./chunk.ts";
 import { AutoWalker } from "./driver.ts";
 import { chunkKey, regionKey, Residency, STEP_MAX, TICK_BUDGET, type Focus, type ResidencyStats } from "./residency.ts";

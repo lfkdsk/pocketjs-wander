@@ -1,0 +1,35 @@
+{
+  "title": "PocketJS Wander",
+  "intro": "An endless grown world that streams in around the player: towns grow as you reach them, landmarks and rumors wait in the wilds, and the world wanders itself when you put it down. Built on PocketJS and Pocket RPG Kit.",
+  "source": "https://github.com/lfkdsk/pocketjs-wander",
+  "games": {
+    "wander": {
+      "title": "Wander: an Endless Grown World",
+      "description": "An unbounded world streamed in 32x32 chunks around the player: towns grow as you reach them, and chunks load ahead and unload behind within a fixed memory cap. Left alone it wanders by itself; the minimap shows the rings.",
+      "preview": "tests/goldens/wander.960.2100.png",
+      "controls": [
+        {
+          "button": "DPAD",
+          "action": "Walk. Any key takes over from the auto-walk; 10 idle seconds hand it back."
+        },
+        {
+          "button": "TRIANGLE",
+          "action": "Fast travel on or off (TRI on screen)"
+        },
+        {
+          "button": "SQUARE",
+          "action": "New seed (SQR on screen)"
+        },
+        {
+          "button": "SELECT",
+          "action": "Back to the auto-walk"
+        },
+        {
+          "button": "CIRCLE",
+          "action": "Read a town's notice board"
+        }
+      ],
+      "pointer": "Click or tap a tile to walk there."
+    }
+  }
+}

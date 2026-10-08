@@ -13,8 +13,8 @@
 // fold the kit's hosts use). Nothing here reads a clock: a recorded input
 // tape replays byte-identically.
 
-import { stepSession, type SessionState } from "../../../src/engine/session.ts";
-import { motionTicksPerFrame } from "../../../src/engine/motion-clock.ts";
+import { stepSession, type SessionState } from "../../../vendor/pocket-rpgkit/src/engine/session.ts";
+import { motionTicksPerFrame } from "../../../vendor/pocket-rpgkit/src/engine/motion-clock.ts";
 import { WINDOW } from "../../wander/window.ts";
 import { buildArenaWorld, startArenaState, type ArenaWorld } from "../net/world.ts";
 

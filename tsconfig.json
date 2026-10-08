@@ -1,0 +1,47 @@
+{
+  "compilerOptions": {
+    "types": ["bun"],
+    "strict": true,
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "jsx": "preserve",
+    "verbatimModuleSyntax": true,
+    "baseUrl": ".",
+    "paths": {
+      "pocket-rpgkit": ["./vendor/pocket-rpgkit/src/index.ts"],
+      "pocket-rpgkit/engine": ["./vendor/pocket-rpgkit/src/engine/index.ts"],
+      "pocket-rpgkit/ui": ["./vendor/pocket-rpgkit/src/ui/index.ts"],
+      "pocket-rpgkit/host": ["./vendor/pocket-rpgkit/src/host/index.ts"]
+    }
+  },
+  "include": [
+    "examples",
+    "tools",
+    "tests",
+    "vendor/pocket-rpgkit/src",
+    "vendor/pocket-rpgkit/tools/rpgkit-check",
+    "vendor/pocket-rpgkit/examples/grow",
+    "vendor/pocket-rpgkit/vendor/pocketjs/framework/src",
+    "vendor/pocket-rpgkit/vendor/pocketjs/contracts/spec"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "vendor/pocket-rpgkit/node_modules",
+    "vendor/pocket-rpgkit/dist",
+    "vendor/pocket-rpgkit/vendor/pocketjs/framework/compiler",
+    "vendor/pocket-rpgkit/vendor/pocketjs/framework/src/service-client.ts",
+    "vendor/pocket-rpgkit/vendor/pocketjs/framework/src/media-service.ts",
+    "vendor/pocket-rpgkit/vendor/pocketjs/site",
+    "vendor/pocket-rpgkit/vendor/pocketjs/apps",
+    "vendor/pocket-rpgkit/vendor/pocketjs/hosts",
+    "vendor/pocket-rpgkit/vendor/pocketjs/tests",
+    "vendor/pocket-rpgkit/vendor/pocketjs/tools"
+  ]
+}

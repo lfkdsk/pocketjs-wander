@@ -11,8 +11,8 @@
 
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { decodePng } from "../vendor/pocketjs/framework/compiler/pak.ts";
-import { encodePNG } from "../vendor/pocketjs/tests/png.ts";
+import { decodePng } from "../vendor/pocket-rpgkit/vendor/pocketjs/framework/compiler/pak.ts";
+import { encodePNG } from "../vendor/pocket-rpgkit/vendor/pocketjs/tests/png.ts";
 import {
   TILESET_ABSENT,
   TILESET_DIR_ENTRY_SIZE,
@@ -21,7 +21,7 @@ import {
   TILESET_MAGIC,
   TILESET_VERSION,
   packbitsDecode,
-} from "../vendor/pocketjs/contracts/spec/spec.ts";
+} from "../vendor/pocket-rpgkit/vendor/pocketjs/contracts/spec/spec.ts";
 import {
   LOOK_BASES,
   LOOK_BASE_NAMES,

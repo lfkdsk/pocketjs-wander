@@ -15,8 +15,8 @@
 //             serialize/restore round-trip; state stays under 1 KiB
 
 import { describe, expect, test } from "bun:test";
-import { BTN } from "../vendor/pocketjs/contracts/spec/spec.ts";
-import { lintProject } from "../tools/rpgkit-check/src/lint.ts";
+import { BTN } from "../vendor/pocket-rpgkit/vendor/pocketjs/contracts/spec/spec.ts";
+import { lintProject } from "../vendor/pocket-rpgkit/tools/rpgkit-check/src/lint.ts";
 import { planRegion, regionName } from "../examples/wander/region.ts";
 import { regionGates, regionHub, regionOf } from "../examples/wander/world.ts";
 import { landmarkFor } from "../examples/wander/landmarks.ts";

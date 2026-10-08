@@ -1,0 +1,67 @@
+name: CI
+
+# Typecheck, build the apps, and run the test suites. The sim suite boots
+# the built wander bundle on the deterministic wasm host, so the wasm core
+# and the apps are built first.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.x
+
+      # The wasm core (vendor/pocket-rpgkit/vendor/pocketjs/hosts/web/pocketjs.wasm)
+      # is a build artifact, not a checked-in file. Stable Rust is enough.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache the wasm core build
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            vendor/pocket-rpgkit/vendor/pocketjs/engine/wasm/target
+          key: ${{ runner.os }}-pocketjs-wasm-${{ hashFiles('vendor/pocket-rpgkit/vendor/pocketjs/engine/wasm/Cargo.lock', 'vendor/pocket-rpgkit/vendor/pocketjs/engine/wasm/Cargo.toml', 'vendor/pocket-rpgkit/vendor/pocketjs/engine/core/Cargo.toml', 'vendor/pocket-rpgkit/vendor/pocketjs/engine/wasm/src/**', 'vendor/pocket-rpgkit/vendor/pocketjs/engine/core/src/**') }}
+          restore-keys: ${{ runner.os }}-pocketjs-wasm-
+
+      # vendor/pocket-rpgkit/vendor/pocketjs is a workspace of this package,
+      # so one install covers its build dependencies too.
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build the wasm core
+        run: bun run build:wasm
+
+      - name: Build the apps
+        run: bun run build
+
+      # gen-assets is deterministic: regenerating must not change a byte of
+      # the committed manifests, composites or tilesets.
+      - name: Generated assets are byte-stable
+        run: |
+          git status --porcelain
+          test -z "$(git status --porcelain)"
+
+      - name: Typecheck
+        run: bunx tsc --noEmit
+
+      - name: Tests
+        run: bun run test

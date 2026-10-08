@@ -30,7 +30,7 @@ import { WINDOW } from "../examples/wander/window.ts";
 import { Arena } from "../examples/wander-online/server/area.ts";
 import { Predictor } from "../examples/wander-online/net/predict.ts";
 import { Interpolator } from "../examples/wander-online/net/interpolate.ts";
-import { stepSession, type SessionState } from "../src/engine/session.ts";
+import { stepSession, type SessionState } from "../vendor/pocket-rpgkit/src/engine/session.ts";
 
 describe("wander-online protocol", () => {
   test("INPUT roundtrip carries seq and buttons", () => {

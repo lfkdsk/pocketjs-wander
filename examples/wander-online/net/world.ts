@@ -12,7 +12,7 @@
 
 import { WanderSim } from "../../wander/wander-sim.ts";
 import { WINDOW } from "../../wander/window.ts";
-import { startSession, type Session, type SessionState } from "../../../src/engine/session.ts";
+import { startSession, type Session, type SessionState } from "../../../vendor/pocket-rpgkit/src/engine/session.ts";
 import type { WindowBuild } from "../../wander/window.ts";
 import type { Residency } from "../../wander/residency.ts";
 

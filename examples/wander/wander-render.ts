@@ -38,7 +38,7 @@ import { jump } from "@pocketjs/framework/animation";
 import { biomeAt, CHUNK } from "./world.ts";
 import { groundAt, NO_SUB, upperAt, type ChunkData } from "./chunk.ts";
 import { chunkKey, regionKey, type Residency } from "./residency.ts";
-import { STAMP_LIST } from "../grow/grow-stamps.ts";
+import { STAMP_LIST } from "../../vendor/pocket-rpgkit/examples/grow/grow-stamps.ts";
 import { WANDER_BLOCK, WANDER_FILL64, WANDER_GROUND, WANDER_STAMPS, WANDER_TERRAIN, WANDER_UPPER } from "./assets-wander.ts";
 
 export const TILE = 16;
