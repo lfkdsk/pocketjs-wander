@@ -7,12 +7,14 @@
 // reducer.  In particular, movement is deliberately not reimplemented here:
 // a 5 x 5 PassageTable centred on the mover is passed to stepMovementLegacy.
 
-import { blocksAt, chunkJob, COMPLETE, type ChunkData } from "../../wander/chunk.ts";
-import { planRegionJob, type RegionPlan } from "../../wander/region.ts";
-import { CHUNK, REGION_CHUNKS, TILE, regionHub } from "../../wander/world.ts";
+import { blocksAt, chunkJob, type ChunkData } from "../../wander/chunk.ts";
+import { F_DECOR, F_UPPER, planRegionJob, type RegionPlan } from "../../wander/region.ts";
+import { CHUNK, REGION, REGION_CHUNKS, TILE, regionHub } from "../../wander/world.ts";
+import { improvementCells } from "../../wander/towns.ts";
 import { initialMovement, stepMovementLegacy, type MovementState } from "../../../vendor/pocket-rpgkit/src/engine/movement.ts";
 import type { PassageTable } from "../../../vendor/pocket-rpgkit/src/engine/passability.ts";
 import type { CharsState } from "../../../vendor/pocket-rpgkit/src/engine/chars.ts";
+import { RealmStateCache, type RealmRegionSnapshot, type RealmRegionState } from "./realm-state.ts";
 
 /** Bump this when the realm's deterministic terrain or scheduling contract changes. */
 export const GENERATOR_VERSION = 1;
@@ -128,6 +130,7 @@ function keyOrder(a: string, b: string): number {
 export class MultiFocusWorld implements RealmCollisionSource {
   readonly chunks = new Map<string, ChunkData>();
   readonly plans = new Map<string, RegionPlan>();
+  readonly regionStates = new RealmStateCache();
   /** Completed chunks since the last drain. */
   readonly fresh: ChunkData[] = [];
 
@@ -135,8 +138,12 @@ export class MultiFocusWorld implements RealmCollisionSource {
   private activeRegions = new Map<string, Coord>();
   private readonly chunkUsed = new Map<string, number>();
   private readonly planUsed = new Map<string, number>();
+  private readonly improvedPlans = new WeakSet<RegionPlan>();
   private job: RealmJob | null = null;
   private tick = 0;
+  /** Rollback replay may evaluate an old input without rolling back the
+   * monotonic clock used by rendering and live server simulation. */
+  private evaluationTimeMs: number | null = null;
 
   constructor(readonly seed: number) {}
 
@@ -162,9 +169,67 @@ export class MultiFocusWorld implements RealmCollisionSource {
     return this.chunks.get(realmChunkKey(cx, cy));
   }
 
-  /** A-phase realms expose the fully-grown terrain phase everywhere. */
-  regionTick(_rx: number, _ry: number, _now: number): number {
-    return COMPLETE;
+  get worldTimeMs(): number {
+    return this.regionStates.serverTimeMs;
+  }
+
+  setWorldTime(serverTimeMs: number): number {
+    return this.regionStates.advanceClock(serverTimeMs);
+  }
+
+  evaluateAt<T>(serverTimeMs: number, evaluate: () => T): T {
+    if (!Number.isFinite(serverTimeMs) || serverTimeMs < 0) throw new RangeError(`invalid realm evaluation time ${serverTimeMs}`);
+    const previous = this.evaluationTimeMs;
+    this.evaluationTimeMs = serverTimeMs;
+    try {
+      return evaluate();
+    } finally {
+      this.evaluationTimeMs = previous;
+    }
+  }
+
+  regionState(rx: number, ry: number): RealmRegionState | undefined {
+    return this.regionStates.get(rx, ry);
+  }
+
+  regionTick(rx: number, ry: number, now = this.worldTimeMs): number {
+    return this.regionStates.regionTick(rx, ry, now);
+  }
+
+  /** Apply a persisted nearby snapshot/delta. Rendering observes phase via
+   * regionTick; collision reads the same phase below. Improvements mutate a
+   * virgin plan once and queue resident chunks for the existing render-ring
+   * fresh path. */
+  applyRegionState(snapshot: RealmRegionSnapshot): void {
+    const applied = this.regionStates.apply(snapshot);
+    for (const { row, previous } of applied) {
+      if (row.improvementLevel <= (previous?.improvementLevel ?? 0)) continue;
+      const plan = this.plans.get(realmRegionKey(row.rx, row.ry));
+      if (plan) this.applyImprovement(plan);
+    }
+  }
+
+  private applyImprovement(plan: RegionPlan): void {
+    if (this.improvedPlans.has(plan)) return;
+    this.improvedPlans.add(plan);
+    const repaint = new Set<ChunkData>();
+    for (const cell of improvementCells(plan)) {
+      const pi = (cell.y - plan.y0) * REGION + cell.x - plan.x0;
+      plan.upper![pi] = cell.tile;
+      plan.flags![pi]! |= F_UPPER | F_DECOR;
+      plan.born![pi] = 0;
+      const chunk = this.chunk(Math.floor(cell.x / CHUNK), Math.floor(cell.y / CHUNK));
+      if (!chunk) continue;
+      const ci = (cell.y - chunk.y0) * CHUNK + cell.x - chunk.x0;
+      chunk.devUpper[ci] = cell.tile;
+      chunk.devBorn[ci] = 0;
+      chunk.flags[ci]! |= F_DECOR;
+      repaint.add(chunk);
+    }
+    for (const chunk of repaint) {
+      this.fresh.push(chunk);
+      if (this.fresh.length > CHUNK_CACHE_CAP) this.fresh.shift();
+    }
   }
 
   /** Replace the focus set and return its exact active-frontier delta. */
@@ -279,6 +344,7 @@ export class MultiFocusWorld implements RealmCollisionSource {
       if (completed.kind === "plan") {
         if (!this.activeRegions.has(completed.key)) continue;
         const plan = result.value as RegionPlan;
+        if ((this.regionState(plan.rx, plan.ry)?.improvementLevel ?? 0) > 0) this.applyImprovement(plan);
         this.plans.set(completed.key, plan);
         this.planUsed.set(completed.key, now);
         this.evictPlans();
@@ -330,7 +396,8 @@ export class MultiFocusWorld implements RealmCollisionSource {
     const chunk = this.chunk(cx, cy);
     if (!chunk) return { ready: false, blocked: true };
     const lx = tx - chunk.x0, ly = ty - chunk.y0;
-    return { ready: true, blocked: blocksAt(chunk, ly * CHUNK + lx, COMPLETE) };
+    const nowMs = this.evaluationTimeMs ?? this.worldTimeMs;
+    return { ready: true, blocked: blocksAt(chunk, ly * CHUNK + lx, this.regionTick(chunk.rx, chunk.ry, nowMs)) };
   }
 
   /** Drop every inactive chunk and every cached plan.  With no focuses this
@@ -477,10 +544,11 @@ export class RealmWorld extends MultiFocusWorld {
     return startRealmState(this.seed);
   }
 
-  step(state: RealmState, buttons: number, now = 0): RealmState {
+  step(state: RealmState, buttons: number, serverTimeMs = this.worldTimeMs, streamTick = serverTimeMs): RealmState {
+    this.setWorldTime(serverTimeMs);
     const focus = [{ x: state.move.tx, y: state.move.ty }];
-    this.setFocuses(focus, now);
-    this.prime(undefined, now);
-    return stepRealmMover(state, buttons, this, now);
+    this.setFocuses(focus, streamTick);
+    this.prime(undefined, streamTick);
+    return this.evaluateAt(serverTimeMs, () => stepRealmMover(state, buttons, this, serverTimeMs));
   }
 }

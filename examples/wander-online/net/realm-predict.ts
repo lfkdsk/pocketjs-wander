@@ -69,7 +69,7 @@ export class RealmPredictor {
   private seq = 0;
   private lastAck = 0;
   private history: SavedFrame[] = [];
-  private inputs: { seq: number; buttons: number }[] = [];
+  private inputs: { seq: number; buttons: number; serverTimeMs: number }[] = [];
   corrections = 0;
 
   constructor(welcome: Welcome4) {
@@ -79,6 +79,7 @@ export class RealmPredictor {
     this.epoch = welcome.epoch >>> 0;
     this.realmId = welcome.realmId;
     this.world = new RealmWorld(welcome.seed);
+    this.world.setWorldTime(welcome.serverTimeMs);
     this.state = { move: moverFromWelcome(welcome), chars: { chars: {} } };
     this.world.prime([{ x: this.state.move.tx, y: this.state.move.ty }], 0);
   }
@@ -99,11 +100,11 @@ export class RealmPredictor {
     return this.history.find((h) => h.seq === seq)?.state ?? null;
   }
 
-  pushInput(buttons: number): number {
+  pushInput(buttons: number, serverTimeMs = this.world.worldTimeMs): number {
     this.seq++;
-    this.state = this.world.step(this.state, buttons, this.seq);
+    this.state = this.world.step(this.state, buttons, serverTimeMs, this.seq);
     this.history.push({ seq: this.seq, state: this.state });
-    this.inputs.push({ seq: this.seq, buttons });
+    this.inputs.push({ seq: this.seq, buttons, serverTimeMs });
     if (this.history.length > REALM_HISTORY_CAP) this.history.shift();
     if (this.inputs.length > REALM_HISTORY_CAP) this.inputs.shift();
     return this.seq;
@@ -127,7 +128,7 @@ export class RealmPredictor {
     let state = replaceMover(base, auth);
     const rebuilt: SavedFrame[] = [];
     for (const input of replay) {
-      state = this.world.step(state, input.buttons, input.seq);
+      state = this.world.step(state, input.buttons, input.serverTimeMs, input.seq);
       rebuilt.push({ seq: input.seq, state });
     }
     this.state = state;

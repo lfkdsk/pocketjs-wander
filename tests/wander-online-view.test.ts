@@ -366,6 +366,56 @@ simDescribe("wander-online view: HUD", () => {
     w.frame(0);
   });
 
+  test("480x272: default realm HUD paints the first discoverer's name", async () => {
+    const firstName = "Ada";
+    const w = await boot(
+      { kind: "ticket", ticket: "t1" },
+      fakeOnlineSocketFactory({
+        mode: "welcome4",
+        name: "Octo",
+        look: 3,
+        ticket: "t1",
+        landmarkFirstName: firstName,
+        realm: { tx: 640, ty: -640, epoch: 91 },
+      }),
+      480,
+      272,
+    );
+    pump(w, 5);
+    await waitFor(w, () => state()?.status === "joined", "v4 joined");
+    // Stop the default auto walker and let its in-flight step settle so the
+    // six-frame HUD refresh and the per-frame published camera agree.
+    press(w, BTN.RIGHT);
+    pump(w, 18);
+    pump(w, 12);
+    const published = state()!;
+    const line = `X ${published.x}  Y ${published.y}  ${published.auto ? "AUTO" : "YOU"}  FIRST ${firstName}`;
+    expect(published.landmarkFirstName).toBe(firstName);
+    expect(published.improvementLevel).toBe(0);
+    expect(treeHasText(w.getTree(), line)).toBe(true);
+    expect(treeHasText(w.getTree(), "RTT")).toBe(false);
+
+    // `text-xs` resolves to the app's compact HUD font slot.
+    const measure = (text: string): number =>
+      (globalThis as unknown as { ui: { measureText(value: string, slot: number): number } }).ui.measureText(text, 19);
+    const suffixX0 = 12 + measure(line.slice(0, -firstName.length));
+    const suffixX1 = 12 + measure(line);
+    expect(suffixX1).toBeLessThanOrEqual(480);
+    const plate = statusPlate(480, 272, false);
+    const framebuffer = w.render();
+    const suffixInk = count(
+      framebuffer,
+      480,
+      (r, g, b) => r === 0xc8 && g === 0xd6 && b === 0xea,
+      suffixX0,
+      suffixX1,
+      plate.y0 + 28,
+      plate.y0 + 40,
+    );
+    expect(suffixInk, "FIRST Ada suffix paints inside the 480 px viewport").toBeGreaterThan(0);
+    w.frame(0);
+  }, 20_000);
+
   for (const [W, H] of [[480, 272], [960, 544]] as const) {
     test(`${W}x${H}: a 12-code-point name and room/global maxima fit and paint their suffix`, async () => {
       const longName = "MMMMMMMMMMMM";

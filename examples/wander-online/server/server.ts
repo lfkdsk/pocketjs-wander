@@ -24,16 +24,20 @@
 import { join } from "node:path";
 import { type ServerWebSocket } from "bun";
 import { Arena } from "./area.ts";
-import { REALM_PLAYER_CAP, RealmArena } from "./realm-area.ts";
+import { REALM_PLAYER_CAP, RealmArena, type RealmPlayer } from "./realm-area.ts";
 import { DevAuth } from "./dev-auth.ts";
 import { entityFor, snapshotFor, snapshotForRealm } from "../shared/snapshot.ts";
 import {
   MSG,
+  REGION_STATE_FLAG_INITIAL,
   WORLD_PROTOCOL_VERSION,
+  WORLD_STATE_VERSION,
   decodeInput,
   decodeInputBatch,
   encodeBye,
   encodePong,
+  encodePlayerProgress,
+  encodeRegionState,
   encodeRoster,
   encodeWelcome,
   encodeWelcome4,
@@ -147,6 +151,9 @@ export function startServer(opts: ServerOpts): ServerHandle {
       const conn = realmConns.get(p.id);
       if (!conn) continue;
       stats.snapshots++;
+      // Reliable WebSocket ordering makes the current region facts visible
+      // before the movement snapshot that was simulated from them.
+      emit(conn, encodeRegionState(realmArena.regionSnapshotFor(p, 0)));
       emit(conn, snapshotForRealm(realmArena, p, opts.aoi, realmOnline, realmOnline));
     }
   }
@@ -204,7 +211,7 @@ export function startServer(opts: ServerOpts): ServerHandle {
   /** Text messages: the auth handshake (JOIN/CREATE/LINKR on an unjoined
    *  socket; LINKQ/DELETE on a joined one). Mirrors the Worker's RoomDO. */
   async function handleText(ws: ServerWebSocket<ConnData>, msg: string): Promise<void> {
-    let m: { type?: string; v?: number };
+    let m: Record<string, unknown> & { type?: string; v?: number };
     try {
       m = JSON.parse(msg);
     } catch {
@@ -267,7 +274,8 @@ export function startServer(opts: ServerOpts): ServerHandle {
     const expected = ws.data.realm ? WORLD_PROTOCOL_VERSION : AUTH_PROTOCOL_VERSION;
     const generatorOk = Array.isArray(m.supportedGeneratorVersions)
       && m.supportedGeneratorVersions.includes(1);
-    if (m.v !== expected || (ws.data.realm && !generatorOk)) {
+    const worldStateOk = m.worldStateVersion === WORLD_STATE_VERSION;
+    if (m.v !== expected || (ws.data.realm && (!generatorOk || !worldStateOk))) {
       ws.close(1008, ws.data.realm ? "upgrade-required" : "version");
       return;
     }
@@ -339,16 +347,21 @@ export function startServer(opts: ServerOpts): ServerHandle {
     activeConns.set(p.id, conn);
     if (ws.data.realm) {
       const { id: _id, color: _color, ...mover } = entityFor(p);
+      const initial = realmArena.regionSnapshotFor(p as RealmPlayer, REGION_STATE_FLAG_INITIAL);
       emit(conn, encodeWelcome4({
         you: p.id,
         seed: realmArena.seed,
         generatorVersion: 1,
         epoch: realmArena.epoch,
         realmId: realmArena.realmId,
-        realmRevision: 0,
-        serverTimeMs: Date.now(),
+        realmRevision: initial.realmRevision,
+        serverTimeMs: initial.serverTimeMs,
         mover,
       }));
+      emit(conn, encodeRegionState(initial));
+      // Local auth has no persisted private log yet. The empty full set still
+      // exercises the recipient-only PLAYER_PROGRESS contract.
+      emit(conn, encodePlayerProgress({ revision: 0, landmarks: [] }));
     } else {
       emit(conn, encodeWelcome(p.id, arena.seed, arena.x0, arena.y0, grid));
     }

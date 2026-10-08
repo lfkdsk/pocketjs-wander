@@ -4,7 +4,11 @@ import { describe, expect, test } from "bun:test";
 import type { PocketSocket, SocketCloseEvent, SocketReadyState } from "@pocketjs/framework/socket";
 import { OnlineClient, realmEndpoint, type SocketFactory } from "../examples/wander-online/net/client.ts";
 import {
+  REGION_STATE_FLAG_INITIAL,
   WORLD_PROTOCOL_VERSION,
+  WORLD_STATE_VERSION,
+  encodePlayerProgress,
+  encodeRegionState,
   encodeState4,
   encodeState,
   encodeWelcome,
@@ -84,6 +88,7 @@ describe("wander-online client core", () => {
       v: WORLD_PROTOCOL_VERSION,
       clientBuild: "pocketjs-wander",
       supportedGeneratorVersions: [1],
+      worldStateVersion: WORLD_STATE_VERSION,
       ticket: "realm-ticket",
     });
     harness.message(encodeWelcome4({
@@ -100,9 +105,26 @@ describe("wander-online client core", () => {
         moving: false, walking: false,
       },
     }));
-    expect(client.status).toBe("joined");
+    expect(client.status).toBe("connecting");
     expect(client.hud().realmId).toBe("west");
     expect(client.epoch).toBe(19);
+    client.onFrame(0, 60, 0);
+    expect(client.predictor?.lastSeq).toBe(0);
+    harness.message(encodeRegionState({
+      flags: REGION_STATE_FLAG_INITIAL,
+      realmRevision: 3,
+      serverTimeMs: 1_000,
+      rows: [{
+        rx: -8, ry: 8, discoveredAtMs: 500,
+        improvementLevel: 1, revision: 3, landmarkFirstName: "Pathfinder",
+      }],
+    }));
+    harness.message(encodePlayerProgress({ revision: 4, landmarks: [{ rx: -8, ry: 8 }, { rx: 1, ry: -2 }] }));
+    expect(client.status).toBe("joined");
+    expect(client.hud().landmarkFirstName).toBe("Pathfinder");
+    expect(client.hud().progressCount).toBe(2);
+    expect(client.hud().progressKeys).toEqual(["-8,8", "1,-2"]);
+    expect(client.hud().improvementLevel).toBe(1);
     harness.message(encodeState4(1, 0, 19, [{ ...entity(7), tx: -700, ty: 800 }], { roomOnline: 2, allOnline: 5 }));
     expect(client.hud().online).toBe(2);
     expect(client.hud().allOnline).toBe(5);
@@ -194,6 +216,7 @@ describe("wander-online client core", () => {
         v: WORLD_PROTOCOL_VERSION,
         clientBuild: "pocketjs-wander",
         supportedGeneratorVersions: [1],
+        worldStateVersion: WORLD_STATE_VERSION,
         ticket: "linked-ticket",
       },
     ]);
@@ -222,5 +245,22 @@ describe("wander-online client core", () => {
     expect(tickets).toEqual([]);
     expect(creates).toEqual([]);
     expect(harness.sent).toHaveLength(sentBeforeStop);
+  });
+
+  test("private PLAYER_PROGRESS snapshots stay isolated per OnlineClient", () => {
+    const aHarness = socketHarness(), bHarness = socketHarness();
+    const a = new OnlineClient("ws://unit.test/ws", { socketFactory: aHarness.factory });
+    const b = new OnlineClient("ws://unit.test/ws", { socketFactory: bHarness.factory });
+    aHarness.open();
+    bHarness.open();
+    aHarness.message(encodePlayerProgress({ revision: 1, landmarks: [{ rx: 1, ry: 2 }] }));
+    bHarness.message(encodePlayerProgress({ revision: 1, landmarks: [{ rx: -3, ry: 4 }] }));
+    expect(a.progressKeys).toEqual(["1,2"]);
+    expect(b.progressKeys).toEqual(["-3,4"]);
+    aHarness.message(encodePlayerProgress({ revision: 0, landmarks: [{ rx: 9, ry: 9 }] }));
+    expect(a.progressKeys).toEqual(["1,2"]);
+    expect(b.progressKeys).toEqual(["-3,4"]);
+    a.stop();
+    b.stop();
   });
 });

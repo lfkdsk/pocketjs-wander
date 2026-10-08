@@ -152,19 +152,40 @@ describe("shared: idle tracking", () => {
 });
 
 describe("shared: billing conversion", () => {
-  test("inbound messages convert 20:1 with ceil, upgrades count fully", () => {
-    expect(billUsage({ inboundMessages: 0, upgrades: 0, awakeSeconds: 0 })).toEqual({ requests: 0, gbSeconds: 0 });
-    expect(billUsage({ inboundMessages: 1, upgrades: 0, awakeSeconds: 0 }).requests).toBe(1); // ceil(1/20)
+  test("inbound messages convert 20:1 as fractional units, upgrades count fully", () => {
+    expect(billUsage({ inboundMessages: 0, upgrades: 0, awakeSeconds: 0 })).toEqual({
+      requests: 0,
+      gbSeconds: 0,
+      storageRowReads: 0,
+      storageRowWrites: 0,
+    });
+    expect(billUsage({ inboundMessages: 1, upgrades: 0, awakeSeconds: 0 }).requests).toBe(0.05);
     expect(billUsage({ inboundMessages: 20, upgrades: 0, awakeSeconds: 0 }).requests).toBe(1);
-    expect(billUsage({ inboundMessages: 21, upgrades: 0, awakeSeconds: 0 }).requests).toBe(2);
+    expect(billUsage({ inboundMessages: 21, upgrades: 0, awakeSeconds: 0 }).requests).toBe(1.05);
     expect(billUsage({ inboundMessages: 0, upgrades: 3, awakeSeconds: 0 }).requests).toBe(3);
     expect(billUsage({ inboundMessages: 40, upgrades: 2, awakeSeconds: 0 }).requests).toBe(4);
   });
-  test("awake seconds bill at 128 MB -> 0.125 GB-s each", () => {
-    expect(billUsage({ inboundMessages: 0, upgrades: 0, awakeSeconds: 1 }).gbSeconds).toBeCloseTo(128 / 1024);
-    expect(billUsage({ inboundMessages: 0, upgrades: 0, awakeSeconds: 60 }).gbSeconds).toBeCloseTo(60 * (128 / 1024));
+  test("separate 1 + 19 message reports accumulate to one request unit", () => {
+    const l = new MonthLedger();
+    const now = new Date("2026-10-15T12:00:00Z");
+    l.record(now, billUsage({ inboundMessages: 1, upgrades: 0, awakeSeconds: 0 }));
+    l.record(now, billUsage({ inboundMessages: 19, upgrades: 0, awakeSeconds: 0 }));
+    expect(l.requests).toBe(1);
+  });
+  test("awake seconds bill at decimal 128 MB -> 0.128 GB-s each", () => {
+    expect(billUsage({ inboundMessages: 0, upgrades: 0, awakeSeconds: 1 }).gbSeconds).toBe(0.128);
+    expect(billUsage({ inboundMessages: 0, upgrades: 0, awakeSeconds: 60 }).gbSeconds).toBeCloseTo(60 * 0.128);
     expect(BILLED_MEMORY_MB).toBe(128);
     expect(MESSAGES_PER_REQUEST).toBe(20);
+  });
+  test("storage row dimensions pass through without affecting request or duration units", () => {
+    expect(billUsage({
+      inboundMessages: 0,
+      upgrades: 0,
+      awakeSeconds: 0,
+      storageRowReads: 7,
+      storageRowWrites: 3,
+    })).toEqual({ requests: 0, gbSeconds: 0, storageRowReads: 7, storageRowWrites: 3 });
   });
 });
 
@@ -174,16 +195,50 @@ describe("shared: monthly ledger", () => {
     l.record(new Date("2026-10-15T12:00:00Z"), billUsage({ inboundMessages: 100, upgrades: 4, awakeSeconds: 120 }));
     l.record(new Date("2026-10-20T12:00:00Z"), billUsage({ inboundMessages: 100, upgrades: 1, awakeSeconds: 60 }));
     expect(l.month).toBe("2026-10");
-    expect(l.requests).toBe(5 + Math.ceil(200 / 20));
-    expect(l.gbSeconds).toBeCloseTo(180 * (128 / 1024));
+    expect(l.requests).toBe(5 + 200 / 20);
+    expect(l.gbSeconds).toBeCloseTo(180 * 0.128);
+  });
+  test("accumulates storage rows and serializes every ledger dimension", () => {
+    const l = new MonthLedger();
+    const now = new Date("2026-10-15T12:00:00Z");
+    l.record(now, { requests: 2, gbSeconds: 3, storageRowReads: 5, storageRowWrites: 7 });
+    l.record(now, { requests: 1, gbSeconds: 4, storageRowReads: 11, storageRowWrites: 13 });
+    expect(l.storageRowReads).toBe(16);
+    expect(l.storageRowWrites).toBe(20);
+    expect(l.toJSON()).toEqual({
+      month: "2026-10",
+      requests: 3,
+      gbSeconds: 7,
+      storageRowReads: 16,
+      storageRowWrites: 20,
+    });
+  });
+  test("loads an old ledger without storage fields as zero", () => {
+    const l = new MonthLedger({ month: "2026-10", requests: 42, gbSeconds: 17 });
+    expect(l.storageRowReads).toBe(0);
+    expect(l.storageRowWrites).toBe(0);
+    expect(l.toJSON()).toEqual({
+      month: "2026-10",
+      requests: 42,
+      gbSeconds: 17,
+      storageRowReads: 0,
+      storageRowWrites: 0,
+    });
   });
   test("a new UTC month resets the counter", () => {
     const l = new MonthLedger();
-    l.record(new Date("2026-10-31T23:59:00Z"), { requests: 999, gbSeconds: 999 });
+    l.record(new Date("2026-10-31T23:59:00Z"), {
+      requests: 999,
+      gbSeconds: 999,
+      storageRowReads: 99,
+      storageRowWrites: 88,
+    });
     l.record(new Date("2026-11-01T00:00:00Z"), { requests: 7, gbSeconds: 3 });
     expect(l.month).toBe("2026-11");
     expect(l.requests).toBe(7);
     expect(l.gbSeconds).toBe(3);
+    expect(l.storageRowReads).toBe(0);
+    expect(l.storageRowWrites).toBe(0);
   });
   test("roll() resets on a month boundary without adding usage", () => {
     const l = new MonthLedger(emptyLedger("2026-10"));
@@ -194,6 +249,8 @@ describe("shared: monthly ledger", () => {
     expect(l.month).toBe("2026-11");
     expect(l.requests).toBe(0);
     expect(l.gbSeconds).toBe(0);
+    expect(l.storageRowReads).toBe(0);
+    expect(l.storageRowWrites).toBe(0);
     expect(l.roll(new Date("2026-11-01T00:00:30Z"))).toBe(false); // already rolled: no-op
   });
   test("a fresh ledger rolls on first use, so /check works before any /report", () => {
@@ -217,6 +274,16 @@ describe("shared: monthly ledger", () => {
     l.record(new Date("2026-10-01T00:00:00Z"), { requests: 0, gbSeconds: 80 });
     expect(l.overBudget(0.8, plan)).toEqual({ requests: true, gbSeconds: true });
   });
+  test("storage rows do not participate in the requests/GB-s breaker", () => {
+    const l = new MonthLedger(emptyLedger("2026-10"));
+    l.record(new Date("2026-10-01T00:00:00Z"), {
+      requests: 0,
+      gbSeconds: 0,
+      storageRowReads: 25_000_000_001,
+      storageRowWrites: 50_000_001,
+    });
+    expect(l.overBudget(0.8, { requests: 100, gbSeconds: 100 })).toEqual({ requests: false, gbSeconds: false });
+  });
   test("defaults match the Workers Paid inclusion and 0.8 breaker", () => {
     expect(DEFAULT_PLAN.requests).toBe(1_000_000);
     expect(DEFAULT_PLAN.gbSeconds).toBe(400_000);
@@ -224,11 +291,18 @@ describe("shared: monthly ledger", () => {
   });
   test("round-trips through JSON for durable storage", () => {
     const l = new MonthLedger();
-    l.record(new Date("2026-10-15T00:00:00Z"), { requests: 42, gbSeconds: 17 });
+    l.record(new Date("2026-10-15T00:00:00Z"), {
+      requests: 42,
+      gbSeconds: 17,
+      storageRowReads: 19,
+      storageRowWrites: 23,
+    });
     const l2 = new MonthLedger(JSON.parse(JSON.stringify(l.toJSON())) as never);
     expect(l2.month).toBe("2026-10");
     expect(l2.requests).toBe(42);
     expect(l2.gbSeconds).toBe(17);
+    expect(l2.storageRowReads).toBe(19);
+    expect(l2.storageRowWrites).toBe(23);
   });
 });
 

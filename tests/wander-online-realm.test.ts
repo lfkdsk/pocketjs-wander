@@ -161,6 +161,18 @@ describe("wander-online v4 realm arena and prediction", () => {
     expect(arena.world.plans.size).toBe(0);
   }, 20_000);
 
+  test("checkpoint spawn restores an optional validated facing", () => {
+    const arena = new RealmArena({ seed: SEED, hz: 20, epoch: EPOCH });
+    const restored = arena.tryAdd("restored", 1, 0, { tx: -12, ty: 34, facing: 3 });
+    expect(restored?.state.move).toMatchObject({ tx: -12, ty: 34, facing: 3 });
+
+    const defaulted = arena.add("defaulted", 2, 0, { tx: 5, ty: 6 });
+    expect(defaulted.state.move.facing).toBe(0);
+    expect(() => arena.tryAdd("invalid", 3, 0, { tx: 0, ty: 0, facing: 4 })).toThrow("0..3");
+    expect(arena.players.size).toBe(2);
+    expect(arena.add("next", 4).id).toBe(3);
+  });
+
   test("prediction explicitly corrects a mover mismatch and rejects another epoch", () => {
     const arena = new RealmArena({ seed: SEED, hz: 60, epoch: EPOCH });
     const player = arena.add("p", 1);

@@ -29,7 +29,11 @@ import {
   BTN,
   BATCH_SIZE,
   MSG,
+  REGION_STATE_FLAG_INITIAL,
   WORLD_PROTOCOL_VERSION,
+  WORLD_STATE_VERSION,
+  decodePlayerProgress,
+  decodeRegionState,
   decodeRoster,
   decodeState,
   decodeState4,
@@ -44,6 +48,7 @@ import { RealmPredictor } from "./realm-predict.ts";
 import { GENERATOR_VERSION } from "./realm-world.ts";
 import { Interpolator } from "./interpolate.ts";
 import { AUTH_PROTOCOL_VERSION } from "../shared/auth.ts";
+import { regionOf } from "../../wander/world.ts";
 
 export type ConnStatus = "connecting" | "joined" | "reconnecting" | "retrying" | "rejected" | "frozen";
 
@@ -155,6 +160,13 @@ export interface OnlineHud {
   /** v4 realm identity and generator; empty/zero only on legacy fallback. */
   realmId: string;
   generatorVersion: number;
+  /** Display name of the latest nearby landmark first finder, if present. */
+  landmarkFirstName: string;
+  /** Private progress is delivered only on this player's socket. */
+  progressCount: number;
+  progressKeys: readonly string[];
+  /** Shared improvement applied to the player's current v4 region. */
+  improvementLevel: number;
   /** Hosted-server rejection token ("full", "rate", ...) when the last
    *  close was a 1008 policy rejection, else null. */
   rejectReason: string | null;
@@ -182,6 +194,10 @@ export class OnlineClient {
   realmId = "";
   generatorVersion = 0;
   epoch = 0;
+  realmRevision = 0;
+  landmarkFirstName = "";
+  progressRevision = 0;
+  readonly progressLandmarks = new Set<string>();
   /** Classified window grid (WINDOW*WINDOW), null until WELCOME. */
   grid: Uint8Array | null = null;
   predictor: Predictor | RealmPredictor | null = null;
@@ -200,6 +216,10 @@ export class OnlineClient {
   private slowBackoffMs = SLOW_BACKOFF_START_MS;
   private reconnectAt = 0;
   private frozen = false;
+  private worldStateReady = false;
+  private progressKeyList: string[] = [];
+  private serverClockMs = 0;
+  private serverClockLocalMs = 0;
   private stopped = false;
   /** Predicted ticks waiting to be packed into the next INPUT_BATCH. */
   private pending: { seq: number; buttons: number }[] = [];
@@ -261,6 +281,14 @@ export class OnlineClient {
       this.realmId = "";
       this.generatorVersion = 0;
       this.epoch = 0;
+      this.realmRevision = 0;
+      this.landmarkFirstName = "";
+      this.progressRevision = 0;
+      this.progressLandmarks.clear();
+      this.progressKeyList = [];
+      this.worldStateReady = false;
+      this.serverClockMs = 0;
+      this.serverClockLocalMs = 0;
       this.pending.length = 0;
       // Drop the previous epoch's remote entities so they cannot render
       // (or interpolate against the next epoch's snapshots) while away.
@@ -278,6 +306,7 @@ export class OnlineClient {
       v: WORLD_PROTOCOL_VERSION,
       clientBuild: "pocketjs-wander",
       supportedGeneratorVersions: [GENERATOR_VERSION],
+      worldStateVersion: WORLD_STATE_VERSION,
     };
     if (this.auth.kind === "github") return { ...base, github: this.auth.token };
     if (this.auth.kind === "ticket") return { ...base, ticket: this.auth.ticket };
@@ -405,15 +434,44 @@ export class OnlineClient {
       this.realmId = welcome.realmId;
       this.generatorVersion = welcome.generatorVersion;
       this.epoch = welcome.epoch;
+      this.realmRevision = welcome.realmRevision;
+      this.observeServerClock(welcome.serverTimeMs);
       this.seq = 0;
       this.frozen = false;
-      this.status = "joined";
+      this.worldStateReady = false;
+      this.status = "connecting";
       this.online = 1;
       this.allOnline = 1;
       this.rejectReason = null;
       this.slowBackoffMs = SLOW_BACKOFF_START_MS;
       this.lastStateAt = this.now();
       this.interp.reset();
+      return;
+    }
+    if (kind === MSG.regionState) {
+      const message = decodeRegionState(data);
+      const predictor = this.predictor;
+      if (!message || !(predictor instanceof RealmPredictor)) return;
+      this.observeServerClock(message.serverTimeMs);
+      predictor.world.applyRegionState(message);
+      this.realmRevision = Math.max(this.realmRevision, message.realmRevision);
+      for (const row of message.rows) {
+        if (row.landmarkFirstName) this.landmarkFirstName = row.landmarkFirstName;
+      }
+      if ((message.flags & REGION_STATE_FLAG_INITIAL) !== 0) {
+        this.worldStateReady = true;
+        this.status = "joined";
+        this.lastStateAt = this.now();
+      }
+      return;
+    }
+    if (kind === MSG.playerProgress) {
+      const message = decodePlayerProgress(data);
+      if (!message || message.revision < this.progressRevision) return;
+      this.progressRevision = message.revision;
+      this.progressLandmarks.clear();
+      for (const row of message.landmarks) this.progressLandmarks.add(`${row.rx},${row.ry}`);
+      this.progressKeyList = [...this.progressLandmarks];
       return;
     }
     if (kind === MSG.roster) {
@@ -515,6 +573,7 @@ export class OnlineClient {
       return 0;
     }
     if (!this.predictor || this.frozen) return 0;
+    if (this.predictor instanceof RealmPredictor && !this.worldStateReady) return 0;
 
     // The held mask: live d-pad wins, else the auto-walk driver.
     const live = buttons & DPAD;
@@ -524,7 +583,9 @@ export class OnlineClient {
     // BATCH_SIZE ticks into one INPUT_BATCH message (20 Hz wire rate).
     const ticks = Math.max(1, Math.round(60 / hz));
     for (let t = 0; t < ticks; t++) {
-      const seq = this.predictor.pushInput(mask);
+      const seq = this.predictor instanceof RealmPredictor
+        ? this.predictor.pushInput(mask, this.estimatedServerTime(now))
+        : this.predictor.pushInput(mask);
       this.pending.push({ seq, buttons: mask });
       if (this.pending.length >= BATCH_SIZE) this.flushPending();
     }
@@ -564,6 +625,38 @@ export class OnlineClient {
     if (this.socket?.readyState === "open") this.socket.send(buf);
   }
 
+  private observeServerClock(serverTimeMs: number): void {
+    const localNow = this.now();
+    const projected = this.serverClockMs === 0
+      ? 0
+      : this.serverClockMs + Math.max(0, localNow - this.serverClockLocalMs);
+    this.serverClockMs = Math.max(projected, serverTimeMs);
+    this.serverClockLocalMs = localNow;
+    if (this.predictor instanceof RealmPredictor) this.predictor.world.setWorldTime(this.serverClockMs);
+  }
+
+  /** Estimated realm wall clock derived from the latest server sample and a
+   * local monotonic clock. Used by both prediction and RenderRing. */
+  estimatedServerTime(localNow = this.now()): number {
+    if (this.serverClockMs === 0) return 0;
+    return this.serverClockMs + Math.max(0, localNow - this.serverClockLocalMs);
+  }
+
+  get progressCount(): number {
+    return this.progressLandmarks.size;
+  }
+
+  get progressKeys(): readonly string[] {
+    return this.progressKeyList;
+  }
+
+  get improvementLevel(): number {
+    const predictor = this.predictor;
+    if (!(predictor instanceof RealmPredictor)) return 0;
+    const move = predictor.current.move;
+    return predictor.world.regionState(regionOf(move.tx), regionOf(move.ty))?.improvementLevel ?? 0;
+  }
+
   hud(): OnlineHud {
     const retryIn = this.socket || this.reconnectAt === 0 ? 0 : Math.max(0, Math.round(this.reconnectAt - this.now()));
     return {
@@ -576,6 +669,10 @@ export class OnlineClient {
       unacked: this.predictor?.unacked ?? 0,
       realmId: this.realmId,
       generatorVersion: this.generatorVersion,
+      landmarkFirstName: this.landmarkFirstName,
+      progressCount: this.progressCount,
+      progressKeys: this.progressKeys,
+      improvementLevel: this.improvementLevel,
       rejectReason: this.rejectReason,
       rejectText: this.rejectReason ? (REJECT_TEXT[this.rejectReason] ?? this.rejectReason) : null,
       retryIn,

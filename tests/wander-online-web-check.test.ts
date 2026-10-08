@@ -9,6 +9,9 @@ describe("wander-online web-check flags", () => {
     expect(flags.ticket).toBeNull();
     expect(flags.wideOut).toBeNull();
     expect(flags.expectRealm).toBeNull();
+    expect(flags.expectFirst).toBe(false);
+    expect(flags.expectProgress).toBe(0);
+    expect(flags.expectImprovement).toBe(0);
   });
 
   test("accepts an independent cross-room total and an auth ticket", () => {
@@ -18,6 +21,9 @@ describe("wander-online web-check flags", () => {
       "--ticket", "secret-ticket",
       "--wide-out", "wide.png",
       "--expect-realm", "plaza-1",
+      "--expect-first",
+      "--expect-progress", "1",
+      "--expect-improvement", "2",
       "--watch",
     ]);
     expect(flags.expect).toBe(2);
@@ -25,6 +31,9 @@ describe("wander-online web-check flags", () => {
     expect(flags.ticket).toBe("secret-ticket");
     expect(flags.wideOut).toBe("wide.png");
     expect(flags.expectRealm).toBe("plaza-1");
+    expect(flags.expectFirst).toBe(true);
+    expect(flags.expectProgress).toBe(1);
+    expect(flags.expectImprovement).toBe(2);
     expect(flags.watch).toBe(true);
   });
 });

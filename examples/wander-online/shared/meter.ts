@@ -9,7 +9,9 @@
 //     (Cloudflare bills WebSocket messages against the request quota at
 //     that ratio); each WebSocket upgrade is itself one request;
 //   - wall-clock duration is billed in GB-seconds: the Worker's 128 MB
-//     memory times awake seconds, i.e. 128/1024 = 0.125 GB-s per second.
+//     memory times awake seconds, i.e. 128/1000 = 0.128 GB-s per second;
+//   - SQLite-backed Durable Object storage is tracked as rows read/written,
+//     but those dimensions do not participate in the request/duration breaker.
 // The plan quotas below are the Workers Paid plan's subscription inclusion
 // (as vars on the Worker so they can follow Cloudflare's published numbers
 // without a code change).
@@ -40,20 +42,30 @@ export interface UsageDelta {
   upgrades: number;
   /** Seconds the room was occupied (tick loop running) since the last report. */
   awakeSeconds: number;
+  /** SQLite-backed Durable Object rows read since the last report. */
+  storageRowReads?: number;
+  /** SQLite-backed Durable Object rows written since the last report. */
+  storageRowWrites?: number;
 }
 
 export interface BilledUsage {
   requests: number;
   gbSeconds: number;
+  /** Optional for compatibility with callers that do not yet meter storage. */
+  storageRowReads?: number;
+  /** Optional for compatibility with callers that do not yet meter storage. */
+  storageRowWrites?: number;
 }
 
-/** Convert raw room usage to Cloudflare's billing units. Requests use
- *  ceil() so a partial 20-message block still counts (the billing counter
- *  never rounds down); GB-s accumulate as fractions. */
+/** Convert raw room usage to Cloudflare's billing units. Message request
+ *  units stay fractional so separate reports can accumulate to Cloudflare's
+ *  account-level 20:1 ratio; GB-s use Cloudflare's decimal GB convention. */
 export function billUsage(delta: UsageDelta): BilledUsage {
   return {
-    requests: delta.upgrades + Math.ceil(delta.inboundMessages / MESSAGES_PER_REQUEST),
-    gbSeconds: (delta.awakeSeconds * BILLED_MEMORY_MB) / 1024,
+    requests: delta.upgrades + delta.inboundMessages / MESSAGES_PER_REQUEST,
+    gbSeconds: (delta.awakeSeconds * BILLED_MEMORY_MB) / 1000,
+    storageRowReads: delta.storageRowReads ?? 0,
+    storageRowWrites: delta.storageRowWrites ?? 0,
   };
 }
 
@@ -68,17 +80,33 @@ export interface Ledger {
   month: string;
   requests: number;
   gbSeconds: number;
+  storageRowReads: number;
+  storageRowWrites: number;
 }
 
 export function emptyLedger(month: string): Ledger {
-  return { month, requests: 0, gbSeconds: 0 };
+  return { month, requests: 0, gbSeconds: 0, storageRowReads: 0, storageRowWrites: 0 };
 }
+
+/** Persisted ledgers from before SQLite row accounting have only the original
+ *  three fields. Accept that shape at the storage boundary and canonicalize it
+ *  immediately so every new write carries all dimensions. */
+type LedgerInput = Pick<Ledger, "month" | "requests" | "gbSeconds"> &
+  Partial<Pick<Ledger, "storageRowReads" | "storageRowWrites">>;
 
 export class MonthLedger {
   private state: Ledger;
 
-  constructor(initial?: Ledger) {
-    this.state = initial ? { ...initial } : { month: "", requests: 0, gbSeconds: 0 };
+  constructor(initial?: LedgerInput) {
+    this.state = initial
+      ? {
+        month: initial.month,
+        requests: initial.requests,
+        gbSeconds: initial.gbSeconds,
+        storageRowReads: initial.storageRowReads ?? 0,
+        storageRowWrites: initial.storageRowWrites ?? 0,
+      }
+      : emptyLedger("");
   }
 
   /** Add billed usage, rolling over to a fresh month first when the UTC
@@ -87,6 +115,8 @@ export class MonthLedger {
     this.roll(now);
     this.state.requests += billed.requests;
     this.state.gbSeconds += billed.gbSeconds;
+    this.state.storageRowReads += billed.storageRowReads ?? 0;
+    this.state.storageRowWrites += billed.storageRowWrites ?? 0;
   }
 
   /** Roll to a fresh month when the UTC month changed since the last
@@ -121,6 +151,14 @@ export class MonthLedger {
 
   get gbSeconds(): number {
     return this.state.gbSeconds;
+  }
+
+  get storageRowReads(): number {
+    return this.state.storageRowReads;
+  }
+
+  get storageRowWrites(): number {
+    return this.state.storageRowWrites;
   }
 
   toJSON(): Ledger {

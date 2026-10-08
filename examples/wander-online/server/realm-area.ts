@@ -3,6 +3,8 @@
 // Arena; only the movement/collision source and sparse AOI index differ.
 
 import { motionTicksPerFrame } from "../../../vendor/pocket-rpgkit/src/engine/motion-clock.ts";
+import type { Dir4 } from "../../../vendor/pocket-rpgkit/src/engine/passability.ts";
+import { regionOf } from "../../wander/world.ts";
 import {
   MultiFocusWorld,
   startRealmState,
@@ -10,6 +12,12 @@ import {
   type RealmFocus,
   type RealmState,
 } from "../net/realm-world.ts";
+import {
+  REALM_DISCOVERY_HALF_H,
+  REALM_DISCOVERY_HALF_W,
+  type RealmRegionSnapshot,
+  type RealmRegionState,
+} from "../net/realm-state.ts";
 import { INPUT_QUEUE_CAP, type QueuedInput } from "./area.ts";
 
 /** Six milliseconds of calibrated generator work per 20 Hz host frame. */
@@ -41,6 +49,8 @@ export interface RealmArenaConfig {
   epoch?: number;
   /** Tests and local deployments may lower, but never raise, the safe cap. */
   maxPlayers?: number;
+  /** Wall clock injection for deterministic growth tests. */
+  now?: () => number;
 }
 
 function heading(p: RealmPlayer): Pick<RealmFocus, "hx" | "hy"> {
@@ -62,8 +72,10 @@ export class RealmArena {
   readonly players = new Map<number, RealmPlayer>();
   refTicks = 0;
   frame = 0;
+  realmRevision = 0;
   private nextId = 1;
   private readonly cells = new Map<number, Map<number, RealmPlayer[]>>();
+  private readonly now: () => number;
 
   constructor(cfg: RealmArenaConfig) {
     this.seed = cfg.seed >>> 0;
@@ -77,6 +89,7 @@ export class RealmArena {
     this.maxPlayers = maxPlayers;
     this.ticksPerFrame = motionTicksPerFrame(this.hz);
     this.world = new MultiFocusWorld(this.seed);
+    this.now = cfg.now ?? Date.now;
   }
 
   private focuses(): RealmFocus[] {
@@ -87,9 +100,44 @@ export class RealmArena {
     }));
   }
 
+  private nearbyCoords(player: RealmPlayer): { rx: number; ry: number }[] {
+    const { tx, ty } = player.state.move;
+    const rx0 = regionOf(tx - REALM_DISCOVERY_HALF_W), rx1 = regionOf(tx + REALM_DISCOVERY_HALF_W);
+    const ry0 = regionOf(ty - REALM_DISCOVERY_HALF_H), ry1 = regionOf(ty + REALM_DISCOVERY_HALF_H);
+    const out: { rx: number; ry: number }[] = [];
+    for (let ry = ry0; ry <= ry1; ry++) for (let rx = rx0; rx <= rx1; rx++) out.push({ rx, ry });
+    return out;
+  }
+
+  private discoverRegions(nowMs: number): void {
+    const rows: RealmRegionState[] = [];
+    for (const player of this.players.values()) {
+      for (const { rx, ry } of this.nearbyCoords(player)) {
+        if (this.world.regionState(rx, ry)) continue;
+        const revision = ++this.realmRevision;
+        rows.push({ rx, ry, discoveredAtMs: nowMs, improvementLevel: 0, revision, landmarkFirstName: "" });
+      }
+    }
+    this.world.applyRegionState({ flags: 0, realmRevision: this.realmRevision, serverTimeMs: nowMs, rows });
+  }
+
+  /** Complete nearby snapshot sent on admission and periodically by the local
+   * server. The hosted server supplies the same shape from SQLite. */
+  regionSnapshotFor(player: RealmPlayer, flags: number): RealmRegionSnapshot {
+    const rows: RealmRegionState[] = [];
+    for (const { rx, ry } of this.nearbyCoords(player)) {
+      const row = this.world.regionState(rx, ry);
+      if (row) rows.push(row);
+    }
+    return { flags, realmRevision: this.realmRevision, serverTimeMs: this.now(), rows };
+  }
+
   /** Refuse before allocating an id, inserting a player or changing focus. */
-  tryAdd(name: string, color: number, look = 0, at?: { tx: number; ty: number }): RealmPlayer | null {
+  tryAdd(name: string, color: number, look = 0, at?: { tx: number; ty: number; facing?: number }): RealmPlayer | null {
     if (this.players.size >= this.maxPlayers) return null;
+    if (at?.facing !== undefined && (!Number.isInteger(at.facing) || at.facing < 0 || at.facing > 3)) {
+      throw new RangeError("realm spawn facing must be an integer in 0..3");
+    }
     const id = this.nextId++;
     let state = startRealmState(this.seed);
     if (at) {
@@ -101,6 +149,7 @@ export class RealmArena {
           ty: at.ty,
           px: at.tx * 16,
           py: at.ty * 16,
+          facing: at.facing === undefined ? state.move.facing : at.facing as Dir4,
           phase: 0,
           moving: false,
           walking: false,
@@ -119,6 +168,7 @@ export class RealmArena {
       dropped: 0,
     };
     this.players.set(id, player);
+    this.discoverRegions(this.now());
     // Admission is rare and must leave the spawn's full authoritative ring
     // ready before WELCOME; steady movement stays on the per-frame budget.
     this.world.prime(this.focuses(), this.refTicks);
@@ -127,7 +177,7 @@ export class RealmArena {
 
   /** Add at the deterministic starter tile. Tests may supply another signed
    * coordinate to exercise separated residents without mutating internals. */
-  add(name: string, color: number, look = 0, at?: { tx: number; ty: number }): RealmPlayer {
+  add(name: string, color: number, look = 0, at?: { tx: number; ty: number; facing?: number }): RealmPlayer {
     const player = this.tryAdd(name, color, look, at);
     if (!player) throw new RangeError(`realm is full (${this.maxPlayers} players)`);
     return player;
@@ -156,6 +206,9 @@ export class RealmArena {
   }
 
   stepRefTick(): void {
+    const nowMs = this.now();
+    this.discoverRegions(nowMs);
+    this.world.setWorldTime(nowMs);
     this.refreshWorld();
     for (const p of this.players.values()) {
       const input = p.queue.shift();

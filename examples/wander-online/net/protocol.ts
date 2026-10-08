@@ -41,6 +41,12 @@
 //                    [ roomOnline u16 allOnline u16 ]
 //             v4 keeps the v3 movement representation but makes tile
 //             coordinates signed i32 and validates the complete payload.
+//     REGION_STATE 0x22 flags u8 count u8 realmRevision u32 serverTimeMs f64
+//                    rows: rx i32 ry i32 discoveredAtMs f64
+//                          improvementLevel u8 revision u32
+//                          landmarkFirstNameLen u8 + UTF-8
+//     PLAYER_PROGRESS 0x23 revision u32 count u16
+//                    rows: rx i32 ry i32
 //     PONG    0x30 id u32 t u32
 //     BYE     0x40 id u32
 //     ROSTER  0x50 n u8
@@ -58,6 +64,8 @@
 import { WINDOW } from "../../wander/window.ts";
 import type { WindowBuild } from "../../wander/window.ts";
 import { stringToUtf8, utf8ToString } from "../shared/utf8.ts";
+import type { RealmRegionSnapshot, RealmRegionState } from "./realm-state.ts";
+export { WORLD_STATE_VERSION } from "./realm-state.ts";
 
 export const MSG = {
   input: 0x01,
@@ -67,6 +75,8 @@ export const MSG = {
   welcome4: 0x11,
   state: 0x20,
   state4: 0x21,
+  regionState: 0x22,
+  playerProgress: 0x23,
   pong: 0x30,
   bye: 0x40,
   roster: 0x50,
@@ -108,6 +118,12 @@ export const MAX_STATE_BYTES = STATE_HEADER_BYTES + MAX_AOI * ENTITY_BYTES + STA
 export const MAX_STATE4_BYTES = STATE4_HEADER_BYTES + MAX_AOI * ENTITY4_BYTES + STATE_POPULATION_BYTES;
 
 const WELCOME4_FIXED_BYTES = 42;
+export const REGION_STATE_HEADER_BYTES = 15;
+export const REGION_STATE_ROW_FIXED_BYTES = 22;
+export const REGION_STATE_FLAG_INITIAL = 1;
+export const PLAYER_PROGRESS_HEADER_BYTES = 7;
+export const PLAYER_PROGRESS_ROW_BYTES = 8;
+export const PLAYER_PROGRESS_MAX = 1024;
 
 export interface Welcome4 {
   you: number;
@@ -118,6 +134,162 @@ export interface Welcome4 {
   realmRevision: number;
   serverTimeMs: number;
   mover: Omit<WireEntity, "id" | "color">;
+}
+
+export interface RegionStateMessage extends RealmRegionSnapshot {
+  rows: readonly RealmRegionState[];
+}
+
+export interface PlayerProgressLandmark {
+  rx: number;
+  ry: number;
+}
+
+export interface PlayerProgressMessage {
+  revision: number;
+  landmarks: PlayerProgressLandmark[];
+}
+
+function uint32(value: number, label: string): number {
+  if (!Number.isInteger(value) || value < 0 || value > 0xffff_ffff) throw new RangeError(`invalid ${label} ${value}`);
+  return value >>> 0;
+}
+
+function int32(value: number, label: string): number {
+  if (!Number.isInteger(value) || value < -0x8000_0000 || value > 0x7fff_ffff) throw new RangeError(`invalid ${label} ${value}`);
+  return value;
+}
+
+/** Full/initial nearby region snapshot or a monotonic delta. */
+export function encodeRegionState(message: RegionStateMessage): ArrayBuffer {
+  if ((message.flags & ~REGION_STATE_FLAG_INITIAL) !== 0) throw new RangeError(`invalid region flags ${message.flags}`);
+  if (message.rows.length > 0xff) throw new RangeError("REGION_STATE exceeds 255 rows");
+  uint32(message.realmRevision, "realm revision");
+  if (!Number.isFinite(message.serverTimeMs) || message.serverTimeMs < 0) throw new RangeError("invalid region server time");
+  const names: Uint8Array[] = [];
+  let total = REGION_STATE_HEADER_BYTES;
+  const seen = new Set<string>();
+  for (const row of message.rows) {
+    int32(row.rx, "region rx");
+    int32(row.ry, "region ry");
+    if (!Number.isFinite(row.discoveredAtMs) || row.discoveredAtMs < 0) throw new RangeError("invalid discoveredAtMs");
+    if (!Number.isInteger(row.improvementLevel) || row.improvementLevel < 0 || row.improvementLevel > 0xff) {
+      throw new RangeError("invalid improvement level");
+    }
+    uint32(row.revision, "region revision");
+    const key = `${row.rx},${row.ry}`;
+    if (seen.has(key)) throw new RangeError(`duplicate region row ${key}`);
+    seen.add(key);
+    const name = stringToUtf8(row.landmarkFirstName);
+    if (name.byteLength > 0xff) throw new RangeError("landmark first name exceeds 255 UTF-8 bytes");
+    names.push(name);
+    total += REGION_STATE_ROW_FIXED_BYTES + name.byteLength;
+  }
+  const out = new ArrayBuffer(total);
+  const v = new DataView(out);
+  v.setUint8(0, MSG.regionState);
+  v.setUint8(1, message.flags);
+  v.setUint8(2, message.rows.length);
+  v.setUint32(3, message.realmRevision >>> 0, true);
+  v.setFloat64(7, message.serverTimeMs, true);
+  let o = REGION_STATE_HEADER_BYTES;
+  for (let i = 0; i < message.rows.length; i++) {
+    const row = message.rows[i]!;
+    const name = names[i]!;
+    v.setInt32(o, row.rx, true);
+    v.setInt32(o + 4, row.ry, true);
+    v.setFloat64(o + 8, row.discoveredAtMs, true);
+    v.setUint8(o + 16, row.improvementLevel);
+    v.setUint32(o + 17, row.revision >>> 0, true);
+    v.setUint8(o + 21, name.byteLength);
+    new Uint8Array(out, o + REGION_STATE_ROW_FIXED_BYTES, name.byteLength).set(name);
+    o += REGION_STATE_ROW_FIXED_BYTES + name.byteLength;
+  }
+  return out;
+}
+
+export function decodeRegionState(buf: ArrayBuffer | Uint8Array): RegionStateMessage | null {
+  if (buf.byteLength < REGION_STATE_HEADER_BYTES) return null;
+  const v = viewOf(buf);
+  if (v.getUint8(0) !== MSG.regionState) return null;
+  const flags = v.getUint8(1);
+  if ((flags & ~REGION_STATE_FLAG_INITIAL) !== 0) return null;
+  const count = v.getUint8(2);
+  const serverTimeMs = v.getFloat64(7, true);
+  if (!Number.isFinite(serverTimeMs) || serverTimeMs < 0) return null;
+  const rows: RealmRegionState[] = [];
+  const seen = new Set<string>();
+  let o = REGION_STATE_HEADER_BYTES;
+  try {
+    for (let i = 0; i < count; i++) {
+      if (o + REGION_STATE_ROW_FIXED_BYTES > buf.byteLength) return null;
+      const rx = v.getInt32(o, true), ry = v.getInt32(o + 4, true);
+      const discoveredAtMs = v.getFloat64(o + 8, true);
+      const improvementLevel = v.getUint8(o + 16);
+      const revision = v.getUint32(o + 17, true);
+      const nameLen = v.getUint8(o + 21);
+      if (!Number.isFinite(discoveredAtMs) || discoveredAtMs < 0 || o + REGION_STATE_ROW_FIXED_BYTES + nameLen > buf.byteLength) return null;
+      const key = `${rx},${ry}`;
+      if (seen.has(key)) return null;
+      seen.add(key);
+      const byteOffset = buf instanceof Uint8Array ? buf.byteOffset : 0;
+      const bytes = new Uint8Array(
+        buf instanceof Uint8Array ? buf.buffer : buf,
+        byteOffset + o + REGION_STATE_ROW_FIXED_BYTES,
+        nameLen,
+      );
+      rows.push({ rx, ry, discoveredAtMs, improvementLevel, revision, landmarkFirstName: utf8ToString(bytes) });
+      o += REGION_STATE_ROW_FIXED_BYTES + nameLen;
+    }
+  } catch {
+    return null;
+  }
+  if (o !== buf.byteLength) return null;
+  return { flags, realmRevision: v.getUint32(3, true), serverTimeMs, rows };
+}
+
+/** Private-to-recipient set of personally discovered landmark regions. */
+export function encodePlayerProgress(message: PlayerProgressMessage): ArrayBuffer {
+  uint32(message.revision, "player progress revision");
+  if (message.landmarks.length > PLAYER_PROGRESS_MAX) throw new RangeError("PLAYER_PROGRESS exceeds landmark cap");
+  const seen = new Set<string>();
+  const out = new ArrayBuffer(PLAYER_PROGRESS_HEADER_BYTES + message.landmarks.length * PLAYER_PROGRESS_ROW_BYTES);
+  const v = new DataView(out);
+  v.setUint8(0, MSG.playerProgress);
+  v.setUint32(1, message.revision >>> 0, true);
+  v.setUint16(5, message.landmarks.length, true);
+  let o = PLAYER_PROGRESS_HEADER_BYTES;
+  for (const row of message.landmarks) {
+    int32(row.rx, "progress rx");
+    int32(row.ry, "progress ry");
+    const key = `${row.rx},${row.ry}`;
+    if (seen.has(key)) throw new RangeError(`duplicate progress row ${key}`);
+    seen.add(key);
+    v.setInt32(o, row.rx, true);
+    v.setInt32(o + 4, row.ry, true);
+    o += PLAYER_PROGRESS_ROW_BYTES;
+  }
+  return out;
+}
+
+export function decodePlayerProgress(buf: ArrayBuffer | Uint8Array): PlayerProgressMessage | null {
+  if (buf.byteLength < PLAYER_PROGRESS_HEADER_BYTES) return null;
+  const v = viewOf(buf);
+  if (v.getUint8(0) !== MSG.playerProgress) return null;
+  const count = v.getUint16(5, true);
+  if (count > PLAYER_PROGRESS_MAX || buf.byteLength !== PLAYER_PROGRESS_HEADER_BYTES + count * PLAYER_PROGRESS_ROW_BYTES) return null;
+  const landmarks: PlayerProgressLandmark[] = [];
+  const seen = new Set<string>();
+  let o = PLAYER_PROGRESS_HEADER_BYTES;
+  for (let i = 0; i < count; i++) {
+    const rx = v.getInt32(o, true), ry = v.getInt32(o + 4, true);
+    const key = `${rx},${ry}`;
+    if (seen.has(key)) return null;
+    seen.add(key);
+    landmarks.push({ rx, ry });
+    o += PLAYER_PROGRESS_ROW_BYTES;
+  }
+  return { revision: v.getUint32(1, true), landmarks };
 }
 
 export function encodeInput(seq: number, buttons: number): ArrayBuffer {

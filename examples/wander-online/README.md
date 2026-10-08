@@ -29,7 +29,8 @@ to `ws://127.0.0.1:8080/ws/v4`. A v3 client can still connect directly to
 `/ws`. Each local guest joins with a random name and colour and walks on its
 own (auto-walk) until a d-pad key takes over. The HUD shows world coordinates,
 connection status, current-room and whole-service online counts
-(`ROOM n · ALL m`), RTT and correction count.
+(`ROOM n · ALL m`) and a nearby landmark's first discoverer. RTT and
+correction count remain behind the debug toggle.
 
 ## How it works
 
@@ -46,10 +47,17 @@ reconcile(ackSeq, my mover)
   match?  nothing
   differ? roll back + replay unacked
 remote players: interpolate at now−100 ms
+REGION_STATE(revision, clock, rows) ◄─ shared growth / first / improvement
+PLAYER_PROGRESS(revision, landmarks) ◄─ recipient-only private history
 ```
 
 - **Endless realm.** Both sides call the existing pure Wander generator at
-  the fixed `COMPLETE` phase. Each player pins a 3×3 chunk neighbourhood;
+  the phase derived from each region's shared `discoveredAtMs` and the
+  server's wall clock. An unknown region is undiscovered; once its sparse
+  row arrives, rendering and collision use the same growth phase on both
+  sides. Monotonic improvement deltas replay the existing town flower stamp
+  idempotently, including after a plan is evicted and regenerated. Each
+  player pins a 3×3 chunk neighbourhood;
   the server keeps their union plus reusable inactive chunks, with a 1,800
   reference-tick TTL, a hard 512-chunk LRU and a hard 160-plan LRU. Active
   chunks and plans are never evicted. Generation receives 2,000 work units
@@ -78,8 +86,10 @@ remote players: interpolate at now−100 ms
   without a snapshot freezes local gameplay and starts a fresh join, so a
   stalled client cannot diverge from the server. WELCOME4 and STATE4 carry a
   connection epoch; a new epoch clears prediction and interpolation history
-  before rebasing at the new authoritative spawn. This first phase stores no
-  world or player progress across a server restart.
+  before rebasing at the new authoritative spawn. The loopback Bun server is
+  intentionally ephemeral. The hosted Durable Object server restores the
+  realm seed, sparse region rows, shared improvements, landmark firsts and
+  the reconnecting account's private checkpoint before it admits input.
 
 ## Wire format
 
@@ -88,7 +98,7 @@ Little-endian, single source in [`net/protocol.ts`](net/protocol.ts):
 | message | bytes | fields |
 | --- | ---: | --- |
 | JOIN (text) | — | `{"type":"join","v":3,...credential fields...}` |
-| JOIN v4 (text) | — | `{"type":"join","v":4,"generatorVersion":1,...credential fields...}` |
+| JOIN v4 (text) | — | `{"type":"join","v":4,"supportedGeneratorVersions":[1],"worldStateVersion":1,...credential fields...}` |
 | INPUT | 7 | `0x01` seq u32, buttons u16 |
 | INPUT_BATCH | 6 + 2n | `0x03` firstSeq u32, count u8, buttons[count] u16 (v2: up to 3 ticks per message) |
 | PING | 9 | `0x02` id u32, t u32 |
@@ -96,6 +106,8 @@ Little-endian, single source in [`net/protocol.ts`](net/protocol.ts):
 | WELCOME4 | 42 + realm id | `0x11` you, seed, generator, epoch, signed mover, revision, server time, realm id |
 | STATE | 10 + 12n [+ 4] | `0x20` frame u32, ackSeq u32, n u8, entities, optional roomOnline u16 + allOnline u16 |
 | STATE4 | 14 + 18n [+ 4] | `0x21` frame u32, ackSeq u32, epoch u32, n u8, signed-coordinate entities, optional population |
+| REGION_STATE | variable | `0x22` flags, realm revision, server time, signed region rows with discovery time, improvement, row revision and first-discoverer display name |
+| PLAYER_PROGRESS | variable | `0x23` private revision and signed landmark-region pairs; sent only to its account's socket |
 | PONG | 9 | `0x30` id u32, t u32 |
 | BYE | 5 | `0x40` id u32 |
 
@@ -116,10 +128,12 @@ INPUT by default), so a v1 client works against a batching-capable server.
 The current authenticated protocol requires JOIN `"v":3`; batching was
 introduced by v2 and remains part of v3.
 
-The endless route requires JOIN `"v":4` and `generatorVersion:1`. It rejects
-legacy or mismatched generator capability with `upgrade-required`. `/ws` and
-`/ws/v4` use separate arenas, so adding v4 does not migrate or reinterpret a
-legacy room.
+The endless route requires JOIN `"v":4`, generator capability `1` and world
+state capability `1`. It rejects a legacy or mismatched capability with
+`upgrade-required`. Prediction and input remain gated until the initial
+`REGION_STATE` arrives, so a client never takes a step against guessed growth
+collision. `/ws` and `/ws/v4` use separate arenas, so adding v4 does not
+migrate or reinterpret a legacy room.
 
 ## Files
 
@@ -129,6 +143,7 @@ legacy room.
 | [`net/world.ts`](net/world.ts) | the frozen window both sides predict through |
 | [`net/predict.ts`](net/predict.ts) | prediction + rollback-and-replay reconciliation |
 | [`net/realm-world.ts`](net/realm-world.ts) | signed-coordinate generation residency and movement adapter |
+| [`net/realm-state.ts`](net/realm-state.ts) | sparse shared-region projection, monotonic revisions and wall-clock phase |
 | [`net/realm-predict.ts`](net/realm-predict.ts) | v4 epoch-aware prediction + rollback-and-replay |
 | [`net/interpolate.ts`](net/interpolate.ts) | remote entity interpolation |
 | [`net/client.ts`](net/client.ts) | the PocketJS net client (socket, reconnect, freeze, rejection policy) |
@@ -156,6 +171,9 @@ legacy room.
   pinning.
 - `tests/wander-online-realm.test.ts` — v4 arena, 20/60 Hz replay,
   epoch-aware prediction and sparse signed-coordinate AOI.
+- `tests/wander-online-world-state.test.ts` — strict shared/private codecs,
+  growth collision parity, historical-time rollback and idempotent
+  improvement replay after regeneration.
 - `tests/wander-online-realm-acceptance.test.ts` — 1,000-coordinate generator
   parity and two predicted clients walking more than 500 tiles in opposite
   directions beyond the old boundary without extra corrections.
@@ -206,7 +224,10 @@ logic is copied.
 - **Architecture.** A Worker keeps legacy `/ws` and endless `/ws/v4` in
   disjoint Room DO names (after an Origin whitelist) and serves `/health`,
   `/stats` and `/stats/v4`. Each Room DO
-  runs one `Arena` or `RealmArena` behind the WebSocket Hibernation API: a
+  runs one `Arena` or `RealmArena` behind the WebSocket Hibernation API. v4
+  realms keep sparse shared rows and per-account checkpoints in Durable
+  Object SQLite, flush dirty movers at a bounded cadence, and restore them
+  before reconnect admission. A
   20 Hz in-memory interval ticks only while the room is occupied, so an empty
   room can hibernate (alarms retry owed accounting work). A
   single Meter DO bills raw room deltas to Cloudflare's units (inbound

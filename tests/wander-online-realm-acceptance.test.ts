@@ -5,9 +5,10 @@ import { describe, expect, test } from "bun:test";
 import { blocksAt, COMPLETE, generateChunk, type ChunkData } from "../examples/wander/chunk.ts";
 import { planRegion } from "../examples/wander/region.ts";
 import { CHUNK, REGION_CHUNKS, regionGates, regionHub } from "../examples/wander/world.ts";
-import { BTN } from "../examples/wander-online/net/protocol.ts";
+import { BTN, REGION_STATE_FLAG_INITIAL } from "../examples/wander-online/net/protocol.ts";
 import { RealmPredictor } from "../examples/wander-online/net/realm-predict.ts";
 import { MultiFocusWorld, type RealmState } from "../examples/wander-online/net/realm-world.ts";
+import type { RealmRegionState } from "../examples/wander-online/net/realm-state.ts";
 import { RealmArena, type RealmPlayer } from "../examples/wander-online/server/realm-area.ts";
 import { entityFor } from "../examples/wander-online/shared/snapshot.ts";
 
@@ -42,16 +43,19 @@ function authoritativeMover(state: RealmState) {
 
 function predictorFor(arena: RealmArena, player: RealmPlayer): RealmPredictor {
   const { id: _id, color: _color, ...mover } = entityFor(player);
-  return new RealmPredictor({
+  const initial = arena.regionSnapshotFor(player, REGION_STATE_FLAG_INITIAL);
+  const predictor = new RealmPredictor({
     you: player.id,
     seed: arena.seed,
     generatorVersion: 1,
     epoch: arena.epoch,
     realmId: arena.realmId,
-    realmRevision: 0,
-    serverTimeMs: 0,
+    realmRevision: initial.realmRevision,
+    serverTimeMs: initial.serverTimeMs,
     mover,
   });
+  predictor.world.applyRegionState(initial);
+  return predictor;
 }
 
 interface RegionCoord { x: number; y: number }
@@ -215,6 +219,22 @@ describe("wander-online realm acceptance", () => {
       cx: -2_000 + i * 127,
       cy: 1_500 - i * 113,
     }));
+    const completeRegions = new Map<string, RealmRegionState>();
+    for (const { cx, cy } of centers) {
+      const rx = Math.floor(cx / REGION_CHUNKS), ry = Math.floor(cy / REGION_CHUNKS);
+      const key = `${rx},${ry}`;
+      if (completeRegions.has(key)) continue;
+      const revision = completeRegions.size + 1;
+      completeRegions.set(key, {
+        rx, ry, discoveredAtMs: 0, improvementLevel: 0, revision, landmarkFirstName: "",
+      });
+    }
+    streamed.applyRegionState({
+      flags: REGION_STATE_FLAG_INITIAL,
+      realmRevision: completeRegions.size,
+      serverTimeMs: 1_000_000,
+      rows: [...completeRegions.values()],
+    });
     for (const { cx, cy } of centers) {
       streamed.prime([{ x: cx * CHUNK + 16, y: cy * CHUNK + 16 }], 0);
       const actual = streamed.chunk(cx, cy)!;
@@ -246,9 +266,33 @@ describe("wander-online realm acceptance", () => {
   }, 60_000);
 
   test("two predicted clients walk more than 500 tiles in opposite directions with no boundary correction increase", () => {
-    const positive = tileRoute(regionRoute(1, 6));
-    const negative = tileRoute(regionRoute(-1, 6));
-    const arena = new RealmArena({ seed: SEED, hz: 60, realmId: "acceptance", epoch: EPOCH });
+    const positiveRegions = regionRoute(1, 6);
+    const negativeRegions = regionRoute(-1, 6);
+    const positive = tileRoute(positiveRegions);
+    const negative = tileRoute(negativeRegions);
+    const nowMs = 1_000_000;
+    const arena = new RealmArena({
+      seed: SEED, hz: 60, realmId: "acceptance", epoch: EPOCH, now: () => nowMs,
+    });
+    const routed = [...positiveRegions, ...negativeRegions];
+    const minRx = Math.min(...routed.map((r) => r.x));
+    const maxRx = Math.max(...routed.map((r) => r.x));
+    const minRy = Math.min(...routed.map((r) => r.y));
+    const maxRy = Math.max(...routed.map((r) => r.y));
+    const completeRows: RealmRegionState[] = [];
+    for (let ry = minRy; ry <= maxRy; ry++) for (let rx = minRx; rx <= maxRx; rx++) {
+      completeRows.push({
+        rx, ry, discoveredAtMs: 0, improvementLevel: 0,
+        revision: completeRows.length + 1, landmarkFirstName: "",
+      });
+    }
+    arena.realmRevision = completeRows.length;
+    arena.world.applyRegionState({
+      flags: REGION_STATE_FLAG_INITIAL,
+      realmRevision: arena.realmRevision,
+      serverTimeMs: nowMs,
+      rows: completeRows,
+    });
     const a = arena.add("positive", 1);
     const b = arena.add("negative", 2);
     const ax0 = a.state.move.tx, bx0 = b.state.move.tx;
@@ -263,7 +307,9 @@ describe("wander-online realm acceptance", () => {
     for (let tick = 0; tick < ticks; tick++) {
       for (let i = 0; i < 2; i++) {
         const mask = paths[i]![Math.floor(tick / 8)] ?? 0;
-        const seq = predictors[i]!.pushInput(mask);
+        const snapshot = arena.regionSnapshotFor(players[i]!, 0);
+        predictors[i]!.world.applyRegionState(snapshot);
+        const seq = predictors[i]!.pushInput(mask, snapshot.serverTimeMs);
         arena.pushInput(players[i]!, seq, mask);
       }
       arena.stepRefTick();

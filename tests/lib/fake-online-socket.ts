@@ -5,10 +5,13 @@
 import type { PocketSocket, SocketCloseEvent } from "@pocketjs/framework/socket";
 import {
   encodeRoster,
+  encodePlayerProgress,
+  encodeRegionState,
   encodeState,
   encodeState4,
   encodeWelcome,
   encodeWelcome4,
+  REGION_STATE_FLAG_INITIAL,
 } from "../../examples/wander-online/net/protocol.ts";
 
 export interface FakeOnlineOpts {
@@ -23,6 +26,8 @@ export interface FakeOnlineOpts {
   /** Absolute v4 spawn. Defaults far outside the old frozen window so view
    * tests exercise signed world coordinates and an unclamped camera. */
   realm?: { tx?: number; ty?: number; seed?: number; epoch?: number; id?: string };
+  /** Display name carried by the current region's shared first-discovery row. */
+  landmarkFirstName?: string;
   /** Scripted reply to a {"type":"delete"} message. Defaults to a
    *  deleteError so the deleteError path is exercised unless a test asks
    *  for the confirmed-delete path. */
@@ -63,6 +68,16 @@ export function fakeOnlineSocketFactory(opts: FakeOnlineOpts): (url: string) => 
             moving: false, walking: false,
           },
         })));
+        sock.onMessage?.(new Uint8Array(encodeRegionState({
+          flags: REGION_STATE_FLAG_INITIAL,
+          realmRevision: 1,
+          serverTimeMs: 0,
+          rows: [{
+            rx: Math.floor(tx / 96), ry: Math.floor(ty / 96), discoveredAtMs: 0,
+            improvementLevel: 0, revision: 1, landmarkFirstName: opts.landmarkFirstName ?? "",
+          }],
+        })));
+        sock.onMessage?.(new Uint8Array(encodePlayerProgress({ revision: 0, landmarks: [] })));
         sock.onMessage?.(new Uint8Array(encodeRoster([{ id: 1, name: opts.name ?? "Octo", look: opts.look ?? 0 }])));
         if (opts.population) {
           sock.onMessage?.(new Uint8Array(encodeState4(1, 0, epoch, [{

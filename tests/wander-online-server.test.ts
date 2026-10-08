@@ -9,6 +9,7 @@ import {
   BTN,
   MSG,
   WORLD_PROTOCOL_VERSION,
+  WORLD_STATE_VERSION,
   decodeState,
   decodeState4,
   decodeWelcome,
@@ -202,6 +203,7 @@ describe("wander-online server", () => {
       type: "join",
       v: WORLD_PROTOCOL_VERSION,
       supportedGeneratorVersions: [1],
+      worldStateVersion: WORLD_STATE_VERSION,
       name: "realm",
       color: 5,
     }));
@@ -242,6 +244,7 @@ describe("wander-online server", () => {
         type: "join",
         v: WORLD_PROTOCOL_VERSION,
         supportedGeneratorVersions: [1],
+        worldStateVersion: WORLD_STATE_VERSION,
         name: "first",
         color: 1,
       }));
@@ -254,6 +257,7 @@ describe("wander-online server", () => {
         type: "join",
         v: WORLD_PROTOCOL_VERSION,
         supportedGeneratorVersions: [1],
+        worldStateVersion: WORLD_STATE_VERSION,
         name: "refused",
         color: 2,
       }));

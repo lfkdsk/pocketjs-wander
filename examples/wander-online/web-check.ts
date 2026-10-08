@@ -17,6 +17,7 @@
 //     --cdp http://127.0.0.1:9222 --page http://127.0.0.1:9003/wander-online/ \
 //     --out web.png [--wide-out web-wide.png] [--watch] [--expect 3] \
 //     [--expect-all 3] [--expect-realm local] [--ticket value] \
+//     [--expect-first] [--expect-progress 1] [--expect-improvement 1] \
 //     [--timeout-ms 60000]
 //
 // Exit 0 on success, 1 on any failed assertion or timeout. The DevTools
@@ -39,6 +40,9 @@ interface PublishedState {
   unacked: number;
   realmId: string;
   generatorVersion: number;
+  landmarkFirstName: string;
+  progressCount: number;
+  improvementLevel: number;
   epoch: number;
   x: number;
   y: number;
@@ -58,6 +62,9 @@ export interface WebCheckFlags {
   expectAll: number;
   timeoutMs: number;
   expectRealm: string | null;
+  expectFirst: boolean;
+  expectProgress: number;
+  expectImprovement: number;
   /** Auth ticket injected into the page, never included in WEBCHECK output. */
   ticket: string | null;
 }
@@ -78,6 +85,9 @@ export function parseFlags(args: readonly string[]): WebCheckFlags {
     expectAll: Number(get("expect-all", String(expect))),
     timeoutMs: Number(get("timeout-ms", "60000")),
     expectRealm: get("expect-realm", "") || null,
+    expectFirst: args.includes("--expect-first"),
+    expectProgress: Number(get("expect-progress", "0")),
+    expectImprovement: Number(get("expect-improvement", "0")),
     ticket: get("ticket", "") || null,
   };
 }
@@ -244,6 +254,9 @@ const joinedExpected = (s: PublishedState | null): boolean =>
   s.online === flags.expect &&
   s.allOnline === flags.expectAll &&
   (!flags.expectRealm || (s.realmId === flags.expectRealm && s.generatorVersion === 1)) &&
+  (!flags.expectFirst || s.landmarkFirstName.length > 0) &&
+  s.progressCount >= flags.expectProgress &&
+  s.improvementLevel >= flags.expectImprovement &&
   s.remote.length === flags.expect - 1;
 
 const posKey = (s: PublishedState): string =>
@@ -314,7 +327,15 @@ async function main(): Promise<void> {
     `join with online === ${flags.expect}, allOnline === ${flags.expectAll}, and ${flags.expect - 1} remotes`,
   );
   await waitForMovement(cdp, joined);
-  console.log(`WEBCHECK_PHASE ${JSON.stringify({ phase: "joined", epoch: joined.epoch, x: joined.x, y: joined.y })}`);
+  console.log(`WEBCHECK_PHASE ${JSON.stringify({
+    phase: "joined",
+    epoch: joined.epoch,
+    x: joined.x,
+    y: joined.y,
+    landmarkFirstName: joined.landmarkFirstName,
+    progressCount: joined.progressCount,
+    improvementLevel: joined.improvementLevel,
+  })}`);
 
   let restart: { dropped: string; rejoined: PublishedState } | null = null;
   if (flags.watch) {
@@ -353,6 +374,9 @@ async function main(): Promise<void> {
       corrections: final.corrections,
       realmId: final.realmId,
       generatorVersion: final.generatorVersion,
+      landmarkFirstName: final.landmarkFirstName,
+      progressCount: final.progressCount,
+      improvementLevel: final.improvementLevel,
       epoch: final.epoch,
       x: final.x,
       y: final.y,

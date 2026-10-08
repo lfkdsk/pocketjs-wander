@@ -139,6 +139,10 @@ export interface OnlinePublished {
   realmId: string;
   /** Pinned deterministic generator version; zero on v3. */
   generatorVersion: number;
+  landmarkFirstName: string;
+  progressCount: number;
+  progressKeys: readonly string[];
+  improvementLevel: number;
   /** Server lifetime token for v4 reconnect/rebase verification. */
   epoch: number;
   x: number;
@@ -483,7 +487,12 @@ export function OnlineView() {
     const originX = world instanceof RealmWorld ? tx : world.x0;
     const originY = world instanceof RealmWorld ? ty : world.y0;
     if (!ring) {
-      ring = new RenderRing(fieldRoot, source, world.seed, () => ringWorld instanceof RealmWorld ? 0 : ringWorld?.bootNow ?? 0);
+      ring = new RenderRing(
+        fieldRoot,
+        source,
+        world.seed,
+        () => ringWorld instanceof RealmWorld ? client?.estimatedServerTime() ?? 0 : ringWorld?.bootNow ?? 0,
+      );
       ring.resize(ringCols(), ringRows());
       nameOverlay = createElement("view");
       setProp(nameOverlay, "style", { posType: 1, insetL: 0, insetT: 0, width: 0, height: 0 });
@@ -752,8 +761,8 @@ export function OnlineView() {
     batch(() => {
       setStatusText(status);
       setNameLine(`${roster.get(c.myId)?.name ?? (login() || "?")} · ROOM ${h.online} · ALL ${h.allOnline}`);
-      setDebugText(`RTT ${h.rtt}ms  CORR ${h.corrections}  UNACKED ${h.unacked}`);
-      setPosText(`X ${cam.tx}  Y ${cam.ty}  ${autoMode ? "AUTO" : "YOU"}`);
+      setDebugText(`RTT ${h.rtt}ms  CORR ${h.corrections}  FOUND ${h.progressCount}  FIRST ${h.landmarkFirstName || "-"}`);
+      setPosText(`X ${cam.tx}  Y ${cam.ty}  ${autoMode ? "AUTO" : "YOU"}${h.landmarkFirstName ? `  FIRST ${h.landmarkFirstName}` : ""}`);
     });
   };
 
@@ -773,6 +782,10 @@ export function OnlineView() {
     out.unacked = h?.unacked ?? 0;
     out.realmId = h?.realmId ?? "";
     out.generatorVersion = h?.generatorVersion ?? 0;
+    out.landmarkFirstName = h?.landmarkFirstName ?? "";
+    out.progressCount = h?.progressCount ?? 0;
+    out.progressKeys = h?.progressKeys ?? [];
+    out.improvementLevel = h?.improvementLevel ?? 0;
     out.epoch = c?.epoch ?? 0;
     out.x = camera().tx;
     out.y = camera().ty;
