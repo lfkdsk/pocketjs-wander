@@ -48,6 +48,30 @@
           "action": "Cancel / back"
         }
       ],
+      "languages": [
+        {
+          "code": "en",
+          "label": "English"
+        },
+        {
+          "code": "zh",
+          "label": "中文"
+        }
+      ],
+      "languageSwitch": {
+        "param": "lang",
+        "storage": "pocket-rpgkit:wander-online:lang:v1"
+      },
+      "i18n": {
+        "zh": {
+          "description": "一个共享的多人世界：使用 GitHub 登录、创建角色，并与其他玩家实时同行。",
+          "controls": {
+            "Walk": "行走",
+            "Confirm": "确认",
+            "Cancel / back": "取消 / 返回"
+          }
+        }
+      },
       "auth": {
         "github": {
           "clientId": "Ov23liCg29llKxJ7b0jv",
