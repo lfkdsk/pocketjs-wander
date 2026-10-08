@@ -4,8 +4,12 @@ An endless grown world that streams in around the player, running on
 [PocketJS](https://github.com/pocket-nexus/pocketjs) (desktop, web, devices)
 and built with [Pocket RPG Kit](https://github.com/lfkdsk/pocketjs-rpgkit).
 Towns grow as you reach them; landmarks, rumors and errands wait in the
-wilds; and when you put it down, the world wanders itself. A local
-multiplayer demo shares one world between desktop hosts and a browser tab.
+wilds; and when you put it down, the world wanders itself. Wander Online
+adds GitHub sign-in, character creation and a hosted shared world.
+
+Play [Wander](https://lfkdsk.github.io/pocketjs-wander/) or
+[Wander Online](https://lfkdsk.github.io/pocketjs-wander/wander-online/)
+in the browser.
 
 | A grown town beside a snow border (sim golden) | On the desktop host, walking to a clicked tile |
 | --- | --- |
@@ -18,7 +22,7 @@ bun run setup        # submodules (Pocket RPG Kit + PocketJS) and dependencies
 bun run build:wasm   # the PocketJS core the sim host and web build use
 bun run build        # wander and wander-online bundles + paks (dist/)
 bun run desktop      # wander in a desktop window (add wander-online for the demo)
-bun run web          # the browser-playable site in dist/web (wander only)
+bun run web          # both browser-playable apps in dist/web
 ```
 
 Serve `dist/web` with any static file server and open the wander page.
@@ -31,28 +35,29 @@ The world, its residency and the auto-walk trajectory are deterministic at
 trip continues the same session (pinned by `tests/wander-f1.test.ts` and
 `tests/wander-f2.test.ts`).
 
-## Local multiplayer demo
+## Wander Online
 
-wander-online shares one frozen wander window between a Bun authoritative
-server (20 Hz, 10 Hz area-of-interest snapshots, loopback-only) and clients
-with prediction (rollback-and-replay against `ackSeq` watermarks) and 100 ms
-remote interpolation:
+Wander Online shares one real Wander window between an authoritative server
+(20 Hz, 10 Hz area-of-interest snapshots) and clients with prediction,
+rollback-and-replay reconciliation, and 100 ms remote interpolation. The
+published web app signs in with GitHub, exchanges the one-use OAuth token for
+a session ticket, and lets a new player choose a name and one of 64 looks.
+Desktop players can link the same profile with a six-digit code.
+
+For local development, start the loopback-only Bun server with its explicit
+guest switch, then launch clients with matching guest credentials:
 
 ```sh
-bun run examples/wander-online/server/server.ts   # the authoritative server
-bun run desktop wander-online                     # a desktop client (run twice for two windows)
-bun run web wander-online                         # a browser tab (serve dist/web)
+bun run examples/wander-online/server/server.ts --allow-guests
+bun run desktop wander-online --guest demo
+bun run web
 ```
 
-`bun run online:demo` runs the full acceptance demo — two desktop hosts and
-a browser tab seeing each other (repeated three times), a 150 ms latency
-phase, a server-restart-under-live-clients phase, and a 100-bot load phase
-— and writes screenshots and a JSON summary. See
+`bun run online:demo` runs the local acceptance demo — two desktop hosts and
+a browser tab seeing each other, a 150 ms latency phase, a server restart,
+and a 100-bot load phase — and writes screenshots plus a JSON summary. See
 [`examples/wander-online/README.md`](examples/wander-online/README.md) for
-the protocol, the demo phases and the Cloudflare deployment notes.
-
-wander-online is a local demo: the server binds loopback and the published
-web site only ships wander.
+the authentication flow, protocol, demo phases and hosted deployment.
 
 ## Layout
 
@@ -70,8 +75,9 @@ web site only ships wander.
 - `tests/` — the suites: per-tick contracts, the F1/F2 feature sweeps,
   looks, HUD, rendering goldens, and the online client/server/net/shared
   suites. `tests/goldens/` holds the pinned frames.
-- `tools/` — build / desktop / web wrappers and the evidence-shot tools
-  (`wander-f1-shots.ts`, `wander-f2-shots.ts`, `wander-char-shots.ts`).
+- `tools/` — build / desktop / web wrappers, evidence-shot tools and the
+  reproducible Wander Online QuickJS benchmark.
+- `docs/status.md` — the current Done / Partial feature checklist.
 - `vendor/pocket-rpgkit/` — the Pocket RPG Kit submodule: the engine and UI
   modules the world is built with, the grow example's art it draws, and the
   PocketJS checkout nested inside it.
@@ -86,10 +92,9 @@ web site only ships wander.
   This repo was split out of pocketjs-rpgkit with its history; the engine
   and grow stay there.
 - **[pocket-online-server](https://github.com/lfkdsk/pocket-online-server)**
-  — the private hosted counterpart of the demo: the runtime-agnostic logic
-  in `examples/wander-online/shared/` (snapshot builder, admission limits,
-  monthly budget breaker) is shared with its Cloudflare Workers + Durable
-  Objects deployment.
+  — the Cloudflare Workers + Durable Objects deployment. It vendors this
+  repository and imports the runtime-agnostic authentication, arena,
+  snapshot, admission-limit and monthly-budget modules in place.
 
 ## License and attribution
 

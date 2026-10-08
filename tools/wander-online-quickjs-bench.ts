@@ -39,7 +39,7 @@ if (!Number.isInteger(port) || port < 1024 || port > 65535) fail(`invalid --port
 
 const js = join(root, "dist", "linux-app", "wander-online.js");
 const pak = join(root, "dist", "linux-app", "wander-online.pak");
-const host = join(runnerRoot, "vendor", "pocketjs", "hosts", "desktop", "target", "release", "pocket-desktop-host");
+const host = join(runnerRoot, "vendor", "pocket-rpgkit", "vendor", "pocketjs", "hosts", "desktop", "target", "release", "pocket-desktop-host");
 for (const path of [js, pak, host]) if (!existsSync(path)) fail(`missing ${path}; build the desktop app/host first`);
 
 mkdirSync(out, { recursive: true });
@@ -153,7 +153,7 @@ try {
   const summary = {
     label,
     commit: Bun.spawnSync({ cmd: ["git", "-C", root, "rev-parse", "HEAD"] }).stdout.toString().trim(),
-    pocketjs: Bun.spawnSync({ cmd: ["git", "-C", join(root, "vendor", "pocketjs"), "rev-parse", "HEAD"] }).stdout.toString().trim(),
+    pocketjs: Bun.spawnSync({ cmd: ["git", "-C", join(root, "vendor", "pocket-rpgkit", "vendor", "pocketjs"), "rev-parse", "HEAD"] }).stdout.toString().trim(),
     bundleSha256: new Bun.CryptoHasher("sha256").update(readFileSync(js)).digest("hex"),
     cpu: cpu || "unbound",
     players,

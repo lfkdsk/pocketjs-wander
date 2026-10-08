@@ -4,7 +4,7 @@
 // mounted/visible counts stay flat. A regression that allocates per frame
 // (re-creating nodes, growing the pool) moves the counters and goes red.
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bootWorld } from "../vendor/pocketjs/hosts/sim/sim.ts";
+import { bootWorld } from "../vendor/pocket-rpgkit/vendor/pocketjs/hosts/sim/sim.ts";
 import { appBundle, appPreflight } from "./helpers/boot.ts";
 import { encodeRoster, encodeState, encodeWelcome, type WireEntity } from "../examples/wander-online/net/protocol.ts";
 import type { PocketSocket, SocketCloseEvent } from "@pocketjs/framework/socket";

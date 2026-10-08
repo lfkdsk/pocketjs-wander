@@ -13,7 +13,7 @@ const FS_PATH = "wander-online-ticket.json";
 
 declare global {
   // eslint-disable-next-line no-var
-  var __wanderOnlineWebStore:
+  var __pocketWebStore:
     | { getItem(k: string): string | null; setItem(k: string, v: string): void; removeItem(k: string): void }
     | undefined;
 }
@@ -23,7 +23,7 @@ declare global {
  *  is used there instead). */
 function webStore() {
   try {
-    return globalThis.__wanderOnlineWebStore ?? null;
+    return globalThis.__pocketWebStore ?? null;
   } catch {
     return null;
   }

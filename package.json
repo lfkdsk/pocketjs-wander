@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "license": "MIT",
-  "description": "An endless grown world on PocketJS and Pocket RPG Kit: streamed chunks, talking towns, and a local multiplayer demo",
+  "description": "An endless grown world and its live multiplayer companion, built on PocketJS and Pocket RPG Kit",
   "workspaces": [
     "vendor/pocket-rpgkit/vendor/pocketjs"
   ],
@@ -21,6 +21,8 @@
     "shots:f1": "bun tools/wander-f1-shots.ts",
     "shots:f2": "bun tools/wander-f2-shots.ts",
     "shots:char": "bun tools/wander-char-shots.ts",
+    "shots:online": "bun tools/wander-online-shots.ts",
+    "bench:online": "bun tools/wander-online-quickjs-bench.ts",
     "online:demo": "bash examples/wander-online/demo.sh"
   },
   "devDependencies": {

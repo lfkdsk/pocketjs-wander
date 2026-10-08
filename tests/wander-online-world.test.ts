@@ -4,7 +4,7 @@
 // boot-time art never ages).
 import { describe, expect, test } from "bun:test";
 import { ARENA_FREEZE_TICKS, buildArenaWorld, startArenaState } from "../examples/wander-online/net/world.ts";
-import { stepSession } from "../src/engine/session.ts";
+import { stepSession } from "../vendor/pocket-rpgkit/src/engine/session.ts";
 import { WINDOW, windowChunks } from "../examples/wander/window.ts";
 import { CHUNK } from "../examples/wander/world.ts";
 import { gridFromWindow, TILE } from "../examples/wander-online/net/protocol.ts";

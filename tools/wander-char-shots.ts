@@ -1,7 +1,7 @@
 // tools/wander-char-shots.ts — capture the W-CHAR evidence set through the
 // BUILT "wander" bundle on the deterministic sim host.
 //
-//   bun run build:wasm && bun run build:example wander
+//   bun run build:wasm && bun run build wander
 //   bun tools/wander-char-shots.ts [OUT_DIR]
 //
 // Every frame is a pure function of the bundle, the seed and the tick:

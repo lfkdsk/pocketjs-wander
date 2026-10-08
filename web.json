@@ -30,6 +30,30 @@
         }
       ],
       "pointer": "Click or tap a tile to walk there."
+    },
+    "wander-online": {
+      "title": "Wander Online",
+      "description": "A shared multiplayer world: sign in with GitHub, create a character, and walk with others in real time.",
+      "controls": [
+        {
+          "button": "DPAD",
+          "action": "Walk"
+        },
+        {
+          "button": "CIRCLE",
+          "action": "Confirm"
+        },
+        {
+          "button": "CROSS",
+          "action": "Cancel / back"
+        }
+      ],
+      "auth": {
+        "github": {
+          "clientId": "Ov23liCg29llKxJ7b0jv",
+          "worker": "https://auth.lfkdsk.org/wander-online"
+        }
+      }
     }
   }
 }

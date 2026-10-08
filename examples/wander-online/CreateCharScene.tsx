@@ -16,16 +16,16 @@ import { Text, View, type NodeMirror } from "@pocketjs/framework/components";
 import { createElement, insertNode, setProp } from "@pocketjs/framework/renderer";
 import { getOps } from "@pocketjs/framework/host";
 import { onFrame } from "@pocketjs/framework/lifecycle";
-import { TileTextureCache } from "../../src/ui/tile-texture-cache.ts";
-import { walkPose } from "../../src/engine/movement.ts";
+import { TileTextureCache } from "../../vendor/pocket-rpgkit/src/ui/tile-texture-cache.ts";
+import { walkPose } from "../../vendor/pocket-rpgkit/src/engine/movement.ts";
 import { WANDER_LOOKS } from "../wander/assets-wander.ts";
 import { LOOK_BASE_NAMES, LOOK_COUNT, LOOK_PALETTES } from "../wander/looks.ts";
 import {
   NAME_INPUT_UI_TEXT,
   nameInputCharAt,
   type NameInputState,
-} from "../../src/engine/name-input.ts";
-import { withUiText } from "../../src/engine/ui-text.ts";
+} from "../../vendor/pocket-rpgkit/src/engine/name-input.ts";
+import { withUiText } from "../../vendor/pocket-rpgkit/src/engine/ui-text.ts";
 import {
   createEditBox,
   createLayout,

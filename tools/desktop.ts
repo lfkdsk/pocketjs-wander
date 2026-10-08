@@ -7,6 +7,8 @@
 //   WANDER_ONLINE_URL=wss://host/ws bun tools/desktop.ts wander-online
 //                                              # bake a server URL into the
 //                                              # wander-online pak config
+//   bun tools/desktop.ts wander-online --guest demo
+//                                              # local --allow-guests server only
 //
 // The plan -> bundle -> host pipeline lives in tools/lib/desktop.ts.
 
@@ -39,14 +41,28 @@ if (urlIdx >= 0 || process.env.WANDER_ONLINE_URL) {
   writeOnlineUrl(root, bakedUrl);
 }
 
+const guestIdx = rest.indexOf("--guest");
+let guestName = "";
+if (guestIdx >= 0) {
+  if (name !== "wander-online") throw new Error("desktop: --guest only applies to wander-online");
+  guestName = rest.splice(guestIdx, 2)[1] ?? "";
+  if (!guestName || guestName.length > 16) throw new Error("desktop: --guest requires a 1–16 character name");
+}
+
 const build = await buildForDesktop(join(root, "examples", name, "pocket.json"));
-if (bakedUrl) {
-  // The desktop host evals the bundle as one script; a leading assignment
-  // runs before the app and is read by OnlineView's resolveUrl().
+if (bakedUrl || guestName) {
+  // The desktop host evals the bundle as one script; leading assignments
+  // run before the app. Guest auth is accepted only by the loopback
+  // development server's explicit --allow-guests mode.
   const jsPath = join(build.outdir, `${build.plan.app.output}.js`);
   const prev = readFileSync(jsPath, "utf8");
-  writeFileSync(jsPath, `globalThis.__onlineUrl=${JSON.stringify(bakedUrl)};\n${prev}`);
-  console.log(`desktop: baked server URL ${bakedUrl} into ${jsPath}`);
+  const bootstrap = [
+    bakedUrl ? `globalThis.__onlineUrl=${JSON.stringify(bakedUrl)};` : "",
+    guestName ? `globalThis.__onlineAuth=${JSON.stringify({ kind: "guest", name: guestName, color: 0 })};` : "",
+  ].join("");
+  writeFileSync(jsPath, `${bootstrap}\n${prev}`);
+  if (bakedUrl) console.log(`desktop: baked server URL ${bakedUrl} into ${jsPath}`);
+  if (guestName) console.log(`desktop: baked local guest ${JSON.stringify(guestName)} into ${jsPath}`);
 }
 if (buildOnly) {
   console.log(`desktop: built ${build.plan.app.output} for ${DESKTOP_TARGET} + release host (${build.bin})`);
