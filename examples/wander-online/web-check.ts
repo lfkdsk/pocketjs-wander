@@ -39,6 +39,7 @@ interface PublishedState {
   unacked: number;
   realmId: string;
   generatorVersion: number;
+  epoch: number;
   x: number;
   y: number;
   moving: boolean;
@@ -321,8 +322,8 @@ async function main(): Promise<void> {
     const dropped = await waitFor(cdp, (s) => s !== null && s.status !== "joined", "connection drop (server restart)");
     const rejoined = await waitFor(
       cdp,
-      joinedExpected,
-      `rejoin with online === ${flags.expect}, allOnline === ${flags.expectAll}, and ${flags.expect - 1} remotes`,
+      (s) => joinedExpected(s) && (!flags.expectRealm || s!.epoch !== joined.epoch),
+      `rejoin on a new epoch with online === ${flags.expect}, allOnline === ${flags.expectAll}, and ${flags.expect - 1} remotes`,
     );
     await waitForMovement(cdp, rejoined);
     restart = { dropped: dropped.status, rejoined };
@@ -351,10 +352,13 @@ async function main(): Promise<void> {
       corrections: final.corrections,
       realmId: final.realmId,
       generatorVersion: final.generatorVersion,
+      epoch: final.epoch,
       x: final.x,
       y: final.y,
       consoleErrors: browserErrors.length,
-      restarted: restart ? { droppedStatus: restart.dropped, myId: restart.rejoined.myId } : null,
+      restarted: restart
+        ? { droppedStatus: restart.dropped, myId: restart.rejoined.myId, oldEpoch: joined.epoch, newEpoch: restart.rejoined.epoch }
+        : null,
     })}`,
   );
   process.exit(0);

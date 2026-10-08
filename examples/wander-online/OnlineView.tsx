@@ -139,6 +139,8 @@ export interface OnlinePublished {
   realmId: string;
   /** Pinned deterministic generator version; zero on v3. */
   generatorVersion: number;
+  /** Server lifetime token for v4 reconnect/rebase verification. */
+  epoch: number;
   x: number;
   y: number;
   moving: boolean;
@@ -771,6 +773,7 @@ export function OnlineView() {
     out.unacked = h?.unacked ?? 0;
     out.realmId = h?.realmId ?? "";
     out.generatorVersion = h?.generatorVersion ?? 0;
+    out.epoch = c?.epoch ?? 0;
     out.x = camera().tx;
     out.y = camera().ty;
     out.moving = c?.predictor?.current.move.moving ?? false;

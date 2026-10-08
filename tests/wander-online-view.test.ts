@@ -236,7 +236,7 @@ simDescribe("wander-online view: the world on screen", () => {
           name: "Octo",
           look: 3,
           ticket: "t1",
-          realm: { tx: 640, ty: -640 },
+          realm: { tx: 640, ty: -640, epoch: 91 },
         }),
         W,
         H,
@@ -250,6 +250,7 @@ simDescribe("wander-online view: the world on screen", () => {
       const pos = state()!;
       expect(pos.realmId).toBe("realm-test");
       expect(pos.generatorVersion).toBe(1);
+      expect(pos.epoch).toBe(91);
       expect(pos.x).toBeGreaterThan(500);
       expect(pos.y).toBeLessThan(-500);
       expect(treeHasText(w.getTree(), `X ${pos.x}  Y ${pos.y}`)).toBe(true);
