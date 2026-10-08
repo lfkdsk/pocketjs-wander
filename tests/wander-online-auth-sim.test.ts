@@ -248,7 +248,7 @@ simDescribe("wander-online auth: ticket persistence across boots", () => {
       fakeOnlineSocketFactory({ mode: "welcome", ticket: "web-ticket", sent: firstSent }),
       480,
       272,
-      { __pocketWeb: true, __pocketAuth: { token: "gho_web" }, __wanderOnlineWebStore: bridge },
+      { __pocketWeb: true, __pocketAuth: { token: "gho_web" }, __pocketWebStore: bridge },
     );
     await waitFor(
       first,
@@ -264,7 +264,7 @@ simDescribe("wander-online auth: ticket persistence across boots", () => {
       fakeOnlineSocketFactory({ mode: "welcome", ticket: "web-ticket", sent: secondSent }),
       480,
       272,
-      { __pocketWeb: true, __wanderOnlineWebStore: bridge },
+      { __pocketWeb: true, __pocketWebStore: bridge },
     );
     await waitFor(second, () => state()?.screen === "world" && state()?.status === "joined", "web ticket reboot");
     expect(secondSent.some((msg) => msg.type === "join" && msg.ticket === "web-ticket")).toBe(true);
@@ -287,7 +287,7 @@ simDescribe("wander-online auth: ticket persistence across boots", () => {
         __pocketWeb: true,
         __pocketAuth: { token: "gho_first" },
         __pocketAuthEvent: pageEvent,
-        __wanderOnlineWebStore: bridge,
+        __pocketWebStore: bridge,
       },
     );
     await waitFor(first, () => state()?.status === "joined" && values.has(WEB_TICKET_KEY), "first web login");
@@ -311,7 +311,7 @@ simDescribe("wander-online auth: ticket persistence across boots", () => {
       },
       480,
       272,
-      { __pocketWeb: true, __pocketAuthEvent: pageEvent, __wanderOnlineWebStore: bridge },
+      { __pocketWeb: true, __pocketAuthEvent: pageEvent, __pocketWebStore: bridge },
     );
     pump(refreshed, 5);
     expect(state()?.screen).toBe("gate");
@@ -328,7 +328,7 @@ simDescribe("wander-online auth: ticket persistence across boots", () => {
         __pocketWeb: true,
         __pocketAuth: { token: "gho_second" },
         __pocketAuthEvent: pageEvent,
-        __wanderOnlineWebStore: bridge,
+        __pocketWebStore: bridge,
       },
     );
     await waitFor(again, () => state()?.status === "joined" && values.get(WEB_TICKET_KEY)?.includes("second-ticket") === true, "second web login");
@@ -458,7 +458,7 @@ simDescribe("wander-online auth: profile delete", () => {
       fake,
       480,
       272,
-      { __pocketWeb: true, __wanderOnlineWebStore: webStore(values) },
+      { __pocketWeb: true, __pocketWebStore: webStore(values) },
     );
     pump(w, 30);
     await waitFor(w, () => state()?.screen === "world" && state()?.status === "joined", "world joined");
