@@ -37,7 +37,7 @@ import { createElement, insertNode, setProp, type NodeMirror } from "@pocketjs/f
 import { jump } from "@pocketjs/framework/animation";
 import { biomeAt, CHUNK } from "./world.ts";
 import { groundAt, NO_SUB, upperAt, type ChunkData } from "./chunk.ts";
-import { chunkKey, regionKey, type Residency } from "./residency.ts";
+import { regionKey } from "./residency.ts";
 import { STAMP_LIST } from "../../vendor/pocket-rpgkit/examples/grow/grow-stamps.ts";
 import { WANDER_BLOCK, WANDER_FILL64, WANDER_GROUND, WANDER_STAMPS, WANDER_TERRAIN, WANDER_UPPER } from "./assets-wander.ts";
 
@@ -175,6 +175,14 @@ export interface RenderStats {
   layers: number[];
 }
 
+/** Small read-only seam shared by the single-player Residency and the
+ * multiplayer MultiFocusWorld. Rendering depends only on resident chunks
+ * and a region's visible growth phase, not on either scheduler. */
+export interface RenderWorldSource {
+  chunk(cx: number, cy: number): ChunkData | undefined;
+  regionTick(rx: number, ry: number, now: number): number;
+}
+
 export class RenderRing {
   readonly root: NodeMirror;
   private readonly blocks: SlotLayer;
@@ -191,15 +199,16 @@ export class RenderRing {
   ox = 0;
   oy = 0;
   private rect = { x0: 0, y0: 0, valid: false };
-  private readonly renderedTick = new Map<number, number>();
-  private readonly placeholder = new Map<number, number>();
+  private readonly renderedTick = new Map<string, number>();
+  private readonly placeholder = new Map<string, number>();
   /** Cells (world coords) whose chunk arrived after they were drawn. */
   private refill: number[] = [];
   private readonly tickCache = new Map<number, number>();
   private chunkCache: ChunkData | undefined;
-  private chunkCacheKey = NaN;
+  private chunkCacheCx = NaN;
+  private chunkCacheCy = NaN;
 
-  constructor(parent: NodeMirror, private res: Residency, private seed: number, private now: () => number) {
+  constructor(parent: NodeMirror, private res: RenderWorldSource, private seed: number, private now: () => number) {
     this.root = container(parent, "wander-world");
     this.blocks = new SlotLayer(this.root, "wander-blocks", BLOCK_TILES * TILE, this.fillPool);
     this.subs = new SlotLayer(this.root, "wander-subs", SUB_TILES * TILE, this.fillPool);
@@ -209,7 +218,7 @@ export class RenderRing {
   }
 
   /** Point the ring at a new world (seed change): every node is kept. */
-  reset(res: Residency, seed: number, originX: number, originY: number): void {
+  reset(res: RenderWorldSource, seed: number, originX: number, originY: number): void {
     this.res = res;
     this.seed = seed;
     this.ox = originX;
@@ -218,7 +227,8 @@ export class RenderRing {
     this.placeholder.clear();
     this.refill = [];
     this.chunkCache = undefined;
-    this.chunkCacheKey = NaN;
+    this.chunkCacheCx = NaN;
+    this.chunkCacheCy = NaN;
     this.resize(this.cells.W, this.cells.H, true);
   }
 
@@ -270,8 +280,11 @@ export class RenderRing {
 
   private chunkAt(tx: number, ty: number): ChunkData | undefined {
     const cx = Math.floor(tx / CHUNK), cy = Math.floor(ty / CHUNK);
-    const k = cx * 134217728 + cy;
-    if (k !== this.chunkCacheKey) { this.chunkCacheKey = k; this.chunkCache = this.res.chunk(cx, cy); }
+    if (cx !== this.chunkCacheCx || cy !== this.chunkCacheCy) {
+      this.chunkCacheCx = cx;
+      this.chunkCacheCy = cy;
+      this.chunkCache = this.res.chunk(cx, cy);
+    }
     return this.chunkCache;
   }
 
@@ -311,7 +324,7 @@ export class RenderRing {
     const c = this.chunkAt(tx, ty);
     if (c) return c.blockBiome[(((ty - c.y0) >> 4) * 2) + ((tx - c.x0) >> 4)]!;
     // Placeholder while the chunk generates: the biome at the block centre.
-    const k = bx * 134217728 + by;
+    const k = `${bx},${by}`;
     let b = this.placeholder.get(k);
     if (b === undefined) {
       if (this.placeholder.size > 512) this.placeholder.clear();
@@ -358,7 +371,8 @@ export class RenderRing {
    */
   update(camX: number, camY: number, fresh: readonly ChunkData[], cellBudget = 700): { x: number; y: number } {
     this.tickCache.clear();
-    this.chunkCacheKey = NaN;
+    this.chunkCacheCx = NaN;
+    this.chunkCacheCy = NaN;
     const ctx = Math.floor(camX / TILE), cty = Math.floor(camY / TILE);
     if (Math.abs(ctx - this.ox) > REBASE || Math.abs(cty - this.oy) > REBASE) {
       // Re-base the render origin (once per 65,536 tiles of travel).
@@ -405,7 +419,7 @@ export class RenderRing {
         const c = this.res.chunk(cx, cy);
         if (!c || !c.growCells.length) continue;
         const tick = this.regionTickCached(c.rx, c.ry);
-        const key = chunkKey(cx, cy);
+        const key = `${cx},${cy}`;
         const last = this.renderedTick.get(key);
         this.renderedTick.set(key, tick);
         if (last === undefined || last === tick) continue;
