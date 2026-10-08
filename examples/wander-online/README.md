@@ -73,7 +73,7 @@ Little-endian, single source in [`net/protocol.ts`](net/protocol.ts):
 
 | message | bytes | fields |
 | --- | ---: | --- |
-| JOIN (text) | — | `{"type":"join","name","color","v"?:2}` |
+| JOIN (text) | — | `{"type":"join","v":3,...credential fields...}` |
 | INPUT | 7 | `0x01` seq u32, buttons u16 |
 | INPUT_BATCH | 6 + 2n | `0x03` firstSeq u32, count u8, buttons[count] u16 (v2: up to 3 ticks per message) |
 | PING | 9 | `0x02` id u32, t u32 |
@@ -95,8 +95,9 @@ message, so the wire rate is 20 Hz at any host rate. The server expands
 a batch into the same per-tick input queue, so prediction,
 reconciliation and the zero-correction lockstep are unchanged. Both
 servers decode INPUT_BATCH and plain INPUT (the bots still send plain
-INPUT by default), so a v1 client works against a v2 server; a v2 client
-needs a v2 server. JOIN carries `"v":2` so servers can tell them apart.
+INPUT by default), so a v1 client works against a batching-capable server.
+The current authenticated protocol requires JOIN `"v":3`; batching was
+introduced by v2 and remains part of v3.
 
 ## Files
 

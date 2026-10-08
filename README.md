@@ -42,7 +42,10 @@ Wander Online shares one real Wander window between an authoritative server
 rollback-and-replay reconciliation, and 100 ms remote interpolation. The
 published web app signs in with GitHub, exchanges the one-use OAuth token for
 a session ticket, and lets a new player choose a name and one of 64 looks.
-Desktop players can link the same profile with a six-digit code.
+Desktop players can link the same profile with a six-digit code. The page's
+bilingual Sign out control uses the same credential-clearing path as the game,
+player names stay above world art, and the HUD shows both current-room and
+whole-service presence as `ROOM n · ALL m`.
 
 For local development, start the loopback-only Bun server with its explicit
 guest switch, then launch clients with matching guest credentials:
