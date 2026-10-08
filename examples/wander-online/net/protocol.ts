@@ -7,7 +7,7 @@
 // an input sequence the server can acknowledge, so:
 //
 //   client -> server
-//     JOIN   text JSON {"type":"join","name":string,"color":uint8,"v"?:2}
+//     JOIN   text JSON {"type":"join","v":3,...credential fields...}
 //     INPUT  0x01 seq u32 buttons u16   (7 B; one per predicted reference tick)
 //     INPUT_BATCH 0x03 firstSeq u32 count u8 buttons[count] u16
 //                    (v2: up to BATCH_SIZE reference ticks packed in one
