@@ -17,6 +17,10 @@ export const REALM_FRAME_BUDGET = 6_000;
 /** One third of a 20 Hz frame: every 60 Hz reference tick gets the same
  * generation allowance regardless of the host's presentation rate. */
 export const REALM_REF_TICK_BUDGET = REALM_FRAME_BUDGET / 3;
+/** A 32-player realm keeps the worst-case 3x3 focus union below both the
+ * chunk and region-plan residency caps. Admission must stop here instead of
+ * letting MultiFocusWorld.setFocuses fail after the player was inserted. */
+export const REALM_PLAYER_CAP = 32;
 
 export interface RealmPlayer {
   id: number;
@@ -35,6 +39,8 @@ export interface RealmArenaConfig {
   hz: number;
   realmId?: string;
   epoch?: number;
+  /** Tests and local deployments may lower, but never raise, the safe cap. */
+  maxPlayers?: number;
 }
 
 function heading(p: RealmPlayer): Pick<RealmFocus, "hx" | "hy"> {
@@ -50,6 +56,7 @@ export class RealmArena {
   readonly hz: number;
   readonly realmId: string;
   readonly epoch: number;
+  readonly maxPlayers: number;
   readonly ticksPerFrame: number;
   readonly world: MultiFocusWorld;
   readonly players = new Map<number, RealmPlayer>();
@@ -63,6 +70,11 @@ export class RealmArena {
     this.hz = cfg.hz;
     this.realmId = cfg.realmId ?? "realm-1";
     this.epoch = cfg.epoch ?? 1;
+    const maxPlayers = cfg.maxPlayers ?? REALM_PLAYER_CAP;
+    if (!Number.isInteger(maxPlayers) || maxPlayers < 1 || maxPlayers > REALM_PLAYER_CAP) {
+      throw new RangeError(`realm maxPlayers must be an integer in 1..${REALM_PLAYER_CAP}`);
+    }
+    this.maxPlayers = maxPlayers;
     this.ticksPerFrame = motionTicksPerFrame(this.hz);
     this.world = new MultiFocusWorld(this.seed);
   }
@@ -75,9 +87,9 @@ export class RealmArena {
     }));
   }
 
-  /** Add at the deterministic starter tile. Tests may supply another signed
-   * coordinate to exercise separated residents without mutating internals. */
-  add(name: string, color: number, look = 0, at?: { tx: number; ty: number }): RealmPlayer {
+  /** Refuse before allocating an id, inserting a player or changing focus. */
+  tryAdd(name: string, color: number, look = 0, at?: { tx: number; ty: number }): RealmPlayer | null {
+    if (this.players.size >= this.maxPlayers) return null;
     const id = this.nextId++;
     let state = startRealmState(this.seed);
     if (at) {
@@ -110,6 +122,14 @@ export class RealmArena {
     // Admission is rare and must leave the spawn's full authoritative ring
     // ready before WELCOME; steady movement stays on the per-frame budget.
     this.world.prime(this.focuses(), this.refTicks);
+    return player;
+  }
+
+  /** Add at the deterministic starter tile. Tests may supply another signed
+   * coordinate to exercise separated residents without mutating internals. */
+  add(name: string, color: number, look = 0, at?: { tx: number; ty: number }): RealmPlayer {
+    const player = this.tryAdd(name, color, look, at);
+    if (!player) throw new RangeError(`realm is full (${this.maxPlayers} players)`);
     return player;
   }
 

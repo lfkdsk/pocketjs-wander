@@ -24,7 +24,7 @@
 import { join } from "node:path";
 import { type ServerWebSocket } from "bun";
 import { Arena } from "./area.ts";
-import { RealmArena } from "./realm-area.ts";
+import { REALM_PLAYER_CAP, RealmArena } from "./realm-area.ts";
 import { DevAuth } from "./dev-auth.ts";
 import { entityFor, snapshotFor, snapshotForRealm } from "../shared/snapshot.ts";
 import {
@@ -57,6 +57,11 @@ export interface ServerOpts {
   /** GitHub API base for the dev auth exchange. Defaults to the real
    *  api.github.com; tests point it at a fake endpoint. */
   githubApiBase?: string;
+  /** Local realm admission cap. It may be lowered for a small deployment or
+   * tests, but RealmArena never permits a value above its safe hard cap. */
+  realmPlayerCap?: number;
+  /** Deterministic restart hook for tests; production creates a fresh epoch. */
+  realmEpoch?: number;
 }
 
 interface Conn {
@@ -93,7 +98,8 @@ export function startServer(opts: ServerOpts): ServerHandle {
     seed: opts.seed,
     hz: opts.hz,
     realmId: "local",
-    epoch: crypto.getRandomValues(new Uint32Array(1))[0]!,
+    epoch: opts.realmEpoch ?? crypto.getRandomValues(new Uint32Array(1))[0]!,
+    maxPlayers: opts.realmPlayerCap,
   });
   const grid = gridFromWindow(arena.world.window);
   const conns = new Map<number, Conn>();
@@ -265,6 +271,10 @@ export function startServer(opts: ServerOpts): ServerHandle {
       ws.close(1008, ws.data.realm ? "upgrade-required" : "version");
       return;
     }
+    if (ws.data.realm && realmArena.players.size >= realmArena.maxPlayers) {
+      ws.close(1008, "full");
+      return;
+    }
     const sid = `s${Math.random().toString(36).slice(2)}`;
     const github = typeof m.github === "string" ? m.github : null;
     const ticket = typeof m.ticket === "string" ? m.ticket : null;
@@ -316,7 +326,14 @@ export function startServer(opts: ServerOpts): ServerHandle {
   function admit(ws: ServerWebSocket<ConnData>, name: string, color: number, look: number, githubId: number, sid: string): void {
     const activeArena = ws.data.realm ? realmArena : arena;
     const activeConns = ws.data.realm ? realmConns : conns;
-    const p = activeArena.add(name, color, look);
+    const p = ws.data.realm
+      ? realmArena.tryAdd(name, color, look)
+      : arena.add(name, color, look);
+    if (!p) {
+      if (githubId > 0 && auth) auth.sessionRelease(githubId, "v4:local", sid);
+      ws.close(1008, "full");
+      return;
+    }
     const conn: Conn = { ws, realm: ws.data.realm, playerId: p.id, githubId, sid, bytesIn: 0, bytesOut: 0, drops: 0 };
     ws.data.conn = conn;
     activeConns.set(p.id, conn);
@@ -436,5 +453,6 @@ if (import.meta.main) {
     webRoot: flag("web", ""),
     allowGuests: hasFlag("allow-guests"),
     githubApiBase: flag("github-api", "https://api.github.com"),
+    realmPlayerCap: Number(flag("realm-cap", String(REALM_PLAYER_CAP))),
   });
 }

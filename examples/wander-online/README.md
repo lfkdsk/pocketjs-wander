@@ -160,9 +160,10 @@ legacy room.
   parity and two predicted clients walking more than 500 tiles in opposite
   directions beyond the old boundary without extra corrections.
 - `tests/wander-online-client.test.ts` — the `OnlineClient` lifecycle against
-  a real loopback server: join, transport-drop reconnect, server-restart
-  rejoin, and the epoch reset (a fresh join rebuilds the predictor ring and
-  clears the interpolator, so two sessions' entities never mix).
+  a real loopback server: join, transport-drop reconnect, and server-restart
+  rejoin. A restart is pinned to a different epoch and must rebuild both
+  clients' predictor rings and clear interpolation, so two sessions' state
+  can never mix.
 - `tests/wander-online-shared.test.ts` — the shared hosted-server logic
   under a fake clock: Origin whitelist, sliding-window rate limit, room
   picker, IP counter, idle tracker, billing conversion, month ledger +
@@ -213,7 +214,9 @@ logic is copied.
   month in DO storage, and opens a budget breaker at 80 % of the plan
   inclusion that refuses new joins ("closed for the month") while
   existing sessions continue.
-- **Limits.** Up to 4 rooms (fullest-with-space), 32 players/room, 2
+- **Limits.** Realm admission is capped atomically at 32 players before its
+  focus set changes; a full local or hosted realm closes the new socket with
+  `1008/full`. The hosted service has up to 4 rooms (fullest-with-space), 32 players/room, 2
   connections/IP, 30 inbound messages/s/connection (sliding window),
   512 B/message, 5-minute idle kick — every refusal is a WebSocket close
   with code 1008 and a reason token the client's HUD shows

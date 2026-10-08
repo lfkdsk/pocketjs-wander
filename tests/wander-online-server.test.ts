@@ -223,6 +223,49 @@ describe("wander-online server", () => {
     throw new Error("no STATE4");
   });
 
+  test("a full v4 realm rejects before changing its focus set", async () => {
+    const capped = startServer({
+      port: 0,
+      seed: SEED,
+      hz: 20,
+      broadcastHz: 10,
+      aoi: 16,
+      simLatency: 0,
+      webRoot: "",
+      allowGuests: true,
+      realmPlayerCap: 1,
+      realmEpoch: 7,
+    });
+    try {
+      const first = await connect(`ws://127.0.0.1:${capped.port}/ws/v4`);
+      first.send(JSON.stringify({
+        type: "join",
+        v: WORLD_PROTOCOL_VERSION,
+        supportedGeneratorVersions: [1],
+        name: "first",
+        color: 1,
+      }));
+      expect(decodeWelcome4((await first.nextMessage()) as ArrayBuffer)?.epoch).toBe(7);
+      const activeBefore = capped.realmArena.world.activeCount;
+
+      const refused = await connect(`ws://127.0.0.1:${capped.port}/ws/v4`);
+      const close = refused.nextClose();
+      refused.send(JSON.stringify({
+        type: "join",
+        v: WORLD_PROTOCOL_VERSION,
+        supportedGeneratorVersions: [1],
+        name: "refused",
+        color: 2,
+      }));
+      expect(await close).toEqual({ code: 1008, reason: "full" });
+      expect(capped.realmArena.players.size).toBe(1);
+      expect(capped.realmArena.world.activeCount).toBe(activeBefore);
+      first.close();
+    } finally {
+      capped.close();
+    }
+  });
+
   test("snapshot acks the client's input sequence", async () => {
     const c = await connect(`ws://127.0.0.1:${port}/ws`);
     c.send(JSON.stringify({ type: "join", v: 3, name: "ack", color: 3 }));

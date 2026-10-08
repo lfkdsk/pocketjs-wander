@@ -9,6 +9,8 @@ import { bunSocketFactory, type BunPocketSocket } from "./lib/bun-pocket-socket.
 import { BTN } from "../examples/wander-online/net/protocol.ts";
 
 const SEED = 0x5eed_0001;
+const FIRST_EPOCH = 0x1111_2222;
+const RESTART_EPOCH = 0x3333_4444;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 interface ClientHandle {
@@ -24,7 +26,7 @@ describe("wander-online client reconnect", () => {
   const live: OnlineClient[] = [];
 
   beforeAll(async () => {
-    server = startServer({ port: 0, seed: SEED, hz: 20, broadcastHz: 10, aoi: 48, simLatency: 0, webRoot: "", allowGuests: true });
+    server = startServer({ port: 0, seed: SEED, hz: 20, broadcastHz: 10, aoi: 48, simLatency: 0, webRoot: "", allowGuests: true, realmEpoch: FIRST_EPOCH });
     port = server.port;
     await sleep(150);
   });
@@ -134,20 +136,28 @@ describe("wander-online client reconnect", () => {
     await waitFor(() => a.client.online === 1 && a.client.interp.ids().length === 0, "a sees only itself, no stale b");
   });
 
-  test("server restart: clients drop and rejoin, seeing each other again", async () => {
+  test("server restart gives clients a new epoch and fresh prediction state", async () => {
     startDriver();
     const a = mk("alice", 1);
     const b = mk("bob", 2);
     await waitFor(() => a.client.status === "joined" && a.client.online === 2, "a joined");
     await waitFor(() => b.client.status === "joined" && b.client.online === 2, "b joined");
+    expect(a.client.epoch).toBe(FIRST_EPOCH);
+    expect(b.client.epoch).toBe(FIRST_EPOCH);
+    const oldAPredictor = a.client.predictor;
+    const oldBPredictor = b.client.predictor;
     // Kill the server and restart it on the same port (a crash, not a
     // graceful shutdown). Both clients must reconnect and rejoin.
     server.close();
     await sleep(500);
-    server = startServer({ port, seed: SEED, hz: 20, broadcastHz: 10, aoi: 48, simLatency: 0, webRoot: "", allowGuests: true });
+    server = startServer({ port, seed: SEED, hz: 20, broadcastHz: 10, aoi: 48, simLatency: 0, webRoot: "", allowGuests: true, realmEpoch: RESTART_EPOCH });
     await sleep(150);
     await waitFor(() => a.client.status === "joined" && a.client.online === 2, "a rejoined after restart");
     await waitFor(() => b.client.status === "joined" && b.client.online === 2, "b rejoined after restart");
+    expect(a.client.epoch).toBe(RESTART_EPOCH);
+    expect(b.client.epoch).toBe(RESTART_EPOCH);
+    expect(a.client.predictor).not.toBe(oldAPredictor);
+    expect(b.client.predictor).not.toBe(oldBPredictor);
     expect(a.client.interp.ids().length).toBe(1);
     expect(b.client.interp.ids().length).toBe(1);
   });

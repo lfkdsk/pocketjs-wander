@@ -171,4 +171,33 @@ describe("wander-online v4 realm arena and prediction", () => {
     expect(predictor.corrections).toBe(1);
     expect(predictor.reconcile(EPOCH + 1, seq, auth)).toBe("rebase-required");
   });
+
+  test("the player cap refuses atomically before changing world focus", () => {
+    const arena = new RealmArena({ seed: SEED, hz: 20, epoch: EPOCH, maxPlayers: 2 });
+    const first = arena.add("first", 1, 0, { tx: -100_000, ty: -100_000 });
+    arena.add("second", 2, 0, { tx: 100_000, ty: 100_000 });
+    const before = {
+      players: arena.players.size,
+      active: arena.world.activeCount,
+      chunks: arena.world.chunks.size,
+      plans: arena.world.plans.size,
+    };
+
+    expect(arena.tryAdd("refused", 3, 0, { tx: 900_000, ty: -900_000 })).toBeNull();
+    expect({
+      players: arena.players.size,
+      active: arena.world.activeCount,
+      chunks: arena.world.chunks.size,
+      plans: arena.world.plans.size,
+    }).toEqual(before);
+    expect(() => arena.add("also-refused", 4)).toThrow("realm is full (2 players)");
+
+    arena.remove(first.id);
+    expect(arena.add("replacement", 5).id).toBe(3);
+  });
+
+  test("the configured player cap is positive and cannot exceed the safe bound", () => {
+    expect(() => new RealmArena({ seed: SEED, hz: 20, maxPlayers: 0 })).toThrow("1..32");
+    expect(() => new RealmArena({ seed: SEED, hz: 20, maxPlayers: 33 })).toThrow("1..32");
+  });
 });
