@@ -35,9 +35,9 @@ import {
   lookId,
   parseVillagerId,
 } from "../wander/looks.ts";
-import { walkPose } from "../../src/engine/movement.ts";
-import { TileTextureCache } from "../../src/ui/tile-texture-cache.ts";
-import { nameInputRules, type NameInputState } from "../../src/engine/name-input.ts";
+import { walkPose } from "../../vendor/pocket-rpgkit/src/engine/movement.ts";
+import { TileTextureCache } from "../../vendor/pocket-rpgkit/src/ui/tile-texture-cache.ts";
+import { nameInputRules, type NameInputState } from "../../vendor/pocket-rpgkit/src/engine/name-input.ts";
 import { CreateCharScene, type CreateFocus } from "./CreateCharScene.tsx";
 import {
   gateRect,

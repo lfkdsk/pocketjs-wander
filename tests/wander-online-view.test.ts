@@ -4,8 +4,8 @@
 // changes with the selected look, the HUD hides debug by default, and a
 // tap on the charset grid types.
 import { describe, expect, test } from "bun:test";
-import { bootWorld, treeHasText } from "../vendor/pocketjs/hosts/sim/sim.ts";
-import { __packTouch } from "../vendor/pocketjs/framework/src/touch.ts";
+import { bootWorld, treeHasText } from "../vendor/pocket-rpgkit/vendor/pocketjs/hosts/sim/sim.ts";
+import { __packTouch } from "../vendor/pocket-rpgkit/vendor/pocketjs/framework/src/touch.ts";
 import { appBundle, appPreflight } from "./helpers/boot.ts";
 import { fakeOnlineSocketFactory } from "./lib/fake-online-socket.ts";
 import { BTN } from "@pocketjs/framework/input";

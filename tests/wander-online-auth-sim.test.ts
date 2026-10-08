@@ -3,8 +3,8 @@
 // login -> character creation -> world, returning player straight in, the
 // desktop device-link keypad, and persisted web/desktop tickets.
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bootWorld } from "../vendor/pocketjs/hosts/sim/sim.ts";
-import { createSimFsHost } from "../vendor/pocketjs/hosts/sim/fs.ts";
+import { bootWorld } from "../vendor/pocket-rpgkit/vendor/pocketjs/hosts/sim/sim.ts";
+import { createSimFsHost } from "../vendor/pocket-rpgkit/vendor/pocketjs/hosts/sim/fs.ts";
 import { appBundle, appPreflight } from "./helpers/boot.ts";
 import { fakeOnlineSocketFactory } from "./lib/fake-online-socket.ts";
 import type { PocketSocket } from "@pocketjs/framework/socket";

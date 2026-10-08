@@ -5,11 +5,11 @@
 //   bun tools/wander-online-shots.ts [outdir]
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { bootWorld } from "../vendor/pocketjs/hosts/sim/sim.ts";
+import { bootWorld } from "../vendor/pocket-rpgkit/vendor/pocketjs/hosts/sim/sim.ts";
 import { appBundle } from "../tests/helpers/boot.ts";
 import { fakeOnlineSocketFactory } from "../tests/lib/fake-online-socket.ts";
-import { encodePNG } from "../vendor/pocketjs/tests/png.ts";
-import { BTN } from "../vendor/pocketjs/framework/src/input-api.ts";
+import { encodePNG } from "../vendor/pocket-rpgkit/vendor/pocketjs/tests/png.ts";
+import { BTN } from "../vendor/pocket-rpgkit/vendor/pocketjs/framework/src/input-api.ts";
 import { encodeRoster, encodeState, encodeWelcome, type WireEntity } from "../examples/wander-online/net/protocol.ts";
 import type { PocketSocket, SocketCloseEvent } from "@pocketjs/framework/socket";
 
