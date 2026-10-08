@@ -11,6 +11,7 @@ import {
   MAX_STATE_BYTES,
   MAX_STATE4_BYTES,
   MSG,
+  STATE4_HEADER_BYTES,
   STATE_HEADER_BYTES,
   STATE_POPULATION_BYTES,
   TILE,
@@ -96,6 +97,7 @@ describe("wander-online protocol", () => {
       you: 42,
       seed: 0x9e3779b9,
       generatorVersion: 1,
+      epoch: 7,
       realmId: "realm-无界",
       realmRevision: 19,
       serverTimeMs: 123456.25,
@@ -106,6 +108,7 @@ describe("wander-online protocol", () => {
       you: 42,
       seed: 0x9e3779b9,
       generatorVersion: 1,
+      epoch: 7,
       realmId: "realm-无界",
       realmRevision: 19,
       serverTimeMs: 123456.25,
@@ -178,10 +181,10 @@ describe("wander-online protocol", () => {
       { id: 1, tx: -500, ty: 900, px: -12, py: 14, dir: 1, phase: 6, stepDir: 1, moving: true, walking: true, color: 15 },
       { id: 2, tx: 1_000_000, ty: -1_000_000, px: 0, py: 0, dir: 3, phase: 0, stepDir: 3, moving: false, walking: false, color: 2 },
     ];
-    const buf = encodeState4(99, 77, entities, { roomOnline: 2, allOnline: 35 });
-    expect(buf.byteLength).toBe(STATE_HEADER_BYTES + 2 * ENTITY4_BYTES + STATE_POPULATION_BYTES);
+    const buf = encodeState4(99, 77, 7, entities, { roomOnline: 2, allOnline: 35 });
+    expect(buf.byteLength).toBe(STATE4_HEADER_BYTES + 2 * ENTITY4_BYTES + STATE_POPULATION_BYTES);
     expect(buf.byteLength).toBeLessThanOrEqual(MAX_STATE4_BYTES);
-    expect(decodeState4(buf)).toEqual({ frame: 99, ackSeq: 77, entities, roomOnline: 2, allOnline: 35 });
+    expect(decodeState4(buf)).toEqual({ frame: 99, ackSeq: 77, epoch: 7, entities, roomOnline: 2, allOnline: 35 });
     expect(decodeState4(new Uint8Array(buf).subarray(0, buf.byteLength - 1))).toBeNull();
     const trailing = new Uint8Array(buf.byteLength + 1);
     trailing.set(new Uint8Array(buf));

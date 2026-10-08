@@ -52,6 +52,7 @@ import {
 } from "./hud.ts";
 import { createLayout, createNameGrid } from "./hud.ts";
 import type { ArenaWorld } from "./net/world.ts";
+import { RealmWorld } from "./net/realm-world.ts";
 import { OnlineClient, type AuthCredential, type SocketFactory } from "./net/client.ts";
 import type { RosterEntry } from "./net/protocol.ts";
 import { loadTicket, saveTicket, clearTicket } from "./auth-store.ts";
@@ -461,18 +462,22 @@ export function OnlineView() {
   setProp(fieldRoot, "debugName", "online-field");
 
   let ring: RenderRing | null = null;
-  let ringWorld: ArenaWorld | null = null;
+  type OnlineWorld = ArenaWorld | RealmWorld;
+  let ringWorld: OnlineWorld | null = null;
   /** Labels live above the ring's ground, sprites, residents and upper
    *  terrain layers. Keeping them out of `sprites` also prevents a later
    *  player sprite from covering an earlier player's name. */
   let nameOverlay: NodeMirror | null = null;
   const ringCols = () => Math.ceil(vp.w / TILE) + OVERSCAN_LEAD + OVERSCAN_TRAIL + 1;
   const ringRows = () => Math.ceil(vp.h / TILE) + OVERSCAN_LEAD + OVERSCAN_TRAIL + 1;
-  const ensureRing = (world: ArenaWorld) => {
+  const ensureRing = (world: OnlineWorld, tx: number, ty: number) => {
     if (ring && ringWorld === world) return;
     ringWorld = world;
+    const source = world instanceof RealmWorld ? world : world.res;
+    const originX = world instanceof RealmWorld ? tx : world.x0;
+    const originY = world instanceof RealmWorld ? ty : world.y0;
     if (!ring) {
-      ring = new RenderRing(fieldRoot, world.res, world.seed, () => ringWorld?.bootNow ?? 0);
+      ring = new RenderRing(fieldRoot, source, world.seed, () => ringWorld instanceof RealmWorld ? 0 : ringWorld?.bootNow ?? 0);
       ring.resize(ringCols(), ringRows());
       nameOverlay = createElement("view");
       setProp(nameOverlay, "style", { posType: 1, insetL: 0, insetT: 0, width: 0, height: 0 });
@@ -481,7 +486,7 @@ export function OnlineView() {
       // ring root therefore makes every name the final world-space layer.
       insertNode(ring.root, nameOverlay);
     }
-    ring.reset(world.res, world.seed, world.x0, world.y0);
+    ring.reset(source, world.seed, originX, originY);
   };
 
   const lookCache = new TileTextureCache({ maxEntries: 64, maxBytes: 96 * 1024 });
@@ -513,7 +518,13 @@ export function OnlineView() {
       cameraResult.tx = 0; cameraResult.ty = 0;
       return cameraResult;
     }
-    // The window's world-px rect (it need not start at 0).
+    if (world instanceof RealmWorld) {
+      cameraResult.x = Math.floor(p.move.px + TILE / 2 - vp.w / 2);
+      cameraResult.y = Math.floor(p.move.py + TILE / 2 - vp.h / 2);
+      cameraResult.tx = p.move.tx; cameraResult.ty = p.move.ty;
+      return cameraResult;
+    }
+    // The legacy window's world-px rect (it need not start at 0).
     const left = world.x0 * TILE;
     const top = world.y0 * TILE;
     const wx = left + p.move.px + TILE / 2;
@@ -576,16 +587,17 @@ export function OnlineView() {
     const c = client;
     const world = c?.predictor?.world;
     if (!c || !world) return;
-    ensureRing(world);
+    const p = c.predictor!.current;
+    ensureRing(world, p.move.tx, p.move.ty);
     const r = ring!;
     const cam = camera();
-    const off = r.update(cam.x, cam.y, NO_FRESH_CHUNKS);
+    const fresh = world instanceof RealmWorld ? world.drainFresh() : NO_FRESH_CHUNKS;
+    const off = r.update(cam.x, cam.y, fresh);
     jump(r.root, "translateX", off.x);
     jump(r.root, "translateY", off.y);
 
     // Local player: centred under the camera, drawn between ground and
     // upper like the single-player view's walkers.
-    const p = c.predictor!.current;
     if (!local || !localName) {
       const node = createElement("image");
       setProp(node, "style", { posType: 1, insetL: 0, insetT: 0, width: TILE, height: TILE });
@@ -602,8 +614,10 @@ export function OnlineView() {
     const myLabel = localName;
     const myLook = roster.get(c.myId)?.look ?? lookSel();
     setSprite(myNode, myLook, walkPose(p.move.phase), p.move.facing, localRec);
-    const lx = Math.round((world.x0 - r.ox) * TILE + p.move.px);
-    const ly = Math.round((world.y0 - r.oy) * TILE + p.move.py);
+    const worldX0 = world instanceof RealmWorld ? 0 : world.x0;
+    const worldY0 = world instanceof RealmWorld ? 0 : world.y0;
+    const lx = Math.round((worldX0 - r.ox) * TILE + p.move.px);
+    const ly = Math.round((worldY0 - r.oy) * TILE + p.move.py);
     jump(myNode, "translateX", lx);
     jump(myNode, "translateY", ly);
     getOps().setText(myLabel.id, roster.get(c.myId)?.name ?? login());
@@ -629,8 +643,8 @@ export function OnlineView() {
       if (!ch.visible) continue;
       const parsed = parseVillagerId(id);
       if (!parsed) continue;
-      const x = Math.round((world.x0 - r.ox) * TILE + ch.px);
-      const y = Math.round((world.y0 - r.oy) * TILE + ch.py);
+      const x = Math.round((worldX0 - r.ox) * TILE + ch.px);
+      const y = Math.round((worldY0 - r.oy) * TILE + ch.py);
       const probedLook = probe ? lookId(lookFor(world.seed, parsed.rx, parsed.ry, parsed.n)) : -1;
       if (probe) {
         probe[id] = {
@@ -681,8 +695,8 @@ export function OnlineView() {
       rec.live = true;
       const entry = roster.get(id);
       setSprite(rec.node, entry?.look ?? 0, walkPose(pos.phase), pos.dir, rec);
-      const sx = Math.round((world.x0 - r.ox) * TILE + pos.x);
-      const sy = Math.round((world.y0 - r.oy) * TILE + pos.y);
+      const sx = Math.round((worldX0 - r.ox) * TILE + pos.x);
+      const sy = Math.round((worldY0 - r.oy) * TILE + pos.y);
       rec.worldX = pos.x;
       rec.worldY = pos.y;
       jump(rec.node, "translateX", sx);
@@ -986,9 +1000,9 @@ export function OnlineView() {
         <View class="absolute" style={{ posType: 1, ...rect(plate()), bgColor: "#0b1626", opacity: 0.84 }} debugName="online-plate" />
         <Text class="text-xs" style={{ posType: 1, insetT: plate().y0 + 2, insetL: 12, width: plate().x1 - 18, textColor: "#ffe97a", lineHeight: 12, height: 12 }}>{statusText()}</Text>
         <Text class="text-xs" style={{ posType: 1, insetT: plate().y0 + 15, insetL: 12, width: plate().x1 - 18, textColor: "#9fd0ff", lineHeight: 12, height: 12 }}>{nameLine()}</Text>
+        <Text class="text-xs" style={{ posType: 1, insetT: plate().y0 + 28, insetL: 12, textColor: "#c8d6ea", lineHeight: 12, height: 12 }}>{posText()}</Text>
         <Show when={debugOn()}>
-          <Text class="text-xs" style={{ posType: 1, insetT: plate().y0 + 28, insetL: 12, textColor: "#c8d6ea", lineHeight: 12, height: 12 }}>{debugText()}</Text>
-          <Text class="text-xs" style={{ posType: 1, insetT: plate().y0 + 41, insetL: 12, textColor: "#c8d6ea", lineHeight: 12, height: 12 }}>{posText()}</Text>
+          <Text class="text-xs" style={{ posType: 1, insetT: plate().y0 + 41, insetL: 12, textColor: "#c8d6ea", lineHeight: 12, height: 12 }}>{debugText()}</Text>
         </Show>
         <View class="absolute" style={{ posType: 1, ...rect(helpRect(viewport().w, viewport().h)), bgColor: "#0b1626", opacity: 0.84 }} debugName="online-help" />
         <Text class="text-xs" style={{ posType: 1, insetT: helpRect(viewport().w, viewport().h).y0 + 2, insetL: 12, textColor: "#c8d6ea", lineHeight: 12, height: 12 }}>

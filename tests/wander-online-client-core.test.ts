@@ -2,10 +2,13 @@
 // client-only protocol behavior that does not need the loopback Bun server.
 import { describe, expect, test } from "bun:test";
 import type { PocketSocket, SocketCloseEvent, SocketReadyState } from "@pocketjs/framework/socket";
-import { OnlineClient, type SocketFactory } from "../examples/wander-online/net/client.ts";
+import { OnlineClient, realmEndpoint, type SocketFactory } from "../examples/wander-online/net/client.ts";
 import {
+  WORLD_PROTOCOL_VERSION,
+  encodeState4,
   encodeState,
   encodeWelcome,
+  encodeWelcome4,
   type WireEntity,
 } from "../examples/wander-online/net/protocol.ts";
 import { WINDOW } from "../examples/wander/window.ts";
@@ -65,6 +68,47 @@ function entity(id: number): WireEntity {
 }
 
 describe("wander-online client core", () => {
+  test("v4 route, JOIN capability and epoch-aware state are explicit", () => {
+    expect(realmEndpoint("wss://example.test/ws")).toBe("wss://example.test/ws/v4");
+    expect(realmEndpoint("wss://example.test/ws?ticket=x")).toBe("wss://example.test/ws/v4?ticket=x");
+    expect(realmEndpoint("wss://example.test/ws/v4")).toBe("wss://example.test/ws/v4");
+    const harness = socketHarness();
+    const client = new OnlineClient("ws://unit.test/ws", {
+      auth: { kind: "ticket", ticket: "realm-ticket" },
+      socketFactory: harness.factory,
+    });
+    expect(client.url).toBe("ws://unit.test/ws/v4");
+    harness.open();
+    expect(JSON.parse(harness.sent[0] as string)).toEqual({
+      type: "join",
+      v: WORLD_PROTOCOL_VERSION,
+      clientBuild: "pocketjs-wander",
+      supportedGeneratorVersions: [1],
+      ticket: "realm-ticket",
+    });
+    harness.message(encodeWelcome4({
+      you: 7,
+      seed: 0x5eed_0001,
+      generatorVersion: 1,
+      epoch: 19,
+      realmId: "west",
+      realmRevision: 0,
+      serverTimeMs: 0,
+      mover: {
+        tx: -700, ty: 800, px: 0, py: 0,
+        dir: 0, phase: 0, stepDir: 0,
+        moving: false, walking: false,
+      },
+    }));
+    expect(client.status).toBe("joined");
+    expect(client.hud().realmId).toBe("west");
+    expect(client.epoch).toBe(19);
+    harness.message(encodeState4(1, 0, 19, [{ ...entity(7), tx: -700, ty: 800 }], { roomOnline: 2, allOnline: 5 }));
+    expect(client.hud().online).toBe(2);
+    expect(client.hud().allOnline).toBe(5);
+    client.stop();
+  });
+
   test("HUD population handles legacy one/two/three-player snapshots and a cross-room total", () => {
     const harness = socketHarness();
     let now = 1000;
@@ -145,7 +189,13 @@ describe("wander-online client core", () => {
     expect(linkedClient.auth).toEqual({ kind: "ticket", ticket: "linked-ticket" });
     expect(textMessages).toEqual([
       { type: "linkr", v: 3, code: "123456" },
-      { type: "join", v: 3, ticket: "linked-ticket" },
+      {
+        type: "join",
+        v: WORLD_PROTOCOL_VERSION,
+        clientBuild: "pocketjs-wander",
+        supportedGeneratorVersions: [1],
+        ticket: "linked-ticket",
+      },
     ]);
     linkedClient.stop();
   });

@@ -228,6 +228,41 @@ simDescribe("wander-online view: the world on screen", () => {
   }
 
   for (const [W, H] of [[480, 272], [960, 544]] as const) {
+    test(`${W}x${H}: v4 streams terrain and shows coordinates far from the legacy window`, async () => {
+      const w = await boot(
+        { kind: "ticket", ticket: "t1" },
+        fakeOnlineSocketFactory({
+          mode: "welcome4",
+          name: "Octo",
+          look: 3,
+          ticket: "t1",
+          realm: { tx: 640, ty: -640 },
+        }),
+        W,
+        H,
+      );
+      pump(w, 5);
+      await waitFor(w, () => state()?.status === "joined", "v4 joined");
+      // A live d-pad edge takes control from the default auto walker. Let
+      // that one step settle, then sample a stationary HUD refresh.
+      press(w, BTN.RIGHT);
+      pump(w, 18);
+      const pos = state()!;
+      expect(pos.x).toBeGreaterThan(500);
+      expect(pos.y).toBeLessThan(-500);
+      expect(treeHasText(w.getTree(), `X ${pos.x}  Y ${pos.y}`)).toBe(true);
+      const fb = w.render();
+      const seen = new Set<string>();
+      for (let i = 0; i < fb.length; i += 4) {
+        if (fb[i + 3]! >= 128) seen.add(`${fb[i]! >> 4},${fb[i + 1]! >> 4},${fb[i + 2]! >> 4}`);
+      }
+      expect(seen.size, "v4 terrain colors").toBeGreaterThan(30);
+      expect(count(fb, W, black, 0, W, 0, H), "v4 black gaps").toBe(0);
+      w.frame(0);
+    }, 20_000);
+  }
+
+  for (const [W, H] of [[480, 272], [960, 544]] as const) {
     test(`${W}x${H}: a remote nameplate paints over a resident mounted later`, async () => {
       const control = { place: (_x: number, _y: number) => {} };
       const w = await boot(

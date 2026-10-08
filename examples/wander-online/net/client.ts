@@ -29,14 +29,19 @@ import {
   BTN,
   BATCH_SIZE,
   MSG,
+  WORLD_PROTOCOL_VERSION,
   decodeRoster,
   decodeState,
+  decodeState4,
   decodeWelcome,
+  decodeWelcome4,
   encodeInputBatch,
   encodePing,
   type RosterEntry,
 } from "./protocol.ts";
 import { Predictor, type AuthoritativeMover } from "./predict.ts";
+import { RealmPredictor } from "./realm-predict.ts";
+import { GENERATOR_VERSION } from "./realm-world.ts";
 import { Interpolator } from "./interpolate.ts";
 import { AUTH_PROTOCOL_VERSION } from "../shared/auth.ts";
 
@@ -63,6 +68,7 @@ export const REJECT_TEXT: Record<string, string> = {
   origin: "ORIGIN DENIED",
   idle: "IDLE DISCONNECT",
   version: "SERVER UPGRADED",
+  "upgrade-required": "WORLD UPDATE REQUIRED",
   auth: "SIGN IN REQUIRED",
   ghauth: "GITHUB SIGN-IN FAILED",
   ticket: "SIGN-IN EXPIRED",
@@ -77,6 +83,7 @@ function policyFor(reason: string): "slow" | "never" | "normal" {
     reason === "ip" ||
     reason === "origin" ||
     reason === "version" ||
+    reason === "upgrade-required" ||
     reason === "auth" ||
     reason === "ghauth" ||
     reason === "ticket" ||
@@ -90,6 +97,15 @@ function policyFor(reason: string): "slow" | "never" | "normal" {
 /** Opens one PocketSocket. Injected by tests so the client lifecycle can be
  *  exercised without a PocketJS host; production code uses openSocket. */
 export type SocketFactory = (url: string, opts: { timeoutMs: number }) => PocketSocket;
+
+/** New clients use the realm route while committed configs keep the stable
+ * service base `/ws`. Already-versioned URLs are left unchanged. */
+export function realmEndpoint(url: string): string {
+  const query = url.search(/[?#]/);
+  const base = query < 0 ? url : url.slice(0, query);
+  const tail = query < 0 ? "" : url.slice(query);
+  return base.endsWith("/ws") ? `${base}/v4${tail}` : url;
+}
 
 /** How the client authenticates. A GitHub token is presented once (the
  *  first JOIN); the server exchanges it for a ticket and the client uses
@@ -136,6 +152,9 @@ export interface OnlineHud {
   rtt: number;
   corrections: number;
   unacked: number;
+  /** v4 realm identity and generator; empty/zero only on legacy fallback. */
+  realmId: string;
+  generatorVersion: number;
   /** Hosted-server rejection token ("full", "rate", ...) when the last
    *  close was a 1008 policy rejection, else null. */
   rejectReason: string | null;
@@ -160,9 +179,12 @@ export class OnlineClient {
   allOnline = 0;
   rtt = 0;
   corrections = 0;
+  realmId = "";
+  generatorVersion = 0;
+  epoch = 0;
   /** Classified window grid (WINDOW*WINDOW), null until WELCOME. */
   grid: Uint8Array | null = null;
-  predictor: Predictor | null = null;
+  predictor: Predictor | RealmPredictor | null = null;
   readonly interp = new Interpolator();
   /** Last 1008 rejection token, if any (cleared on a successful join). */
   rejectReason: string | null = null;
@@ -189,7 +211,7 @@ export class OnlineClient {
   private readonly onText?: OnlineClientOpts["onText"];
 
   constructor(url: string, opts: OnlineClientOpts = {}) {
-    this.url = url;
+    this.url = realmEndpoint(url);
     this.name = opts.name ?? "guest";
     this.color = (opts.color ?? 0) & 0x0f;
     this.auth = opts.auth ?? { kind: "guest" };
@@ -236,6 +258,9 @@ export class OnlineClient {
       this.myId = 0;
       this.online = 0;
       this.allOnline = 0;
+      this.realmId = "";
+      this.generatorVersion = 0;
+      this.epoch = 0;
       this.pending.length = 0;
       // Drop the previous epoch's remote entities so they cannot render
       // (or interpolate against the next epoch's snapshots) while away.
@@ -245,10 +270,15 @@ export class OnlineClient {
     sock.onError = () => { /* onClose follows; the reconnect lives there */ };
   }
 
-  /** The v3 JOIN for the current credential. A GitHub token is sent once;
+  /** The v4 realm JOIN for the current credential. A GitHub token is sent once;
    *  every reconnect uses the ticket the server issued. */
   private joinMessage(): Record<string, unknown> {
-    const base = { type: "join", v: AUTH_PROTOCOL_VERSION };
+    const base = {
+      type: "join",
+      v: WORLD_PROTOCOL_VERSION,
+      clientBuild: "pocketjs-wander",
+      supportedGeneratorVersions: [GENERATOR_VERSION],
+    };
     if (this.auth.kind === "github") return { ...base, github: this.auth.token };
     if (this.auth.kind === "ticket") return { ...base, ticket: this.auth.ticket };
     // Guest: the local Bun server's --allow-guests dev mode only. The
@@ -343,6 +373,9 @@ export class OnlineClient {
       this.myId = w.you;
       this.grid = w.grid;
       this.predictor = new Predictor(w.seed);
+      this.realmId = "legacy";
+      this.generatorVersion = 0;
+      this.epoch = 0;
       this.seq = 0;
       this.frozen = false;
       this.status = "joined";
@@ -355,6 +388,31 @@ export class OnlineClient {
       this.lastStateAt = this.now();
       // Fresh epoch: the interpolation buffer must not hold the previous
       // session's entities (push([]) alone would keep them until TTL).
+      this.interp.reset();
+      return;
+    }
+    if (kind === MSG.welcome4) {
+      const welcome = decodeWelcome4(data);
+      if (!welcome || welcome.generatorVersion !== GENERATOR_VERSION) {
+        this.rejectReason = "upgrade-required";
+        this.status = "rejected";
+        this.socket?.close(1008, "upgrade-required");
+        return;
+      }
+      this.myId = welcome.you;
+      this.grid = null;
+      this.predictor = new RealmPredictor(welcome);
+      this.realmId = welcome.realmId;
+      this.generatorVersion = welcome.generatorVersion;
+      this.epoch = welcome.epoch;
+      this.seq = 0;
+      this.frozen = false;
+      this.status = "joined";
+      this.online = 1;
+      this.allOnline = 1;
+      this.rejectReason = null;
+      this.slowBackoffMs = SLOW_BACKOFF_START_MS;
+      this.lastStateAt = this.now();
       this.interp.reset();
       return;
     }
@@ -371,7 +429,7 @@ export class OnlineClient {
       const at = this.now();
       this.lastStateAt = at;
       // Reconcile the local player against the authoritative mover.
-      if (this.predictor) {
+      if (this.predictor instanceof Predictor) {
         const me = st.entities.find((e) => e.id === this.myId);
         if (me) {
           const auth: AuthoritativeMover = {
@@ -394,6 +452,38 @@ export class OnlineClient {
       // servers omit it, so retain the pre-extension AOI-derived behaviour
       // and use that same value for ALL. A new server can report a room
       // count larger than the AOI as well as a cross-room service count.
+      this.online = st.roomOnline === null ? visibleOnline : Math.max(visibleOnline, st.roomOnline);
+      this.allOnline = st.allOnline === null ? this.online : Math.max(this.online, st.allOnline);
+      this.interp.push(remote, at);
+      return;
+    }
+    if (kind === MSG.state4) {
+      const st = decodeState4(data);
+      if (!st) return;
+      const at = this.now();
+      this.lastStateAt = at;
+      const predictor = this.predictor;
+      if (predictor instanceof RealmPredictor) {
+        const me = st.entities.find((e) => e.id === this.myId);
+        if (me) {
+          const auth: AuthoritativeMover = {
+            tx: me.tx, ty: me.ty,
+            px: me.tx * 16 + me.px, py: me.ty * 16 + me.py,
+            facing: me.dir, phase: me.phase, stepDir: me.stepDir,
+            moving: me.moving, walking: me.walking,
+          };
+          const result = predictor.reconcile(st.epoch, st.ackSeq, auth);
+          if (result === "corrected") this.corrections++;
+          else if (result === "rebase-required") {
+            this.frozen = true;
+            this.status = "frozen";
+            this.socket?.close(1012, "prediction rebase");
+            return;
+          }
+        }
+      }
+      const remote = st.entities.filter((e) => e.id !== this.myId);
+      const visibleOnline = (this.myId === 0 ? 0 : 1) + remote.length;
       this.online = st.roomOnline === null ? visibleOnline : Math.max(visibleOnline, st.roomOnline);
       this.allOnline = st.allOnline === null ? this.online : Math.max(this.online, st.allOnline);
       this.interp.push(remote, at);
@@ -484,6 +574,8 @@ export class OnlineClient {
       rtt: this.rtt,
       corrections: this.corrections,
       unacked: this.predictor?.unacked ?? 0,
+      realmId: this.realmId,
+      generatorVersion: this.generatorVersion,
       rejectReason: this.rejectReason,
       rejectText: this.rejectReason ? (REJECT_TEXT[this.rejectReason] ?? this.rejectReason) : null,
       retryIn,
