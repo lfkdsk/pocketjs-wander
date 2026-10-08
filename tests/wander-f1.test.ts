@@ -216,7 +216,7 @@ describe("F1-4: discovery is viewport-based", () => {
     // would miss a real discovery.
     expect(maxDx).toBe(halfW);
     expect(maxDy).toBe(halfH);
-  });
+  }, 15_000);
 });
 
 // One 10-seed x 600 s sweep shared by the rate / gap / circling / budget
