@@ -9,7 +9,7 @@
 // acceptance demo's 100-bot scene.
 //
 //   bun run examples/wander-online/server/bots.ts --url ws://127.0.0.1:8080/ws \
-//       --count 100 --seconds 45 [--batch]
+//       --count 100 --seconds 45 [--batch] [--github-prefix loadbot]
 
 import { BTN, BATCH_SIZE, MSG, decodeState, decodeWelcome, encodeInput, encodeInputBatch, encodePing } from "../net/protocol.ts";
 import { AUTH_PROTOCOL_VERSION } from "../shared/auth.ts";
@@ -20,6 +20,10 @@ interface BotOpts {
   seconds: number;
   namePrefix: string;
   batch: boolean;
+  /** When set, authenticate each bot through GitHub with
+   *  `gho_<prefix><index>` and create its profile on first use. The default
+   *  remains guest auth for the standalone --allow-guests server. */
+  githubPrefix: string;
 }
 
 function parseArgs(argv: string[]): BotOpts {
@@ -33,6 +37,7 @@ function parseArgs(argv: string[]): BotOpts {
     seconds: Number(flag("seconds", "45")),
     namePrefix: flag("name-prefix", "bot"),
     batch: argv.includes("--batch"),
+    githubPrefix: flag("github-prefix", ""),
   };
 }
 
@@ -46,21 +51,50 @@ class Bot {
   private pingId = 0;
   private readonly batch: boolean;
   private pending: { seq: number; buttons: number }[] = [];
+  private ticket = "";
   rtt = 0;
   corrections = 0;
   lastAck = 0;
   seen = 0;
 
-  constructor(url: string, name: string, color: number, batch: boolean) {
+  constructor(
+    url: string,
+    private readonly name: string,
+    private readonly color: number,
+    batch: boolean,
+    private readonly githubToken: string,
+  ) {
     this.id = 0;
     this.batch = batch;
     this.ws = new WebSocket(url);
     this.ws.binaryType = "arraybuffer";
     const now = () => (globalThis.performance ? globalThis.performance.now() : Date.now());
     this.ws.addEventListener("open", () => {
-      this.ws.send(JSON.stringify({ type: "join", name, color, v: AUTH_PROTOCOL_VERSION }));
+      const credential = this.githubToken ? { github: this.githubToken } : { name: this.name, color: this.color };
+      this.ws.send(JSON.stringify({ type: "join", v: AUTH_PROTOCOL_VERSION, ...credential }));
     });
     this.ws.addEventListener("message", (ev) => {
+      if (typeof ev.data === "string") {
+        let msg: Record<string, unknown>;
+        try {
+          msg = JSON.parse(ev.data) as Record<string, unknown>;
+        } catch {
+          return;
+        }
+        if (msg.type === "needCreate" && typeof msg.ticket === "string") {
+          this.ticket = msg.ticket;
+          this.ws.send(JSON.stringify({
+            type: "create",
+            v: AUTH_PROTOCOL_VERSION,
+            ticket: this.ticket,
+            name: this.name,
+            look: this.color,
+          }));
+        } else if (msg.type === "createOk" && this.ticket) {
+          this.ws.send(JSON.stringify({ type: "join", v: AUTH_PROTOCOL_VERSION, ticket: this.ticket }));
+        }
+        return;
+      }
       const buf = ev.data as ArrayBuffer;
       const v = new DataView(buf);
       const kind = v.getUint8(0);
@@ -109,7 +143,9 @@ export function runBots(opts: BotOpts): Promise<void> {
   return new Promise((resolve) => {
     const bots: Bot[] = [];
     for (let i = 0; i < opts.count; i++) {
-      bots.push(new Bot(opts.url, `${opts.namePrefix}${i}`, i & 0x0f, opts.batch));
+      const suffix = `${opts.namePrefix}${i}`;
+      const token = opts.githubPrefix ? `gho_${opts.githubPrefix}${i}` : "";
+      bots.push(new Bot(opts.url, suffix, i & 0x0f, opts.batch, token));
     }
     const start = Date.now();
     const timer = setInterval(() => {
