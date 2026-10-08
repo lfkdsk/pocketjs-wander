@@ -5,7 +5,17 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import os from "node:os";
 import { Arena } from "../examples/wander-online/server/area.ts";
-import { BTN, MSG, decodeState, decodeWelcome, encodeInput, encodePing } from "../examples/wander-online/net/protocol.ts";
+import {
+  BTN,
+  MSG,
+  WORLD_PROTOCOL_VERSION,
+  decodeState,
+  decodeState4,
+  decodeWelcome,
+  decodeWelcome4,
+  encodeInput,
+  encodePing,
+} from "../examples/wander-online/net/protocol.ts";
 import { WINDOW } from "../examples/wander/window.ts";
 import { startServer, type ServerHandle } from "../examples/wander-online/server/server.ts";
 import { connect, type TestSocket } from "./lib/ws-helper.ts";
@@ -184,6 +194,33 @@ describe("wander-online server", () => {
     expect(sawTwoPlayerPopulation).toBe(true);
     alice.close();
     bob.close();
+  });
+
+  test("v4 route emits signed-world WELCOME4 and epoch-matched STATE4", async () => {
+    const c = await connect(`ws://127.0.0.1:${port}/ws/v4`);
+    c.send(JSON.stringify({
+      type: "join",
+      v: WORLD_PROTOCOL_VERSION,
+      supportedGeneratorVersions: [1],
+      name: "realm",
+      color: 5,
+    }));
+    const greeting = decodeWelcome4((await c.nextMessage()) as ArrayBuffer);
+    expect(greeting).not.toBeNull();
+    expect(greeting?.realmId).toBe("local");
+    expect(greeting?.generatorVersion).toBe(1);
+    const until = Date.now() + 2000;
+    while (Date.now() < until) {
+      const msg = (await c.nextMessage(500)) as ArrayBuffer | undefined;
+      if (!msg || new DataView(msg).getUint8(0) !== MSG.state4) continue;
+      const state = decodeState4(msg);
+      expect(state?.epoch).toBe(greeting?.epoch);
+      expect(state?.entities[0]?.id).toBe(greeting?.you);
+      c.close();
+      return;
+    }
+    c.close();
+    throw new Error("no STATE4");
   });
 
   test("snapshot acks the client's input sequence", async () => {

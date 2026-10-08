@@ -24,16 +24,19 @@
 import { join } from "node:path";
 import { type ServerWebSocket } from "bun";
 import { Arena } from "./area.ts";
+import { RealmArena } from "./realm-area.ts";
 import { DevAuth } from "./dev-auth.ts";
-import { snapshotFor } from "../shared/snapshot.ts";
+import { entityFor, snapshotFor, snapshotForRealm } from "../shared/snapshot.ts";
 import {
   MSG,
+  WORLD_PROTOCOL_VERSION,
   decodeInput,
   decodeInputBatch,
   encodeBye,
   encodePong,
   encodeRoster,
   encodeWelcome,
+  encodeWelcome4,
   gridFromWindow,
 } from "../net/protocol.ts";
 import { AUTH_PROTOCOL_VERSION } from "../shared/auth.ts";
@@ -58,6 +61,7 @@ export interface ServerOpts {
 
 interface Conn {
   ws: ServerWebSocket<ConnData>;
+  realm: boolean;
   playerId: number;
   githubId: number;
   sid: string;
@@ -68,6 +72,7 @@ interface Conn {
 
 interface ConnData {
   conn: Conn | null;
+  realm: boolean;
 }
 
 export interface ServerHandle {
@@ -76,6 +81,7 @@ export interface ServerHandle {
   /** The address the socket is bound to; always loopback for this demo. */
   hostname: string;
   arena: Arena;
+  realmArena: RealmArena;
   close: () => void;
 }
 
@@ -83,8 +89,15 @@ const BACKPRESSURE_LIMIT = 256 * 1024; // bytes buffered before we drop a snapsh
 
 export function startServer(opts: ServerOpts): ServerHandle {
   const arena = new Arena({ seed: opts.seed, hz: opts.hz });
+  const realmArena = new RealmArena({
+    seed: opts.seed,
+    hz: opts.hz,
+    realmId: "local",
+    epoch: crypto.getRandomValues(new Uint32Array(1))[0]!,
+  });
   const grid = gridFromWindow(arena.world.window);
   const conns = new Map<number, Conn>();
+  const realmConns = new Map<number, Conn>();
   const frameMod = Math.max(1, Math.round(opts.hz / opts.broadcastHz));
 
   const stats = {
@@ -122,10 +135,19 @@ export function startServer(opts: ServerOpts): ServerHandle {
       // are the same. Hosted multi-room servers pass their aggregate second.
       emit(conn, snapshotFor(arena, p, opts.aoi, online, online));
     }
+    realmArena.indexPlayers();
+    const realmOnline = realmArena.players.size;
+    for (const p of realmArena.players.values()) {
+      const conn = realmConns.get(p.id);
+      if (!conn) continue;
+      stats.snapshots++;
+      emit(conn, snapshotForRealm(realmArena, p, opts.aoi, realmOnline, realmOnline));
+    }
   }
 
   const tickTimer = setInterval(() => {
     arena.step();
+    realmArena.step();
     stats.ticks++;
     if (arena.frame % frameMod === 0) broadcast();
   }, 1000 / opts.hz);
@@ -149,22 +171,23 @@ export function startServer(opts: ServerOpts): ServerHandle {
     if (!conn) return;
     conn.bytesIn += msg.byteLength;
     stats.bytesIn += msg.byteLength;
+    const activeArena = conn.realm ? realmArena : arena;
     const v = new DataView(msg.buffer, msg.byteOffset, msg.byteLength);
     const kind = v.getUint8(0);
     if (kind === MSG.input) {
-      const p = arena.players.get(conn.playerId);
+      const p = activeArena.players.get(conn.playerId);
       if (p) {
         const inp = decodeInput(msg);
-        arena.pushInput(p, inp.seq, inp.buttons);
+        activeArena.pushInput(p as never, inp.seq, inp.buttons);
       }
     } else if (kind === MSG.inputBatch) {
       // v2: one message carrying up to BATCH_SIZE consecutive reference
       // ticks; expand into the same per-tick queue as plain INPUT.
-      const p = arena.players.get(conn.playerId);
+      const p = activeArena.players.get(conn.playerId);
       const batch = decodeInputBatch(msg);
       if (p && batch) {
         for (let i = 0; i < batch.buttons.length; i++) {
-          arena.pushInput(p, batch.firstSeq + i, batch.buttons[i]!);
+          activeArena.pushInput(p as never, batch.firstSeq + i, batch.buttons[i]!);
         }
       }
     } else if (kind === MSG.ping) {
@@ -235,8 +258,11 @@ export function startServer(opts: ServerOpts): ServerHandle {
   }
 
   async function handleJoin(ws: ServerWebSocket<ConnData>, m: Record<string, unknown>, ip: string): Promise<void> {
-    if (m.v !== AUTH_PROTOCOL_VERSION) {
-      ws.close(1008, "version");
+    const expected = ws.data.realm ? WORLD_PROTOCOL_VERSION : AUTH_PROTOCOL_VERSION;
+    const generatorOk = Array.isArray(m.supportedGeneratorVersions)
+      && m.supportedGeneratorVersions.includes(1);
+    if (m.v !== expected || (ws.data.realm && !generatorOk)) {
+      ws.close(1008, ws.data.realm ? "upgrade-required" : "version");
       return;
     }
     const sid = `s${Math.random().toString(36).slice(2)}`;
@@ -255,7 +281,8 @@ export function startServer(opts: ServerOpts): ServerHandle {
       return;
     }
     const a = await authReady;
-    const res = await a.join(github ? "github" : "ticket", (github ?? ticket)!, "local", sid, ip);
+    const room = ws.data.realm ? "v4:local" : "local";
+    const res = await a.join(github ? "github" : "ticket", (github ?? ticket)!, room, sid, ip);
     if (res.needCreate) {
       ws.send(JSON.stringify({ type: "needCreate", login: res.login, ticket: res.ticket }));
       return;
@@ -287,16 +314,32 @@ export function startServer(opts: ServerOpts): ServerHandle {
 
   /** A verified player enters the arena. */
   function admit(ws: ServerWebSocket<ConnData>, name: string, color: number, look: number, githubId: number, sid: string): void {
-    const p = arena.add(name, color, look);
-    const conn: Conn = { ws, playerId: p.id, githubId, sid, bytesIn: 0, bytesOut: 0, drops: 0 };
+    const activeArena = ws.data.realm ? realmArena : arena;
+    const activeConns = ws.data.realm ? realmConns : conns;
+    const p = activeArena.add(name, color, look);
+    const conn: Conn = { ws, realm: ws.data.realm, playerId: p.id, githubId, sid, bytesIn: 0, bytesOut: 0, drops: 0 };
     ws.data.conn = conn;
-    conns.set(p.id, conn);
-    emit(conn, encodeWelcome(p.id, arena.seed, arena.x0, arena.y0, grid));
+    activeConns.set(p.id, conn);
+    if (ws.data.realm) {
+      const { id: _id, color: _color, ...mover } = entityFor(p);
+      emit(conn, encodeWelcome4({
+        you: p.id,
+        seed: realmArena.seed,
+        generatorVersion: 1,
+        epoch: realmArena.epoch,
+        realmId: realmArena.realmId,
+        realmRevision: 0,
+        serverTimeMs: Date.now(),
+        mover,
+      }));
+    } else {
+      emit(conn, encodeWelcome(p.id, arena.seed, arena.x0, arena.y0, grid));
+    }
     // ROSTER: the full roster to the newcomer, the one new entry to others.
-    const roster = [...arena.players.values()].map((q) => ({ id: q.id, name: q.name, look: q.look }));
+    const roster = [...activeArena.players.values()].map((q) => ({ id: q.id, name: q.name, look: q.look }));
     emit(conn, encodeRoster(roster));
     const mine = encodeRoster([{ id: p.id, name, look }]);
-    for (const other of conns.values()) {
+    for (const other of activeConns.values()) {
       if (other !== conn && other.ws.readyState === 1) {
         try {
           other.ws.send(mine);
@@ -314,8 +357,8 @@ export function startServer(opts: ServerOpts): ServerHandle {
     port: opts.port,
     fetch(req: Request, srv) {
       const url = new URL(req.url);
-      if (url.pathname === "/ws") {
-        const ok = srv.upgrade(req, { data: { conn: null } satisfies ConnData });
+      if (url.pathname === "/ws" || url.pathname === "/ws/v4") {
+        const ok = srv.upgrade(req, { data: { conn: null, realm: url.pathname === "/ws/v4" } satisfies ConnData });
         if (ok) return undefined as never;
         return new Response("upgrade failed", { status: 400 });
       }
@@ -342,10 +385,12 @@ export function startServer(opts: ServerOpts): ServerHandle {
         const conn = ws.data.conn;
         if (!conn) return;
         const id = conn.playerId;
-        arena.remove(id);
-        conns.delete(id);
-        if (conn.githubId > 0 && auth) auth.sessionRelease(conn.githubId, "local", conn.sid);
-        for (const other of conns.values()) emit(other, encodeBye(id));
+        const activeArena = conn.realm ? realmArena : arena;
+        const activeConns = conn.realm ? realmConns : conns;
+        activeArena.remove(id);
+        activeConns.delete(id);
+        if (conn.githubId > 0 && auth) auth.sessionRelease(conn.githubId, conn.realm ? "v4:local" : "local", conn.sid);
+        for (const other of activeConns.values()) emit(other, encodeBye(id));
       },
     },
   });
@@ -355,6 +400,7 @@ export function startServer(opts: ServerOpts): ServerHandle {
     port: server.port ?? opts.port,
     hostname: server.hostname ?? "127.0.0.1",
     arena,
+    realmArena,
     close() {
       clearInterval(tickTimer);
       server.stop(true);
