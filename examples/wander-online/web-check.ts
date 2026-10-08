@@ -314,6 +314,7 @@ async function main(): Promise<void> {
     `join with online === ${flags.expect}, allOnline === ${flags.expectAll}, and ${flags.expect - 1} remotes`,
   );
   await waitForMovement(cdp, joined);
+  console.log(`WEBCHECK_PHASE ${JSON.stringify({ phase: "joined", epoch: joined.epoch, x: joined.x, y: joined.y })}`);
 
   let restart: { dropped: string; rejoined: PublishedState } | null = null;
   if (flags.watch) {
