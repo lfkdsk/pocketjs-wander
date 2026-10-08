@@ -21,7 +21,9 @@ export function contains(outer: HudRect, inner: HudRect): boolean {
 /** The top-left status plate. It grows one line (12 px + padding) when the
  *  debug line is shown, so the notice band below it shifts with it. */
 export function statusPlate(w: number, _h: number, debug: boolean): HudRect {
-  const W = Math.min(264, Math.max(208, w - 12));
+  // 360 px keeps a worst-case 12-code-point name plus
+  // " · ROOM 32 · ALL 128" inside the 480 px baseline viewport.
+  const W = Math.min(360, Math.max(208, w - 12));
   const H = debug ? 56 : 40;
   return { x0: 6, y0: 4, x1: 6 + W, y1: 4 + H };
 }

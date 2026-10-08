@@ -3,7 +3,8 @@
 // assert the acceptance case by STATE, not screenshots:
 //
 //   1. the web client joins (status "joined", myId assigned),
-//   2. it sees the other two clients (online === 3, two remote players),
+//   2. it sees the other two clients (online === 3, two remote players) and
+//      the expected whole-service population (`allOnline`),
 //   3. someone moves (local or a remote player changes position).
 //
 // Then it writes a 3x screenshot and prints one WEBCHECK JSON line.
@@ -14,7 +15,8 @@
 //
 //   bun run examples/wander-online/web-check.ts \
 //     --cdp http://127.0.0.1:9222 --page http://127.0.0.1:9003/wander-online/ \
-//     --out web.png [--watch] [--expect 3] [--timeout-ms 60000]
+//     --out web.png [--watch] [--expect 3] [--expect-all 3] [--ticket value] \
+//     [--timeout-ms 60000]
 //
 // Exit 0 on success, 1 on any failed assertion or timeout. The DevTools
 // endpoint is chrome's own loopback listener; this script never opens a
@@ -30,6 +32,7 @@ interface PublishedState {
   status: string;
   myId: number;
   online: number;
+  allOnline: number;
   rtt: number;
   corrections: number;
   unacked: number;
@@ -40,21 +43,37 @@ interface PublishedState {
   remote: RemotePos[];
 }
 
-const flags = (() => {
-  const args = process.argv.slice(2);
+export interface WebCheckFlags {
+  cdp: string;
+  page: string;
+  out: string;
+  watch: boolean;
+  expect: number;
+  expectAll: number;
+  timeoutMs: number;
+  /** Auth ticket injected into the page, never included in WEBCHECK output. */
+  ticket: string | null;
+}
+
+export function parseFlags(args: readonly string[]): WebCheckFlags {
   const get = (name: string, def: string): string => {
     const i = args.indexOf(`--${name}`);
     return i >= 0 ? (args[i + 1] ?? def) : def;
   };
+  const expect = Number(get("expect", "3"));
   return {
     cdp: get("cdp", "http://127.0.0.1:9222"),
     page: get("page", "http://127.0.0.1:9003/wander-online/"),
     out: get("out", "web.png"),
     watch: args.includes("--watch"),
-    expect: Number(get("expect", "3")),
+    expect,
+    expectAll: Number(get("expect-all", String(expect))),
     timeoutMs: Number(get("timeout-ms", "60000")),
+    ticket: get("ticket", "") || null,
   };
-})();
+}
+
+const flags = parseFlags(process.argv.slice(2));
 
 const deadline = Date.now() + flags.timeoutMs;
 const timeLeft = () => deadline - Date.now();
@@ -65,20 +84,76 @@ function fail(message: string): never {
   process.exit(1);
 }
 
+interface RemoteValue {
+  type?: unknown;
+  value?: unknown;
+  description?: unknown;
+}
+
+function remoteValueText(value: RemoteValue): string {
+  if (typeof value.value === "string") return value.value;
+  if (value.value !== undefined) {
+    try {
+      return JSON.stringify(value.value);
+    } catch {
+      // Fall through to the protocol description.
+    }
+  }
+  if (typeof value.description === "string") return value.description;
+  return typeof value.type === "string" ? value.type : "unknown";
+}
+
+/** Turn browser error events into stable diagnostics. Warnings and ordinary
+ * console output are intentionally ignored: this gate rejects console.error
+ * and uncaught page exceptions, which are the two actionable failure paths. */
+export function browserErrorFromEvent(method: string, params: unknown): string | null {
+  if (method === "Runtime.consoleAPICalled") {
+    const event = params as { type?: unknown; args?: unknown };
+    if (event?.type !== "error") return null;
+    const args = Array.isArray(event.args) ? event.args as RemoteValue[] : [];
+    return `console.error: ${args.map(remoteValueText).join(" ") || "(no message)"}`;
+  }
+  if (method === "Runtime.exceptionThrown") {
+    const event = params as {
+      exceptionDetails?: {
+        text?: unknown;
+        exception?: RemoteValue;
+        url?: unknown;
+        lineNumber?: unknown;
+      };
+    };
+    const details = event?.exceptionDetails;
+    const message = details?.exception ? remoteValueText(details.exception) : details?.text;
+    const at = typeof details?.url === "string" && details.url
+      ? ` at ${details.url}:${Number(details.lineNumber ?? 0) + 1}`
+      : "";
+    return `uncaught exception: ${typeof message === "string" ? message : "unknown"}${at}`;
+  }
+  return null;
+}
+
 /** One CDP connection: JSON requests with matching ids over WebSocket. */
 class Cdp {
   private nextId = 1;
   private readonly pending = new Map<number, (r: unknown) => void>();
+  private readonly listeners = new Map<string, Array<(params: unknown) => void>>();
 
   private constructor(private readonly ws: WebSocket) {
     ws.addEventListener("message", (ev) => {
-      const msg = JSON.parse(String(ev.data)) as { id?: number; result?: unknown };
+      const msg = JSON.parse(String(ev.data)) as {
+        id?: number;
+        result?: unknown;
+        method?: string;
+        params?: unknown;
+      };
       if (msg.id !== undefined) {
         const wake = this.pending.get(msg.id);
         if (wake) {
           this.pending.delete(msg.id);
           wake(msg.result);
         }
+      } else if (msg.method) {
+        for (const listener of this.listeners.get(msg.method) ?? []) listener(msg.params);
       }
     });
   }
@@ -104,6 +179,12 @@ class Cdp {
       });
       this.ws.send(JSON.stringify({ id, method, params }));
     });
+  }
+
+  on(method: string, listener: (params: unknown) => void): void {
+    const listeners = this.listeners.get(method);
+    if (listeners) listeners.push(listener);
+    else this.listeners.set(method, [listener]);
   }
 }
 
@@ -147,8 +228,13 @@ async function readState(cdp: Cdp): Promise<PublishedState | null> {
   return raw ? (JSON.parse(raw) as PublishedState) : null;
 }
 
-const joinedThree = (s: PublishedState | null): boolean =>
-  s !== null && s.status === "joined" && s.myId > 0 && s.online === flags.expect && s.remote.length === flags.expect - 1;
+const joinedExpected = (s: PublishedState | null): boolean =>
+  s !== null &&
+  s.status === "joined" &&
+  s.myId > 0 &&
+  s.online === flags.expect &&
+  s.allOnline === flags.expectAll &&
+  s.remote.length === flags.expect - 1;
 
 const posKey = (s: PublishedState): string =>
   `${s.x},${s.y}|` + s.remote.map((r) => `${r.id}:${r.x},${r.y}`).join(";");
@@ -169,7 +255,7 @@ async function waitForMovement(cdp: Cdp, first: PublishedState): Promise<void> {
   const start = posKey(first);
   while (timeLeft() > 0) {
     const s = await readState(cdp);
-    if (s && joinedThree(s) && posKey(s) !== start) return;
+    if (s && joinedExpected(s) && posKey(s) !== start) return;
     await sleep(300);
   }
   fail("timed out waiting for anyone to move");
@@ -183,13 +269,24 @@ async function screenshot(cdp: Cdp): Promise<void> {
 
 async function main(): Promise<void> {
   const cdp = await attach();
+  const browserErrors: string[] = [];
+  const collectBrowserError = (method: string) => (params: unknown) => {
+    const error = browserErrorFromEvent(method, params);
+    if (error) browserErrors.push(error);
+  };
+  cdp.on("Runtime.consoleAPICalled", collectBrowserError("Runtime.consoleAPICalled"));
+  cdp.on("Runtime.exceptionThrown", collectBrowserError("Runtime.exceptionThrown"));
   await cdp.send("Page.enable");
   await cdp.send("Runtime.enable");
-  // The acceptance demo talks only to the loopback server started with
-  // --allow-guests. Install its explicit development credential before the
-  // player page evaluates any script; production pages never do this.
+  // Install auth before the player page evaluates any script. Local demos
+  // use the explicit guest credential; hosted demo-cf can supply a ticket.
+  // JSON.stringify keeps ticket contents syntactically inert, and the
+  // credential is intentionally absent from the WEBCHECK result below.
+  const auth = flags.ticket
+    ? { kind: "ticket", ticket: flags.ticket }
+    : { kind: "guest", name: "web-demo", color: 1 };
   await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
-    source: 'globalThis.__onlineAuth={kind:"guest",name:"web-demo",color:1};',
+    source: `globalThis.__onlineAuth=${JSON.stringify(auth)};`,
   });
   // 480x272 at 3x density, matching the desktop demo captures.
   await cdp.send("Emulation.setDeviceMetricsOverride", {
@@ -201,7 +298,11 @@ async function main(): Promise<void> {
   await cdp.send("Page.navigate", { url: flags.page });
 
   // 1. join + 2. see the other clients + 3. movement.
-  const joined = await waitFor(cdp, joinedThree, `join with online === ${flags.expect} and ${flags.expect - 1} remotes`);
+  const joined = await waitFor(
+    cdp,
+    joinedExpected,
+    `join with online === ${flags.expect}, allOnline === ${flags.expectAll}, and ${flags.expect - 1} remotes`,
+  );
   await waitForMovement(cdp, joined);
 
   let restart: { dropped: string; rejoined: PublishedState } | null = null;
@@ -209,24 +310,31 @@ async function main(): Promise<void> {
     // The demo kills the server: the client must drop, then rejoin after
     // the restart and satisfy the same assertions.
     const dropped = await waitFor(cdp, (s) => s !== null && s.status !== "joined", "connection drop (server restart)");
-    const rejoined = await waitFor(cdp, joinedThree, `rejoin with online === ${flags.expect} and ${flags.expect - 1} remotes`);
+    const rejoined = await waitFor(
+      cdp,
+      joinedExpected,
+      `rejoin with online === ${flags.expect}, allOnline === ${flags.expectAll}, and ${flags.expect - 1} remotes`,
+    );
     await waitForMovement(cdp, rejoined);
     restart = { dropped: dropped.status, rejoined };
   }
 
   await screenshot(cdp);
   const final = (await readState(cdp))!;
+  if (browserErrors.length > 0) fail(`browser emitted ${browserErrors.join(" | ")}`);
   console.log(
     `WEBCHECK ${JSON.stringify({
       myId: final.myId,
       online: final.online,
+      allOnline: final.allOnline,
       remotes: final.remote.length,
       rtt: final.rtt,
       corrections: final.corrections,
+      consoleErrors: browserErrors.length,
       restarted: restart ? { droppedStatus: restart.dropped, myId: restart.rejoined.myId } : null,
     })}`,
   );
   process.exit(0);
 }
 
-main().catch((err) => fail(String(err)));
+if (import.meta.main) main().catch((err) => fail(String(err)));

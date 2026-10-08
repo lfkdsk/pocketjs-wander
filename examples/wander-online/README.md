@@ -26,7 +26,8 @@ bun tools/web.ts wander-online
 
 Every client connects to `ws://127.0.0.1:8080/ws`, joins with a random name
 and colour, and walks on its own (auto-walk) until a d-pad key takes over.
-The HUD shows the connection status, online count, RTT and correction count.
+The HUD shows the connection status, current-room and whole-service online
+counts (`ROOM n · ALL m`), RTT and correction count.
 
 ## How it works
 
@@ -77,13 +78,16 @@ Little-endian, single source in [`net/protocol.ts`](net/protocol.ts):
 | INPUT_BATCH | 6 + 2n | `0x03` firstSeq u32, count u8, buttons[count] u16 (v2: up to 3 ticks per message) |
 | PING | 9 | `0x02` id u32, t u32 |
 | WELCOME | 17 + 9216 | `0x10` you u32, seed u32, x0 i32, y0 i32, grid |
-| STATE | 10 + 12n | `0x20` frame u32, ackSeq u32, n u8, entities |
+| STATE | 10 + 12n [+ 4] | `0x20` frame u32, ackSeq u32, n u8, entities, optional roomOnline u16 + allOnline u16 |
 | PONG | 9 | `0x30` id u32, t u32 |
 | BYE | 5 | `0x40` id u32 |
 
 Each entity: id u32, tile u8×2, pixel offset i8×2, facing u8, phase u8,
 stepDir u8, flags u8 (moving, walking, 4-bit colour). A full 255-entity
-snapshot is 3070 bytes, under the socket module's 64 KiB message limit.
+snapshot with the optional population tail is 3074 bytes, under the socket
+module's 64 KiB message limit. The tail follows the counted rows, so old
+clients ignore it; new clients talking to an old server fall back to the AOI
+count for both HUD values.
 
 **Batching (v2).** The client predicts one reference tick per INPUT as
 before, but packs every 3 ticks (60 Hz reference) into one INPUT_BATCH

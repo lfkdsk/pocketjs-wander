@@ -57,6 +57,9 @@ function pump(w: World, frames: number, mask = 0): void {
 const state = (): OnlinePublished | undefined =>
   (globalThis as { __onlineState?: OnlinePublished }).__onlineState;
 
+const authCommand = (): ((command: "signout") => void) | undefined =>
+  (globalThis as { __pocketAuthCommand?: (command: "signout") => void }).__pocketAuthCommand;
+
 const waitFor = async (w: World, pred: () => boolean, what: string, timeoutMs = 8000): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -140,6 +143,8 @@ function rejectFirstCreate(
 beforeEach(() => {
   (globalThis as { __onlineState?: OnlinePublished }).__onlineState = undefined;
   (globalThis as { __pocketAuth?: unknown }).__pocketAuth = undefined;
+  (globalThis as { __pocketAuthCommand?: unknown }).__pocketAuthCommand = undefined;
+  (globalThis as { __pocketAuthEvent?: unknown }).__pocketAuthEvent = undefined;
   try {
     localStorage.removeItem("pocket-rpgkit:wander-online:ticket");
   } catch {
@@ -265,6 +270,71 @@ simDescribe("wander-online auth: ticket persistence across boots", () => {
     expect(secondSent.some((msg) => msg.type === "join" && msg.ticket === "web-ticket")).toBe(true);
     expect(secondSent.some((msg) => msg.type === "join" && typeof msg.github === "string")).toBe(false);
     second.frame(0);
+  });
+
+  test("web sign-out clears the ticket across refresh and a new login still works", async () => {
+    const values = new Map<string, string>();
+    const bridge = webStore(values);
+    const events: Array<{ type: string; login?: string }> = [];
+    const pageEvent = (event: { type: string; login?: string }) => { events.push(event); };
+    const firstSent: Record<string, unknown>[] = [];
+    const first = await boot(
+      undefined,
+      fakeOnlineSocketFactory({ mode: "welcome", name: "First Login", ticket: "first-ticket", sent: firstSent }),
+      480,
+      272,
+      {
+        __pocketWeb: true,
+        __pocketAuth: { token: "gho_first" },
+        __pocketAuthEvent: pageEvent,
+        __wanderOnlineWebStore: bridge,
+      },
+    );
+    await waitFor(first, () => state()?.status === "joined" && values.has(WEB_TICKET_KEY), "first web login");
+    expect(firstSent.some((msg) => msg.type === "join" && msg.github === "gho_first")).toBe(true);
+    expect(events.some((event) => event.type === "login" && event.login === "First Login")).toBe(true);
+
+    expect(authCommand()).toBeTypeOf("function");
+    authCommand()!("signout");
+    pump(first, 1);
+    expect(state()?.screen).toBe("gate");
+    expect(values.has(WEB_TICKET_KEY)).toBe(false);
+    expect(events.at(-1)).toEqual({ type: "logout" });
+
+    let refreshSocketCount = 0;
+    const refreshBase = fakeOnlineSocketFactory({ mode: "welcome", name: "Should Not Join", ticket: "stale-ticket" });
+    const refreshed = await boot(
+      undefined,
+      (url) => {
+        refreshSocketCount++;
+        return refreshBase(url);
+      },
+      480,
+      272,
+      { __pocketWeb: true, __pocketAuthEvent: pageEvent, __wanderOnlineWebStore: bridge },
+    );
+    pump(refreshed, 5);
+    expect(state()?.screen).toBe("gate");
+    expect(refreshSocketCount).toBe(0);
+    expect(values.has(WEB_TICKET_KEY)).toBe(false);
+
+    const againSent: Record<string, unknown>[] = [];
+    const again = await boot(
+      undefined,
+      fakeOnlineSocketFactory({ mode: "welcome", name: "Second Login", ticket: "second-ticket", sent: againSent }),
+      480,
+      272,
+      {
+        __pocketWeb: true,
+        __pocketAuth: { token: "gho_second" },
+        __pocketAuthEvent: pageEvent,
+        __wanderOnlineWebStore: bridge,
+      },
+    );
+    await waitFor(again, () => state()?.status === "joined" && values.get(WEB_TICKET_KEY)?.includes("second-ticket") === true, "second web login");
+    expect(againSent.some((msg) => msg.type === "join" && msg.github === "gho_second")).toBe(true);
+    expect(events.at(-1)).toEqual({ type: "login", login: "Second Login" });
+    again.frame(0);
   });
 
   test("desktop reboots with a linked ticket from the same fs namespace", async () => {

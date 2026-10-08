@@ -113,11 +113,14 @@ export function startServer(opts: ServerOpts): ServerHandle {
 
   function broadcast(): void {
     arena.indexPlayers();
+    const online = arena.players.size;
     for (const p of arena.players.values()) {
       const conn = conns.get(p.id);
       if (!conn) continue;
       stats.snapshots++;
-      emit(conn, snapshotFor(arena, p, opts.aoi));
+      // The local Bun server owns one room, so room and service population
+      // are the same. Hosted multi-room servers pass their aggregate second.
+      emit(conn, snapshotFor(arena, p, opts.aoi, online, online));
     }
   }
 

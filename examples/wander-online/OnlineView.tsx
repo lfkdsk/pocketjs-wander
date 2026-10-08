@@ -90,6 +90,23 @@ declare global {
   /** Test hook: array materializations from Interpolator.ids(). */
   // eslint-disable-next-line no-var
   var __onlineArrayAllocations: number | undefined;
+  /** Test hook: visible resident positions used to force a deterministic
+   *  nameplate/sprite overlap in the sim renderer. Production leaves it
+   *  undefined, so the render path does not materialize this object. */
+  // eslint-disable-next-line no-var
+  var __onlineVillagerPositions: Record<string, {
+    look: number;
+    pose: number;
+    facing: number;
+    x: number;
+    y: number;
+    sx: number;
+    sy: number;
+  }> | undefined;
+  /** Test/screenshot hook: observe residents without mounting their sprite
+   *  nodes yet, so a later mount can prove nameplates are a separate layer. */
+  // eslint-disable-next-line no-var
+  var __onlineDeferVillagers: boolean | undefined;
   /** Set by the web player page after the GitHub OAuth redirect: the
    *  one-time GitHub token. The game swaps it for a ticket and the page
    *  never persists it. */
@@ -110,7 +127,10 @@ export interface OnlinePublished {
   status: string;
   screen: string;
   myId: number;
+  /** Players in the current room (the historical diagnostics field). */
   online: number;
+  /** Players across all rooms; equals `online` with a legacy server. */
+  allOnline: number;
   rtt: number;
   corrections: number;
   unacked: number;
@@ -442,6 +462,10 @@ export function OnlineView() {
 
   let ring: RenderRing | null = null;
   let ringWorld: ArenaWorld | null = null;
+  /** Labels live above the ring's ground, sprites, residents and upper
+   *  terrain layers. Keeping them out of `sprites` also prevents a later
+   *  player sprite from covering an earlier player's name. */
+  let nameOverlay: NodeMirror | null = null;
   const ringCols = () => Math.ceil(vp.w / TILE) + OVERSCAN_LEAD + OVERSCAN_TRAIL + 1;
   const ringRows = () => Math.ceil(vp.h / TILE) + OVERSCAN_LEAD + OVERSCAN_TRAIL + 1;
   const ensureRing = (world: ArenaWorld) => {
@@ -450,6 +474,12 @@ export function OnlineView() {
     if (!ring) {
       ring = new RenderRing(fieldRoot, world.res, world.seed, () => ringWorld?.bootNow ?? 0);
       ring.resize(ringCols(), ringRows());
+      nameOverlay = createElement("view");
+      setProp(nameOverlay, "style", { posType: 1, insetL: 0, insetT: 0, width: 0, height: 0 });
+      setProp(nameOverlay, "debugName", "online-name-overlay");
+      // RenderRing constructs `upper` last. Appending this container to the
+      // ring root therefore makes every name the final world-space layer.
+      insertNode(ring.root, nameOverlay);
     }
     ring.reset(world.res, world.seed, world.x0, world.y0);
   };
@@ -522,13 +552,15 @@ export function OnlineView() {
     }
   };
 
-  const makeRemote = (parent: NodeMirror): RemoteRec => {
+  const makeRemote = (spriteParent: NodeMirror, labelParent: NodeMirror): RemoteRec => {
     const node = createElement("image");
     setProp(node, "style", { posType: 1, insetL: 0, insetT: 0, width: TILE, height: TILE });
-    insertNode(parent, node);
+    setProp(node, "debugName", "online-remote");
+    insertNode(spriteParent, node);
     const label = createElement("text");
     setProp(label, "style", { posType: 1, insetL: 0, insetT: 0, width: 80, height: 12, textColor: "#ffe97a", lineHeight: 12, textAlign: 1 });
-    insertNode(parent, label);
+    setProp(label, "debugName", "online-remote-name");
+    insertNode(labelParent, label);
     return { node, label, tileRef: null, tileIdx: -1, live: false, worldX: 0, worldY: 0 };
   };
 
@@ -561,7 +593,8 @@ export function OnlineView() {
       insertNode(r.sprites, node);
       const label = createElement("text");
       setProp(label, "style", { posType: 1, insetL: 0, insetT: 0, width: 80, height: 12, textColor: "#ffffff", lineHeight: 12, textAlign: 1 });
-      insertNode(r.sprites, label);
+      setProp(label, "debugName", "online-local-name");
+      insertNode(nameOverlay!, label);
       local = node;
       localName = label;
     }
@@ -579,22 +612,46 @@ export function OnlineView() {
 
     // Frozen-world residents follow the same reducer event state and
     // deterministic W-CHAR look mapping as the single-player wander view.
+    const probe = globalThis.__onlineVillagerPositions === undefined ? null : {} as Record<string, {
+      look: number;
+      pose: number;
+      facing: number;
+      x: number;
+      y: number;
+      sx: number;
+      sy: number;
+    }>;
+    const oxScreen = r.ox * TILE - cam.x;
+    const oyScreen = r.oy * TILE - cam.y;
     for (const rec of villagers.values()) rec.live = false;
     for (const id in p.chars.chars) {
       const ch = p.chars.chars[id]!;
       if (!ch.visible) continue;
       const parsed = parseVillagerId(id);
       if (!parsed) continue;
+      const x = Math.round((world.x0 - r.ox) * TILE + ch.px);
+      const y = Math.round((world.y0 - r.oy) * TILE + ch.py);
+      const probedLook = probe ? lookId(lookFor(world.seed, parsed.rx, parsed.ry, parsed.n)) : -1;
+      if (probe) {
+        probe[id] = {
+          look: probedLook,
+          pose: walkPose(ch.phase),
+          facing: ch.facing,
+          x: ch.px,
+          y: ch.py,
+          sx: Math.round(x + oxScreen),
+          sy: Math.round(y + oyScreen),
+        };
+      }
+      if (globalThis.__onlineDeferVillagers === true) continue;
       let rec = villagers.get(id);
       if (!rec) {
         rec = villagerPool.pop() ?? makeVillager(r.sprites);
-        rec.lookId = lookId(lookFor(world.seed, parsed.rx, parsed.ry, parsed.n));
+        rec.lookId = probedLook >= 0 ? probedLook : lookId(lookFor(world.seed, parsed.rx, parsed.ry, parsed.n));
         villagers.set(id, rec);
       }
       rec.live = true;
       setSprite(rec.node, rec.lookId, walkPose(ch.phase), ch.facing, rec);
-      const x = Math.round((world.x0 - r.ox) * TILE + ch.px);
-      const y = Math.round((world.y0 - r.oy) * TILE + ch.py);
       if (x !== rec.x) { jump(rec.node, "translateX", x); rec.x = x; }
       if (y !== rec.y) { jump(rec.node, "translateY", y); rec.y = y; }
     }
@@ -605,6 +662,7 @@ export function OnlineView() {
       jump(rec.node, "translateX", -10000);
       villagerPool.push(rec);
     }
+    if (probe) globalThis.__onlineVillagerPositions = probe;
 
     // Remote players: pooled walkers with name labels, interpolated.
     for (const rec of remoteUsed.values()) rec.live = false;
@@ -615,7 +673,7 @@ export function OnlineView() {
       if (!rec) {
         rec = remotePool.pop();
         if (!rec) {
-          rec = makeRemote(r.sprites);
+          rec = makeRemote(r.sprites, nameOverlay!);
           nodeChurn++;
         }
         remoteUsed.set(id, rec);
@@ -673,7 +731,7 @@ export function OnlineView() {
           : h.status.toUpperCase();
     batch(() => {
       setStatusText(status);
-      setNameLine(`${roster.get(c.myId)?.name ?? (login() || "?")} · ONLINE ${h.online}`);
+      setNameLine(`${roster.get(c.myId)?.name ?? (login() || "?")} · ROOM ${h.online} · ALL ${h.allOnline}`);
       setDebugText(`RTT ${h.rtt}ms  CORR ${h.corrections}  UNACKED ${h.unacked}`);
       setPosText(`X ${cam.tx}  Y ${cam.ty}  ${autoMode ? "AUTO" : "YOU"}`);
     });
@@ -689,6 +747,7 @@ export function OnlineView() {
     out.screen = screen();
     out.myId = h?.myId ?? 0;
     out.online = h?.online ?? 0;
+    out.allOnline = h?.allOnline ?? 0;
     out.rtt = h?.rtt ?? 0;
     out.corrections = h?.corrections ?? 0;
     out.unacked = h?.unacked ?? 0;
@@ -925,8 +984,8 @@ export function OnlineView() {
           {fieldRoot as unknown as ReturnType<typeof View>}
         </View>
         <View class="absolute" style={{ posType: 1, ...rect(plate()), bgColor: "#0b1626", opacity: 0.84 }} debugName="online-plate" />
-        <Text class="text-xs" style={{ posType: 1, insetT: plate().y0 + 2, insetL: 12, textColor: "#ffe97a", lineHeight: 12, height: 12 }}>{statusText()}</Text>
-        <Text class="text-xs" style={{ posType: 1, insetT: plate().y0 + 15, insetL: 12, textColor: "#9fd0ff", lineHeight: 12, height: 12 }}>{nameLine()}</Text>
+        <Text class="text-xs" style={{ posType: 1, insetT: plate().y0 + 2, insetL: 12, width: plate().x1 - 18, textColor: "#ffe97a", lineHeight: 12, height: 12 }}>{statusText()}</Text>
+        <Text class="text-xs" style={{ posType: 1, insetT: plate().y0 + 15, insetL: 12, width: plate().x1 - 18, textColor: "#9fd0ff", lineHeight: 12, height: 12 }}>{nameLine()}</Text>
         <Show when={debugOn()}>
           <Text class="text-xs" style={{ posType: 1, insetT: plate().y0 + 28, insetL: 12, textColor: "#c8d6ea", lineHeight: 12, height: 12 }}>{debugText()}</Text>
           <Text class="text-xs" style={{ posType: 1, insetT: plate().y0 + 41, insetL: 12, textColor: "#c8d6ea", lineHeight: 12, height: 12 }}>{posText()}</Text>

@@ -57,6 +57,14 @@ describe("wander-online layout: world overlays", () => {
         expect(intersects(menuRect(w, h), helpRect(w, h)), "menu vs help").toBe(false);
       }
     });
+
+    test(`${w}x${h}: the population plate reserves the worst-case name line width`, () => {
+      const plate = statusPlate(w, h, false);
+      expect(plate.x1 - plate.x0).toBe(360);
+      // OnlineView starts text at x=12 and ends its explicit box 6 px before
+      // the plate's right edge: 348 px at both acceptance resolutions.
+      expect(plate.x1 - 18).toBe(348);
+    });
   }
 
   test("the debug plate is taller than the normal plate and the notice band follows it", () => {

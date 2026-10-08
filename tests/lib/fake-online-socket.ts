@@ -3,7 +3,7 @@
 // a github/ticket JOIN gets a scripted needCreate / WELCOME + ROSTER reply,
 // so the OnlineView's screen state machine is testable on the sim host.
 import type { PocketSocket, SocketCloseEvent } from "@pocketjs/framework/socket";
-import { encodeRoster, encodeWelcome } from "../../examples/wander-online/net/protocol.ts";
+import { encodeRoster, encodeState, encodeWelcome } from "../../examples/wander-online/net/protocol.ts";
 
 export interface FakeOnlineOpts {
   /** "needCreate" (first login) or "welcome" (returning player). */
@@ -12,6 +12,8 @@ export interface FakeOnlineOpts {
   ticket?: string;
   name?: string;
   look?: number;
+  /** Optional STATE population tail for HUD tests. */
+  population?: { roomOnline: number; allOnline: number };
   /** Scripted reply to a {"type":"delete"} message. Defaults to a
    *  deleteError so the deleteError path is exercised unless a test asks
    *  for the confirmed-delete path. */
@@ -37,6 +39,21 @@ export function fakeOnlineSocketFactory(opts: FakeOnlineOpts): (url: string) => 
       // The framework socket delivers Uint8Array, not ArrayBuffer.
       sock.onMessage?.(new Uint8Array(encodeWelcome(1, 0x5eed_0001, 0, 0, grid)));
       sock.onMessage?.(new Uint8Array(encodeRoster([{ id: 1, name: opts.name ?? "Octo", look: opts.look ?? 0 }])));
+      if (opts.population) {
+        sock.onMessage?.(new Uint8Array(encodeState(1, 0, [{
+          id: 1,
+          tx: 48,
+          ty: 48,
+          px: 0,
+          py: 0,
+          dir: 0,
+          phase: 0,
+          stepDir: 0,
+          moving: false,
+          walking: false,
+          color: 0,
+        }], opts.population)));
+      }
       sock.onMessage?.(JSON.stringify({ type: "ready", ticket: opts.ticket ?? "dev-ticket" }));
     };
     const sock: PocketSocket = {

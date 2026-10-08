@@ -165,6 +165,7 @@ describe("wander-online server", () => {
     }, 16);
     const seen = new Map<number, number>();
     let snapshots = 0;
+    let sawTwoPlayerPopulation = false;
     while (Date.now() < until && snapshots < 5) {
       const msg = (await alice.nextMessage(500)) as ArrayBuffer | undefined;
       if (!msg) break;
@@ -172,6 +173,7 @@ describe("wander-online server", () => {
       if (v.getUint8(0) !== MSG.state) continue;
       const st = decodeState(msg);
       snapshots++;
+      if (st.roomOnline === 2 && st.allOnline === 2) sawTwoPlayerPopulation = true;
       for (const e of st.entities) seen.set(e.id, (seen.get(e.id) ?? 0) + 1);
     }
     clearInterval(driver);
@@ -179,6 +181,7 @@ describe("wander-online server", () => {
     // Alice sees herself and Bob.
     expect(seen.has(wa.you)).toBe(true);
     expect(seen.has(wb.you)).toBe(true);
+    expect(sawTwoPlayerPopulation).toBe(true);
     alice.close();
     bob.close();
   });

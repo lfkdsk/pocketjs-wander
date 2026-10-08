@@ -13,7 +13,7 @@ import { BTN } from "../vendor/pocketjs/framework/src/input-api.ts";
 import { encodeRoster, encodeState, encodeWelcome, type WireEntity } from "../examples/wander-online/net/protocol.ts";
 import type { PocketSocket, SocketCloseEvent } from "@pocketjs/framework/socket";
 
-const out = process.argv[2] ?? "/tmp/wander-online-shots";
+const out = process.argv[2] ?? "./wander-online-shots";
 mkdirSync(out, { recursive: true });
 
 function scale3(src: Uint8Array, w: number, h: number): Uint8Array {
@@ -97,7 +97,9 @@ function threePlayerSocketFactory(): (url: string) => PocketSocket {
           color: i,
         });
       }
-      sock.onMessage?.(new Uint8Array(encodeState(frame, frame, entities)));
+      // Three in this room, twelve across the scripted service: the paired
+      // 480x272 / 960x544 shots exercise both HUD population fields.
+      sock.onMessage?.(new Uint8Array(encodeState(frame, frame, entities, { roomOnline: 3, allOnline: 12 })));
     };
     const sock: PocketSocket = {
       url: "fake://online",
@@ -152,6 +154,85 @@ function threePlayerSocketFactory(): (url: string) => PocketSocket {
     return sock;
   };
 }
+
+interface VillagerProbe {
+  x: number;
+  y: number;
+  sx: number;
+  sy: number;
+}
+
+/** Controlled fixture for a deterministic remote-name/resident overlap.
+ * Residents are initially observed but not mounted; after this socket has
+ * created the remote label, the caller mounts them above the sprite layer.
+ * The dedicated name overlay must still paint last. */
+function overlapSocketFactory(control: { place: (x: number, y: number) => void }): (url: string) => PocketSocket {
+  return () => {
+    let opened = false;
+    let frame = 0;
+    let state: "connecting" | "open" | "closing" | "closed" = "connecting";
+    const sock: PocketSocket = {
+      url: "fake://online-overlap",
+      protocol: "",
+      get readyState() {
+        return state;
+      },
+      onOpen: undefined,
+      onMessage: undefined,
+      onClose: undefined,
+      onError: undefined,
+      send(data: string | ArrayBuffer): boolean {
+        if (!opened || typeof data !== "string") return opened;
+        let msg: { type?: string };
+        try {
+          msg = JSON.parse(data);
+        } catch {
+          return true;
+        }
+        if (msg.type === "join") queueMicrotask(() => {
+          sock.onMessage?.(new Uint8Array(encodeWelcome(1, 0x5eed_0001, 0, 0, new Uint8Array(96 * 96))));
+          sock.onMessage?.(new Uint8Array(encodeRoster([
+            { id: 1, name: "Octo", look: 3 },
+            { id: 2, name: "REMOTE", look: 20 },
+          ])));
+          sock.onMessage?.(JSON.stringify({ type: "ready", ticket: "t1" }));
+        });
+        return true;
+      },
+      close(code = 1000, reason = ""): void {
+        if (!opened) return;
+        opened = false;
+        state = "closed";
+        sock.onClose?.({ code, reason, clean: code === 1000 } as SocketCloseEvent);
+      },
+    };
+    control.place = (x, y) => {
+      const tx = Math.floor(x / 16);
+      const ty = Math.floor(y / 16);
+      const remote: WireEntity = {
+        id: 2,
+        tx,
+        ty,
+        px: Math.round(x - tx * 16),
+        py: Math.round(y - ty * 16),
+        dir: 0,
+        phase: 0,
+        stepDir: 0,
+        moving: false,
+        walking: false,
+        color: 1,
+      };
+      sock.onMessage?.(new Uint8Array(encodeState(++frame, 0, [remote], { roomOnline: 2, allOnline: 12 })));
+    };
+    queueMicrotask(() => {
+      opened = true;
+      state = "open";
+      sock.onOpen?.();
+    });
+    return sock;
+  };
+}
+
 async function shot(name: string, w: number, h: number, fb: Uint8Array): Promise<void> {
   writeFileSync(join(out, `${name}.${w}x${h}.png`), encodePNG(fb, w, h));
   writeFileSync(join(out, `${name}.${w}x${h}-3x.png`), encodePNG(scale3(fb, w, h), w * 3, h * 3));
@@ -201,6 +282,41 @@ async function main() {
       pump(world, 2, BTN.SELECT);
       pump(world, 4);
       await shot("menu", w, h, world.render());
+      world.frame(0);
+    }
+
+    // 6. A remote name deliberately crossing a resident that mounted later:
+    // this is the visual regression for the dedicated topmost name layer.
+    {
+      const control = { place: (_x: number, _y: number) => {} };
+      const world = await boot(
+        { kind: "ticket", ticket: "t1" },
+        w,
+        h,
+        overlapSocketFactory(control),
+        { __onlineVillagerPositions: {}, __onlineDeferVillagers: true },
+      );
+      pump(world, 20);
+      await sleep(50);
+      pump(world, 2);
+      const probes = (globalThis as { __onlineVillagerPositions?: Record<string, VillagerProbe> })
+        .__onlineVillagerPositions ?? {};
+      const targetEntry = Object.entries(probes).find(([, v]) =>
+        v.sx >= 40 && v.sx + 16 < w - 40 && v.sy >= 72 && v.sy + 28 < h - 20,
+      ) ?? Object.entries(probes)[0];
+      if (!targetEntry) throw new Error(`name-overlap ${w}x${h}: no resident probe`);
+      const [targetId, target] = targetEntry;
+      control.place(target.x, target.y + 14);
+      pump(world, 1);
+      const current = (globalThis as { __onlineVillagerPositions?: Record<string, VillagerProbe> })
+        .__onlineVillagerPositions?.[targetId] ?? target;
+      control.place(current.x, current.y + 14);
+      control.place(current.x, current.y + 14);
+      (globalThis as { __onlineDeferVillagers?: boolean }).__onlineDeferVillagers = false;
+      pump(world, 1);
+      await shot("name-overlap", w, h, world.render());
+      (globalThis as { __onlineVillagerPositions?: Record<string, VillagerProbe> }).__onlineVillagerPositions = undefined;
+      (globalThis as { __onlineDeferVillagers?: boolean }).__onlineDeferVillagers = undefined;
       world.frame(0);
     }
   }

@@ -65,7 +65,7 @@ function entity(id: number): WireEntity {
 }
 
 describe("wander-online client core", () => {
-  test("HUD online count includes the local player for one, two and three players", () => {
+  test("HUD population handles legacy one/two/three-player snapshots and a cross-room total", () => {
     const harness = socketHarness();
     let now = 1000;
     const client = new OnlineClient("ws://unit.test/ws", {
@@ -77,13 +77,36 @@ describe("wander-online client core", () => {
 
     // Admission itself establishes one online player, before STATE arrives.
     expect(client.hud().online).toBe(1);
+    expect(client.hud().allOnline).toBe(1);
 
     for (const players of [[entity(7)], [entity(7), entity(8)], [entity(9), entity(7), entity(8)]]) {
       now += 100;
       harness.message(encodeState(now, 0, players));
       expect(client.hud().online).toBe(players.length);
+      // An old server has no population tail: ALL safely falls back to the
+      // room/AOI count rather than advertising a made-up global number.
+      expect(client.hud().allOnline).toBe(players.length);
       expect(client.interp.ids().length).toBe(players.length - 1);
     }
+
+    now += 100;
+    harness.message(encodeState(now, 0, [entity(7), entity(8)], { roomOnline: 3, allOnline: 12 }));
+    expect(client.hud().online).toBe(3);
+    expect(client.hud().allOnline).toBe(12);
+
+    // Stale or malformed aggregate values never make the display contradict
+    // players already visible in the snapshot, nor show ALL below ONLINE.
+    now += 100;
+    const staleRoom = encodeState(now, 0, [entity(7), entity(8)], { roomOnline: 1, allOnline: 1 });
+    harness.message(staleRoom);
+    expect(client.hud().online).toBe(2);
+    expect(client.hud().allOnline).toBe(2);
+    now += 100;
+    const inverted = encodeState(now, 0, [entity(7)], { roomOnline: 6, allOnline: 6 });
+    new DataView(inverted).setUint16(inverted.byteLength - 2, 2, true);
+    harness.message(inverted);
+    expect(client.hud().online).toBe(6);
+    expect(client.hud().allOnline).toBe(6);
     client.stop();
   });
 

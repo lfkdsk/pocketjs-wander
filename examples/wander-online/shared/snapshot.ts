@@ -26,8 +26,22 @@ export function entityFor(p: ArenaPlayer): WireEntity {
 
 /** One recipient's STATE snapshot: its AOI (Chebyshev radius, wire-capped)
  *  as full idempotent entities, acked at the recipient's input watermark.
- *  Call arena.indexPlayers() once before a batch of these. */
-export function snapshotFor(arena: Arena, recipient: ArenaPlayer, aoi: number): ArrayBuffer {
+ *  Optional room/service counts become the backwards-compatible population
+ *  tail; omit both to produce the byte-identical legacy STATE. Call
+ *  arena.indexPlayers() once before a batch of these. */
+export function snapshotFor(
+  arena: Arena,
+  recipient: ArenaPlayer,
+  aoi: number,
+  roomOnline?: number,
+  allOnline?: number,
+): ArrayBuffer {
   const view = arena.aoi(recipient, aoi, MAX_AOI);
-  return encodeState(arena.frame, recipient.lastSeq, view.map(entityFor));
+  const population = roomOnline === undefined && allOnline === undefined
+    ? undefined
+    : {
+        roomOnline: roomOnline ?? view.length,
+        allOnline: allOnline ?? roomOnline ?? view.length,
+      };
+  return encodeState(arena.frame, recipient.lastSeq, view.map(entityFor), population);
 }

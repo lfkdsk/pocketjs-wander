@@ -10,6 +10,7 @@ import {
   MAX_STATE_BYTES,
   MSG,
   STATE_HEADER_BYTES,
+  STATE_POPULATION_BYTES,
   TILE,
   decodeInput,
   decodeState,
@@ -96,13 +97,39 @@ describe("wander-online protocol", () => {
     expect(d.entities.length).toBe(2);
     expect(d.entities[0]).toEqual(entities[0]);
     expect(d.entities[1]).toEqual(entities[1]);
+    expect(d.roomOnline).toBeNull();
+    expect(d.allOnline).toBeNull();
+  });
+
+  test("STATE optional population tail parses one, two and three-player rooms plus cross-room totals", () => {
+    for (const [roomOnline, allOnline] of [[1, 1], [2, 7], [3, 12]] as const) {
+      const entities = Array.from({ length: roomOnline }, (_, i) => ({
+        id: i + 1,
+        tx: 48 + i,
+        ty: 50,
+        px: 0,
+        py: 0,
+        dir: 0,
+        phase: 0,
+        stepDir: 0,
+        moving: false,
+        walking: false,
+        color: i,
+      } satisfies WireEntity));
+      const buf = encodeState(800 + roomOnline, 10, entities, { roomOnline, allOnline });
+      expect(buf.byteLength).toBe(STATE_HEADER_BYTES + roomOnline * ENTITY_BYTES + STATE_POPULATION_BYTES);
+      const state = decodeState(buf);
+      expect(state.entities).toEqual(entities);
+      expect(state.roomOnline).toBe(roomOnline);
+      expect(state.allOnline).toBe(allOnline);
+    }
   });
 
   test("STATE caps at MAX_AOI entities and stays under the socket message limit", () => {
     const many: WireEntity[] = Array.from({ length: 300 }, (_, i) => ({
       id: i + 1, tx: i % 96, ty: (i / 96) | 0, px: 0, py: 0, dir: 0, phase: 0, stepDir: 0, moving: false, walking: false, color: i & 0x0f,
     }));
-    const buf = encodeState(1, 1, many);
+    const buf = encodeState(1, 1, many, { roomOnline: 300, allOnline: 500 });
     const d = decodeState(buf);
     expect(d.entities.length).toBe(MAX_AOI);
     expect(buf.byteLength).toBe(MAX_STATE_BYTES);

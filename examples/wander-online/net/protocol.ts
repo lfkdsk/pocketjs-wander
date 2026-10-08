@@ -19,6 +19,7 @@
 //     STATE   0x20 frame u32 ackSeq u32 n u8
 //                    ( n x: id u32 tx u8 ty u8 dx i8 dy i8 dir u8
 //                            phase u8 stepDir u8 flags u8 )
+//                    [ roomOnline u16 allOnline u16 ]
 //             dx/dy: pixel offset from that tile (the kit's absolute move.px
 //             minus tx*16), mid-step only; phase is the step phase (0..8),
 //             stepDir the direction of the current step; flags: bit0 moving,
@@ -27,6 +28,10 @@
 //             (position alone leaves phase/walking offset and cascades).
 //             ackSeq: the last INPUT sequence the server applied for THIS
 //             recipient — the reconciliation watermark.
+//             The optional 4-byte population tail reports this room and the
+//             whole service. It is deliberately after the counted entity
+//             rows: old clients ignore it, while new clients fall back to
+//             their AOI count when talking to an old server.
 //     PONG    0x30 id u32 t u32
 //     BYE     0x40 id u32
 //     ROSTER  0x50 n u8
@@ -80,9 +85,10 @@ export const TILE = {
 
 export const ENTITY_BYTES = 12;
 export const STATE_HEADER_BYTES = 10;
+export const STATE_POPULATION_BYTES = 4;
 export const MAX_AOI = 255;
-/** Upper bound on a STATE payload: header + cap entities. */
-export const MAX_STATE_BYTES = STATE_HEADER_BYTES + MAX_AOI * ENTITY_BYTES;
+/** Upper bound on a STATE payload: header + capped entities + population. */
+export const MAX_STATE_BYTES = STATE_HEADER_BYTES + MAX_AOI * ENTITY_BYTES + STATE_POPULATION_BYTES;
 
 export function encodeInput(seq: number, buttons: number): ArrayBuffer {
   const b = new ArrayBuffer(7);
@@ -146,9 +152,22 @@ export interface WireEntity {
   color: number;
 }
 
-export function encodeState(frame: number, ackSeq: number, entities: WireEntity[]): ArrayBuffer {
+export interface StatePopulation {
+  /** Number of players admitted to this room (not merely in the AOI). */
+  roomOnline: number;
+  /** Number of players admitted across every room in the service. */
+  allOnline: number;
+}
+
+export function encodeState(
+  frame: number,
+  ackSeq: number,
+  entities: WireEntity[],
+  population?: StatePopulation,
+): ArrayBuffer {
   const n = Math.min(entities.length, MAX_AOI);
-  const b = new ArrayBuffer(STATE_HEADER_BYTES + n * ENTITY_BYTES);
+  const entityEnd = STATE_HEADER_BYTES + n * ENTITY_BYTES;
+  const b = new ArrayBuffer(entityEnd + (population ? STATE_POPULATION_BYTES : 0));
   const v = new DataView(b);
   v.setUint8(0, MSG.state);
   v.setUint32(1, frame >>> 0, true);
@@ -167,6 +186,12 @@ export function encodeState(frame: number, ackSeq: number, entities: WireEntity[
     v.setUint8(o + 10, e.stepDir & 0x07);
     v.setUint8(o + 11, (e.moving ? 1 : 0) | (e.walking ? 2 : 0) | ((e.color & 0x0f) << 2));
     o += ENTITY_BYTES;
+  }
+  if (population) {
+    const roomOnline = Math.max(0, Math.min(0xffff, population.roomOnline)) | 0;
+    const allOnline = Math.max(roomOnline, Math.min(0xffff, population.allOnline)) | 0;
+    v.setUint16(entityEnd, roomOnline, true);
+    v.setUint16(entityEnd + 2, allOnline, true);
   }
   return b;
 }
@@ -293,6 +318,10 @@ export interface DecodedState {
   frame: number;
   ackSeq: number;
   entities: WireEntity[];
+  /** Null for a legacy STATE with no optional population tail. */
+  roomOnline: number | null;
+  /** Null for a legacy STATE with no optional population tail. */
+  allOnline: number | null;
 }
 
 function viewOf(buf: ArrayBuffer | Uint8Array): DataView {
@@ -321,7 +350,14 @@ export function decodeState(buf: ArrayBuffer | Uint8Array): DecodedState {
     });
     o += ENTITY_BYTES;
   }
-  return { frame: v.getUint32(1, true), ackSeq: v.getUint32(5, true), entities };
+  const hasPopulation = buf.byteLength >= o + STATE_POPULATION_BYTES;
+  return {
+    frame: v.getUint32(1, true),
+    ackSeq: v.getUint32(5, true),
+    entities,
+    roomOnline: hasPopulation ? v.getUint16(o, true) : null,
+    allOnline: hasPopulation ? v.getUint16(o + 2, true) : null,
+  };
 }
 
 export function decodeWelcome(buf: ArrayBuffer | Uint8Array): { you: number; seed: number; x0: number; y0: number; grid: Uint8Array } {

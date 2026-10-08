@@ -128,7 +128,11 @@ export interface OnlineClientOpts {
 export interface OnlineHud {
   status: ConnStatus;
   myId: number;
+  /** Players in this room. Kept as `online` for the existing diagnostics
+   *  and web-check contract. */
   online: number;
+  /** Players across every room. Equals `online` with a legacy server. */
+  allOnline: number;
   rtt: number;
   corrections: number;
   unacked: number;
@@ -150,7 +154,10 @@ export class OnlineClient {
   auth: AuthCredential;
   status: ConnStatus = "connecting";
   myId = 0;
+  /** Players in this room (the historical public field). */
   online = 0;
+  /** Players across every room; legacy snapshots fall back to `online`. */
+  allOnline = 0;
   rtt = 0;
   corrections = 0;
   /** Classified window grid (WINDOW*WINDOW), null until WELCOME. */
@@ -228,6 +235,7 @@ export class OnlineClient {
       this.grid = null;
       this.myId = 0;
       this.online = 0;
+      this.allOnline = 0;
       this.pending.length = 0;
       // Drop the previous epoch's remote entities so they cannot render
       // (or interpolate against the next epoch's snapshots) while away.
@@ -340,6 +348,7 @@ export class OnlineClient {
       // WELCOME means this client has been admitted. Count the local player
       // immediately instead of showing ONLINE 0 until the first STATE.
       this.online = 1;
+      this.allOnline = 1;
       this.rejectReason = null;
       this.slowBackoffMs = SLOW_BACKOFF_START_MS;
       this.lastStateAt = this.now();
@@ -379,7 +388,13 @@ export class OnlineClient {
       // HUD count explicitly as local + remote so it cannot regress to the
       // remote-only interpolation count (and a missing/duplicate self row
       // cannot make the HUD omit or double-count the local player).
-      this.online = (this.myId === 0 ? 0 : 1) + remote.length;
+      const visibleOnline = (this.myId === 0 ? 0 : 1) + remote.length;
+      // Population is an optional tail after the counted entity rows. Old
+      // servers omit it, so retain the pre-extension AOI-derived behaviour
+      // and use that same value for ALL. A new server can report a room
+      // count larger than the AOI as well as a cross-room service count.
+      this.online = st.roomOnline === null ? visibleOnline : Math.max(visibleOnline, st.roomOnline);
+      this.allOnline = st.allOnline === null ? this.online : Math.max(this.online, st.allOnline);
       this.interp.push(remote, at);
       return;
     }
@@ -464,6 +479,7 @@ export class OnlineClient {
       status: this.status,
       myId: this.myId,
       online: this.online,
+      allOnline: this.allOnline,
       rtt: this.rtt,
       corrections: this.corrections,
       unacked: this.predictor?.unacked ?? 0,

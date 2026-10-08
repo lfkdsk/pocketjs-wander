@@ -263,11 +263,22 @@ describe("shared: snapshot builder", () => {
     arena.pushInput(me, 1, BTN.right);
     arena.step();
     arena.indexPlayers();
-    const buf = snapshotFor(arena, me, 16);
+    const buf = snapshotFor(arena, me, 16, 1, 7);
     const st = decodeState(buf);
     expect(st.frame).toBe(arena.frame);
     expect(st.ackSeq).toBe(me.lastSeq);
     expect(st.entities.some((e) => e.id === me.id)).toBe(true);
+    expect(st.roomOnline).toBe(1);
+    expect(st.allOnline).toBe(7);
+  });
+
+  test("keeps legacy STATE byte shape when population is omitted", () => {
+    const arena = new Arena({ seed: 0x5eed_0001, hz: 20 });
+    const me = arena.add("legacy", 1);
+    arena.indexPlayers();
+    const st = decodeState(snapshotFor(arena, me, 16));
+    expect(st.roomOnline).toBeNull();
+    expect(st.allOnline).toBeNull();
   });
 });
 
