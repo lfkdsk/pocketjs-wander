@@ -16,7 +16,7 @@ realm，服务器与客户端复用同一套 Wander 生成器和移动规则；�
 | 仓库 | 分支 | 基线 | 已验收实现/文档 HEAD |
 | --- | --- | --- | --- |
 | PocketJS Wander | `net-world-a` | `3c660b2` | `7cb6afd` |
-| Pocket Online Server | `net-world-a` | `5d2bbe9` | `b6f955b` |
+| Pocket Online Server | `net-world-a` | `5d2bbe9` | `e963253` |
 
 本报告作为 Wander 的后续交付提交；服务器子模块已指向 Wander
 `7cb6afd`。Pocket RPG Kit 和 PocketJS 都无需修改。没有 push、部署或修改
