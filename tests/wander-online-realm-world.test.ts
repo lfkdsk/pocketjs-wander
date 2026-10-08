@@ -139,4 +139,27 @@ describe("wander-online streamed realm world", () => {
     world.clearCache();
     expect(world.plans.size).toBe(0);
   }, 40_000);
+
+  test("same-tick 32-player migration never evicts an active region plan", () => {
+    const world = new MultiFocusWorld(SEED);
+    const focuses = (shift: number) => Array.from({ length: 32 }, (_, i) => ({
+      x: ((i % 8) * 30 - 105 + shift) * CHUNK + 16,
+      y: (Math.floor(i / 8) * 30 - 45) * CHUNK + 16,
+    }));
+    world.prime(focuses(0), 0);
+    // Shift two crosses a region alignment while retaining the same tick.
+    // Before active-plan pinning, equal LRU timestamps could repeatedly
+    // evict a required plan and make this prime loop forever.
+    world.prime(focuses(2), 0);
+    expect(world.activeCount).toBe(288);
+    expect(world.queuedCount).toBe(0);
+    expect(world.chunks.size).toBeLessThanOrEqual(CHUNK_CACHE_CAP);
+    expect(world.plans.size).toBeLessThanOrEqual(PLAN_CACHE_CAP);
+    const activePlans = new Set<string>();
+    for (const key of world.active) {
+      const [cx, cy] = key.split(",").map(Number) as [number, number];
+      activePlans.add(`${Math.floor(cx / 3)},${Math.floor(cy / 3)}`);
+    }
+    for (const key of activePlans) expect(world.plans.has(key)).toBe(true);
+  }, 40_000);
 });

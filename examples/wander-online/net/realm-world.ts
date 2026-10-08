@@ -206,6 +206,9 @@ export class MultiFocusWorld implements RealmCollisionSource {
       const rx = Math.floor(cx / REGION_CHUNKS), ry = Math.floor(cy / REGION_CHUNKS);
       nextRegions.set(realmRegionKey(rx, ry), { x: rx, y: ry });
     }
+    if (nextRegions.size > PLAN_CACHE_CAP) {
+      throw new RangeError(`realm active plan union ${nextRegions.size} exceeds plan cache cap ${PLAN_CACHE_CAP}`);
+    }
     this.activeRegions = nextRegions;
 
     let addedChunks = 0;
@@ -371,14 +374,17 @@ export class MultiFocusWorld implements RealmCollisionSource {
 
   private evictPlans(): void {
     if (this.plans.size <= PLAN_CACHE_CAP) return;
-    const order = [...this.plans.keys()].sort(
+    const order = [...this.plans.keys()]
+      .filter((key) => !this.activeRegions.has(key))
+      .sort(
       (a, b) => (this.planUsed.get(a) ?? -1) - (this.planUsed.get(b) ?? -1) || keyOrder(a, b),
-    );
+      );
     for (const key of order) {
       if (this.plans.size <= PLAN_CACHE_CAP) break;
       this.plans.delete(key);
       this.planUsed.delete(key);
     }
+    if (this.plans.size > PLAN_CACHE_CAP) throw new Error("realm active plans exceed hard cache cap");
   }
 }
 
