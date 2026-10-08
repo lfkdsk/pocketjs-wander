@@ -167,7 +167,7 @@ for run in $(seq 1 "$RUNS"); do
   start_chrome "$dir/chrome-profile"
   set +e
   (cd "$ROOT" && bun run examples/wander-online/web-check.ts \
-    --cdp "$CDP" --page "$PAGE" --out "$dir/web.png" --timeout-ms 45000) \
+    --cdp "$CDP" --page "$PAGE" --out "$dir/web.png" --timeout-ms 45000 --expect-realm local) \
     | tee "$dir/web-check.log"
   web_rc=${PIPESTATUS[0]}
   set -e
@@ -208,7 +208,7 @@ start_chrome "$dir/chrome-profile"
 # web-check --watch: join, then wait for the drop and the rejoin, asserting
 # the same state each time; exits 0 only if both joins saw the other client.
 (cd "$ROOT" && bun run examples/wander-online/web-check.ts --watch --expect 2 \
-  --cdp "$CDP" --page "$PAGE" --out "$dir/web.png" --timeout-ms 90000) \
+  --cdp "$CDP" --page "$PAGE" --out "$dir/web.png" --timeout-ms 90000 --expect-realm local) \
   > "$dir/web-check.log" 2>&1 &
 WEBCHECK_PID=$!
 # Let the clients join and walk, then kill the server (SIGKILL in

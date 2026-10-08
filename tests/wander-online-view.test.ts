@@ -248,6 +248,8 @@ simDescribe("wander-online view: the world on screen", () => {
       press(w, BTN.RIGHT);
       pump(w, 18);
       const pos = state()!;
+      expect(pos.realmId).toBe("realm-test");
+      expect(pos.generatorVersion).toBe(1);
       expect(pos.x).toBeGreaterThan(500);
       expect(pos.y).toBeLessThan(-500);
       expect(treeHasText(w.getTree(), `X ${pos.x}  Y ${pos.y}`)).toBe(true);

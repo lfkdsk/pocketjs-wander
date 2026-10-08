@@ -15,7 +15,8 @@
 //
 //   bun run examples/wander-online/web-check.ts \
 //     --cdp http://127.0.0.1:9222 --page http://127.0.0.1:9003/wander-online/ \
-//     --out web.png [--watch] [--expect 3] [--expect-all 3] [--ticket value] \
+//     --out web.png [--wide-out web-wide.png] [--watch] [--expect 3] \
+//     [--expect-all 3] [--expect-realm local] [--ticket value] \
 //     [--timeout-ms 60000]
 //
 // Exit 0 on success, 1 on any failed assertion or timeout. The DevTools
@@ -36,6 +37,8 @@ interface PublishedState {
   rtt: number;
   corrections: number;
   unacked: number;
+  realmId: string;
+  generatorVersion: number;
   x: number;
   y: number;
   moving: boolean;
@@ -47,10 +50,13 @@ export interface WebCheckFlags {
   cdp: string;
   page: string;
   out: string;
+  /** Optional second 960x544 logical viewport capture. */
+  wideOut: string | null;
   watch: boolean;
   expect: number;
   expectAll: number;
   timeoutMs: number;
+  expectRealm: string | null;
   /** Auth ticket injected into the page, never included in WEBCHECK output. */
   ticket: string | null;
 }
@@ -65,10 +71,12 @@ export function parseFlags(args: readonly string[]): WebCheckFlags {
     cdp: get("cdp", "http://127.0.0.1:9222"),
     page: get("page", "http://127.0.0.1:9003/wander-online/"),
     out: get("out", "web.png"),
+    wideOut: get("wide-out", "") || null,
     watch: args.includes("--watch"),
     expect,
     expectAll: Number(get("expect-all", String(expect))),
     timeoutMs: Number(get("timeout-ms", "60000")),
+    expectRealm: get("expect-realm", "") || null,
     ticket: get("ticket", "") || null,
   };
 }
@@ -234,6 +242,7 @@ const joinedExpected = (s: PublishedState | null): boolean =>
   s.myId > 0 &&
   s.online === flags.expect &&
   s.allOnline === flags.expectAll &&
+  (!flags.expectRealm || (s.realmId === flags.expectRealm && s.generatorVersion === 1)) &&
   s.remote.length === flags.expect - 1;
 
 const posKey = (s: PublishedState): string =>
@@ -261,10 +270,10 @@ async function waitForMovement(cdp: Cdp, first: PublishedState): Promise<void> {
   fail("timed out waiting for anyone to move");
 }
 
-async function screenshot(cdp: Cdp): Promise<void> {
+async function screenshot(cdp: Cdp, path: string): Promise<void> {
   const res = (await cdp.send("Page.captureScreenshot", { format: "png" })) as { data?: string };
   if (!res.data) fail("screenshot returned no data");
-  await Bun.write(flags.out, Buffer.from(res.data, "base64"));
+  await Bun.write(path, Buffer.from(res.data, "base64"));
 }
 
 async function main(): Promise<void> {
@@ -319,7 +328,17 @@ async function main(): Promise<void> {
     restart = { dropped: dropped.status, rejoined };
   }
 
-  await screenshot(cdp);
+  await screenshot(cdp, flags.out);
+  if (flags.wideOut) {
+    await cdp.send("Emulation.setDeviceMetricsOverride", {
+      width: 960,
+      height: 544,
+      deviceScaleFactor: 3,
+      mobile: false,
+    });
+    await sleep(500);
+    await screenshot(cdp, flags.wideOut);
+  }
   const final = (await readState(cdp))!;
   if (browserErrors.length > 0) fail(`browser emitted ${browserErrors.join(" | ")}`);
   console.log(
@@ -330,6 +349,10 @@ async function main(): Promise<void> {
       remotes: final.remote.length,
       rtt: final.rtt,
       corrections: final.corrections,
+      realmId: final.realmId,
+      generatorVersion: final.generatorVersion,
+      x: final.x,
+      y: final.y,
       consoleErrors: browserErrors.length,
       restarted: restart ? { droppedStatus: restart.dropped, myId: restart.rejoined.myId } : null,
     })}`,

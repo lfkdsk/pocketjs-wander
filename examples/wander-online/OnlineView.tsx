@@ -135,6 +135,10 @@ export interface OnlinePublished {
   rtt: number;
   corrections: number;
   unacked: number;
+  /** Non-empty for v4 ("legacy" for the retained v3 path). */
+  realmId: string;
+  /** Pinned deterministic generator version; zero on v3. */
+  generatorVersion: number;
   x: number;
   y: number;
   moving: boolean;
@@ -765,6 +769,8 @@ export function OnlineView() {
     out.rtt = h?.rtt ?? 0;
     out.corrections = h?.corrections ?? 0;
     out.unacked = h?.unacked ?? 0;
+    out.realmId = h?.realmId ?? "";
+    out.generatorVersion = h?.generatorVersion ?? 0;
     out.x = camera().tx;
     out.y = camera().ty;
     out.moving = c?.predictor?.current.move.moving ?? false;
