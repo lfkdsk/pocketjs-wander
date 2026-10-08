@@ -5,16 +5,20 @@
 import { describe, expect, test } from "bun:test";
 import {
   BTN,
+  ENTITY4_BYTES,
   ENTITY_BYTES,
   MAX_AOI,
   MAX_STATE_BYTES,
+  MAX_STATE4_BYTES,
   MSG,
   STATE_HEADER_BYTES,
   STATE_POPULATION_BYTES,
   TILE,
   decodeInput,
   decodeState,
+  decodeState4,
   decodeWelcome,
+  decodeWelcome4,
   encodeBye,
   encodeInput,
   encodePing,
@@ -22,7 +26,9 @@ import {
   encodeRoster,
   decodeRoster,
   encodeState,
+  encodeState4,
   encodeWelcome,
+  encodeWelcome4,
   gridFromWindow,
   type WireEntity,
 } from "../examples/wander-online/net/protocol.ts";
@@ -81,6 +87,36 @@ describe("wander-online protocol", () => {
     expect(d.grid[8]).toBe(0);
   });
 
+  test("WELCOME4 roundtrip carries a signed absolute mover and realm identity", () => {
+    const mover = {
+      tx: -50_123, ty: 70_456, px: -14, py: 6,
+      dir: 1, phase: 7, stepDir: 1, moving: true, walking: true,
+    };
+    const buf = encodeWelcome4({
+      you: 42,
+      seed: 0x9e3779b9,
+      generatorVersion: 1,
+      realmId: "realm-无界",
+      realmRevision: 19,
+      serverTimeMs: 123456.25,
+      mover,
+    });
+    expect(new DataView(buf).getUint8(0)).toBe(MSG.welcome4);
+    expect(decodeWelcome4(buf)).toEqual({
+      you: 42,
+      seed: 0x9e3779b9,
+      generatorVersion: 1,
+      realmId: "realm-无界",
+      realmRevision: 19,
+      serverTimeMs: 123456.25,
+      mover,
+    });
+    expect(decodeWelcome4(new Uint8Array(buf).subarray(0, buf.byteLength - 1))).toBeNull();
+    const trailing = new Uint8Array(buf.byteLength + 1);
+    trailing.set(new Uint8Array(buf));
+    expect(decodeWelcome4(trailing)).toBeNull();
+  });
+
   test("STATE roundtrip carries frame, ackSeq and every entity field", () => {
     const entities: WireEntity[] = [
       { id: 1, tx: 48, ty: 50, px: 0, py: 0, dir: 0, phase: 0, stepDir: 0, moving: false, walking: false, color: 0 },
@@ -135,6 +171,21 @@ describe("wander-online protocol", () => {
     expect(buf.byteLength).toBe(MAX_STATE_BYTES);
     // The SOCKET contract caps messages at 64 KiB.
     expect(buf.byteLength).toBeLessThan(64 * 1024);
+  });
+
+  test("STATE4 preserves signed world coordinates and rejects non-exact frames", () => {
+    const entities: WireEntity[] = [
+      { id: 1, tx: -500, ty: 900, px: -12, py: 14, dir: 1, phase: 6, stepDir: 1, moving: true, walking: true, color: 15 },
+      { id: 2, tx: 1_000_000, ty: -1_000_000, px: 0, py: 0, dir: 3, phase: 0, stepDir: 3, moving: false, walking: false, color: 2 },
+    ];
+    const buf = encodeState4(99, 77, entities, { roomOnline: 2, allOnline: 35 });
+    expect(buf.byteLength).toBe(STATE_HEADER_BYTES + 2 * ENTITY4_BYTES + STATE_POPULATION_BYTES);
+    expect(buf.byteLength).toBeLessThanOrEqual(MAX_STATE4_BYTES);
+    expect(decodeState4(buf)).toEqual({ frame: 99, ackSeq: 77, entities, roomOnline: 2, allOnline: 35 });
+    expect(decodeState4(new Uint8Array(buf).subarray(0, buf.byteLength - 1))).toBeNull();
+    const trailing = new Uint8Array(buf.byteLength + 1);
+    trailing.set(new Uint8Array(buf));
+    expect(decodeState4(trailing)).toBeNull();
   });
 
   test("gridFromWindow classifies blocks, roads and biome bases", () => {

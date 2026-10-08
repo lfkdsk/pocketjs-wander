@@ -16,6 +16,8 @@
 //     PING   0x02 id u32 t u32          (9 B; t = client millisecond clock)
 //   server -> client
 //     WELCOME 0x10 you u32 seed u32 x0 i32 y0 i32 grid[WINDOW*WINDOW] u8
+//     WELCOME4 0x11 you u32 seed u32 generator u16, absolute mover,
+//                     realmRevision u32 serverTimeMs f64 realmId utf8
 //     STATE   0x20 frame u32 ackSeq u32 n u8
 //                    ( n x: id u32 tx u8 ty u8 dx i8 dy i8 dir u8
 //                            phase u8 stepDir u8 flags u8 )
@@ -32,6 +34,12 @@
 //             whole service. It is deliberately after the counted entity
 //             rows: old clients ignore it, while new clients fall back to
 //             their AOI count when talking to an old server.
+//     STATE4  0x21 frame u32 ackSeq u32 n u8
+//                    ( n x: id u32 tx i32 ty i32 dx i8 dy i8 dir u8
+//                            phase u8 stepDir u8 flags u8 )
+//                    [ roomOnline u16 allOnline u16 ]
+//             v4 keeps the v3 movement representation but makes tile
+//             coordinates signed i32 and validates the complete payload.
 //     PONG    0x30 id u32 t u32
 //     BYE     0x40 id u32
 //     ROSTER  0x50 n u8
@@ -55,11 +63,16 @@ export const MSG = {
   ping: 0x02,
   inputBatch: 0x03,
   welcome: 0x10,
+  welcome4: 0x11,
   state: 0x20,
+  state4: 0x21,
   pong: 0x30,
   bye: 0x40,
   roster: 0x50,
 } as const;
+
+/** Infinite-realm wire version. v3 remains the frozen-window legacy wire. */
+export const WORLD_PROTOCOL_VERSION = 4;
 
 /** Reference ticks packed into one INPUT_BATCH. The client predicts one
  *  tick per INPUT as before; only the transport packing changes, so the
@@ -84,11 +97,25 @@ export const TILE = {
 } as const;
 
 export const ENTITY_BYTES = 12;
+export const ENTITY4_BYTES = 18;
 export const STATE_HEADER_BYTES = 10;
 export const STATE_POPULATION_BYTES = 4;
 export const MAX_AOI = 255;
 /** Upper bound on a STATE payload: header + capped entities + population. */
 export const MAX_STATE_BYTES = STATE_HEADER_BYTES + MAX_AOI * ENTITY_BYTES + STATE_POPULATION_BYTES;
+export const MAX_STATE4_BYTES = STATE_HEADER_BYTES + MAX_AOI * ENTITY4_BYTES + STATE_POPULATION_BYTES;
+
+const WELCOME4_FIXED_BYTES = 38;
+
+export interface Welcome4 {
+  you: number;
+  seed: number;
+  generatorVersion: number;
+  realmId: string;
+  realmRevision: number;
+  serverTimeMs: number;
+  mover: Omit<WireEntity, "id" | "color">;
+}
 
 export function encodeInput(seq: number, buttons: number): ArrayBuffer {
   const b = new ArrayBuffer(7);
@@ -131,6 +158,34 @@ export function encodeWelcome(you: number, seed: number, x0: number, y0: number,
   v.setInt32(9, x0, true);
   v.setInt32(13, y0, true);
   new Uint8Array(b, 17).set(grid);
+  return b;
+}
+
+/** v4 admission payload. The realm id is length-prefixed UTF-8 and the
+ * complete authoritative mover is present even though A-phase spawns are
+ * currently at rest; this keeps restart/rebase semantics explicit. */
+export function encodeWelcome4(welcome: Welcome4): ArrayBuffer {
+  const realm = stringToUtf8(welcome.realmId);
+  if (realm.byteLength > 0xff) throw new Error("WELCOME4 realm id exceeds 255 UTF-8 bytes");
+  const b = new ArrayBuffer(WELCOME4_FIXED_BYTES + realm.byteLength);
+  const v = new DataView(b);
+  const m = welcome.mover;
+  v.setUint8(0, MSG.welcome4);
+  v.setUint32(1, welcome.you >>> 0, true);
+  v.setUint32(5, welcome.seed >>> 0, true);
+  v.setUint16(9, welcome.generatorVersion & 0xffff, true);
+  v.setInt32(11, m.tx, true);
+  v.setInt32(15, m.ty, true);
+  v.setInt8(19, m.px);
+  v.setInt8(20, m.py);
+  v.setUint8(21, m.dir & 0x03);
+  v.setUint8(22, m.phase & 0x0f);
+  v.setUint8(23, m.stepDir & 0x03);
+  v.setUint8(24, (m.moving ? 1 : 0) | (m.walking ? 2 : 0));
+  v.setUint32(25, welcome.realmRevision >>> 0, true);
+  v.setFloat64(29, welcome.serverTimeMs, true);
+  v.setUint8(37, realm.byteLength);
+  new Uint8Array(b, WELCOME4_FIXED_BYTES).set(realm);
   return b;
 }
 
@@ -186,6 +241,45 @@ export function encodeState(
     v.setUint8(o + 10, e.stepDir & 0x07);
     v.setUint8(o + 11, (e.moving ? 1 : 0) | (e.walking ? 2 : 0) | ((e.color & 0x0f) << 2));
     o += ENTITY_BYTES;
+  }
+  if (population) {
+    const roomOnline = Math.max(0, Math.min(0xffff, population.roomOnline)) | 0;
+    const allOnline = Math.max(roomOnline, Math.min(0xffff, population.allOnline)) | 0;
+    v.setUint16(entityEnd, roomOnline, true);
+    v.setUint16(entityEnd + 2, allOnline, true);
+  }
+  return b;
+}
+
+/** Signed-world v4 snapshot. Unlike the legacy decoder contract, the v4
+ * counterpart below accepts only the two exact legal lengths. */
+export function encodeState4(
+  frame: number,
+  ackSeq: number,
+  entities: WireEntity[],
+  population?: StatePopulation,
+): ArrayBuffer {
+  const n = Math.min(entities.length, MAX_AOI);
+  const entityEnd = STATE_HEADER_BYTES + n * ENTITY4_BYTES;
+  const b = new ArrayBuffer(entityEnd + (population ? STATE_POPULATION_BYTES : 0));
+  const v = new DataView(b);
+  v.setUint8(0, MSG.state4);
+  v.setUint32(1, frame >>> 0, true);
+  v.setUint32(5, ackSeq >>> 0, true);
+  v.setUint8(9, n);
+  let o = STATE_HEADER_BYTES;
+  for (let i = 0; i < n; i++) {
+    const e = entities[i]!;
+    v.setUint32(o, e.id >>> 0, true);
+    v.setInt32(o + 4, e.tx, true);
+    v.setInt32(o + 8, e.ty, true);
+    v.setInt8(o + 12, e.px);
+    v.setInt8(o + 13, e.py);
+    v.setUint8(o + 14, e.dir & 0x03);
+    v.setUint8(o + 15, e.phase & 0x0f);
+    v.setUint8(o + 16, e.stepDir & 0x03);
+    v.setUint8(o + 17, (e.moving ? 1 : 0) | (e.walking ? 2 : 0) | ((e.color & 0x0f) << 2));
+    o += ENTITY4_BYTES;
   }
   if (population) {
     const roomOnline = Math.max(0, Math.min(0xffff, population.roomOnline)) | 0;
@@ -357,6 +451,78 @@ export function decodeState(buf: ArrayBuffer | Uint8Array): DecodedState {
     entities,
     roomOnline: hasPopulation ? v.getUint16(o, true) : null,
     allOnline: hasPopulation ? v.getUint16(o + 2, true) : null,
+  };
+}
+
+/** Decode one v4 snapshot, rejecting truncation, trailing garbage and a
+ * wrong message kind before reading any entity field. */
+export function decodeState4(buf: ArrayBuffer | Uint8Array): DecodedState | null {
+  if (buf.byteLength < STATE_HEADER_BYTES) return null;
+  const v = viewOf(buf);
+  if (v.getUint8(0) !== MSG.state4) return null;
+  const n = v.getUint8(9);
+  const entityEnd = STATE_HEADER_BYTES + n * ENTITY4_BYTES;
+  if (buf.byteLength !== entityEnd && buf.byteLength !== entityEnd + STATE_POPULATION_BYTES) return null;
+  const entities: WireEntity[] = [];
+  let o = STATE_HEADER_BYTES;
+  for (let i = 0; i < n; i++) {
+    const flags = v.getUint8(o + 17);
+    entities.push({
+      id: v.getUint32(o, true),
+      tx: v.getInt32(o + 4, true),
+      ty: v.getInt32(o + 8, true),
+      px: v.getInt8(o + 12),
+      py: v.getInt8(o + 13),
+      dir: v.getUint8(o + 14),
+      phase: v.getUint8(o + 15),
+      stepDir: v.getUint8(o + 16),
+      moving: (flags & 1) === 1,
+      walking: (flags & 2) === 2,
+      color: (flags >> 2) & 0x0f,
+    });
+    o += ENTITY4_BYTES;
+  }
+  const hasPopulation = buf.byteLength === entityEnd + STATE_POPULATION_BYTES;
+  return {
+    frame: v.getUint32(1, true),
+    ackSeq: v.getUint32(5, true),
+    entities,
+    roomOnline: hasPopulation ? v.getUint16(o, true) : null,
+    allOnline: hasPopulation ? v.getUint16(o + 2, true) : null,
+  };
+}
+
+/** Decode the v4 realm greeting. Returns null on malformed UTF-8 framing or
+ * any non-exact payload length so a corrupt packet cannot become a partial
+ * world epoch. */
+export function decodeWelcome4(buf: ArrayBuffer | Uint8Array): Welcome4 | null {
+  if (buf.byteLength < WELCOME4_FIXED_BYTES) return null;
+  const v = viewOf(buf);
+  if (v.getUint8(0) !== MSG.welcome4) return null;
+  const realmLen = v.getUint8(37);
+  if (buf.byteLength !== WELCOME4_FIXED_BYTES + realmLen) return null;
+  const bytes = buf instanceof Uint8Array
+    ? buf.subarray(WELCOME4_FIXED_BYTES, WELCOME4_FIXED_BYTES + realmLen)
+    : new Uint8Array(buf, WELCOME4_FIXED_BYTES, realmLen);
+  const flags = v.getUint8(24);
+  return {
+    you: v.getUint32(1, true),
+    seed: v.getUint32(5, true),
+    generatorVersion: v.getUint16(9, true),
+    mover: {
+      tx: v.getInt32(11, true),
+      ty: v.getInt32(15, true),
+      px: v.getInt8(19),
+      py: v.getInt8(20),
+      dir: v.getUint8(21),
+      phase: v.getUint8(22),
+      stepDir: v.getUint8(23),
+      moving: (flags & 1) === 1,
+      walking: (flags & 2) === 2,
+    },
+    realmRevision: v.getUint32(25, true),
+    serverTimeMs: v.getFloat64(29, true),
+    realmId: utf8ToString(bytes),
   };
 }
 
