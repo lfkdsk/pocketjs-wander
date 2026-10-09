@@ -3,13 +3,16 @@
 // login -> character creation -> world, returning player straight in, the
 // desktop device-link keypad, and persisted web/desktop tickets.
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bootWorld } from "../vendor/pocket-rpgkit/vendor/pocketjs/hosts/sim/sim.ts";
+import { bootWorld, treeHasText } from "../vendor/pocket-rpgkit/vendor/pocketjs/hosts/sim/sim.ts";
 import { createSimFsHost } from "../vendor/pocket-rpgkit/vendor/pocketjs/hosts/sim/fs.ts";
 import { appBundle, appPreflight } from "./helpers/boot.ts";
 import { fakeOnlineSocketFactory } from "./lib/fake-online-socket.ts";
+import { encodeRoster } from "../examples/wander-online/net/protocol.ts";
 import type { PocketSocket } from "@pocketjs/framework/socket";
 import { BTN } from "@pocketjs/framework/input";
-import type { OnlinePublished } from "../examples/wander-online/OnlineView.tsx";
+import type { OnlinePublished, PageAuthEvent } from "../examples/wander-online/OnlineView.tsx";
+import { NAME_ASCII_CHARSET } from "../examples/wander-online/shared/name-charset.ts";
+import { CREATE_ERROR_TEXT_EN, CREATE_ERROR_TEXT_ZH } from "../examples/wander-online/create-text.ts";
 
 setDefaultTimeout(30_000);
 
@@ -23,6 +26,7 @@ interface World {
   frame: (b: number, a?: number) => void;
   tick: () => void;
   render: () => Uint8Array;
+  getTree: () => unknown;
   ticksPerFrame: number;
 }
 
@@ -57,8 +61,43 @@ function pump(w: World, frames: number, mask = 0): void {
 const state = (): OnlinePublished | undefined =>
   (globalThis as { __onlineState?: OnlinePublished }).__onlineState;
 
-const authCommand = (): ((command: "signout") => void) | undefined =>
-  (globalThis as { __pocketAuthCommand?: (command: "signout") => void }).__pocketAuthCommand;
+const authCommand = (): ((command: "signout" | "name", value?: string) => void) | undefined =>
+  (globalThis as { __pocketAuthCommand?: (command: "signout" | "name", value?: string) => void }).__pocketAuthCommand;
+
+/** The creation grid: 10 columns of the shared ASCII charset, then BACK,
+ *  OK and CANCEL. Cells are addressed by index; the cursor starts at 0
+ *  whenever the scene is (re-)armed. */
+const GRID_COLS = 10;
+const GRID_OK = NAME_ASCII_CHARSET.length + 1;
+let gridCursor = 0;
+function gridMoveTo(w: World, index: number): void {
+  const row = Math.floor(index / GRID_COLS);
+  const col = index % GRID_COLS;
+  const curRow = Math.floor(gridCursor / GRID_COLS);
+  const curCol = gridCursor % GRID_COLS;
+  for (let i = curRow; i < row; i++) press(w, BTN.DOWN);
+  for (let i = curRow; i > row; i--) press(w, BTN.UP);
+  for (let i = curCol; i < col; i++) press(w, BTN.RIGHT);
+  for (let i = curCol; i > col; i--) press(w, BTN.LEFT);
+  gridCursor = index;
+}
+/** Type one grid character (cursor moves to its cell, CIRCLE). */
+function gridType(w: World, ch: string): void {
+  const index = NAME_ASCII_CHARSET.indexOf(ch);
+  if (index < 0) throw new Error(`${JSON.stringify(ch)} is not a grid cell`);
+  gridMoveTo(w, index);
+  press(w, BTN.CIRCLE);
+}
+/** Confirm the buffer with the grid's OK cell. */
+function gridOk(w: World): void {
+  gridMoveTo(w, GRID_OK);
+  press(w, BTN.CIRCLE);
+}
+/** Delete the last buffer character with the grid's BACK cell. */
+function gridBack(w: World): void {
+  gridMoveTo(w, GRID_OK - 1);
+  press(w, BTN.CIRCLE);
+}
 
 const waitFor = async (w: World, pred: () => boolean, what: string, timeoutMs = 8000): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
@@ -163,10 +202,9 @@ simDescribe("wander-online auth: first login -> create -> world", () => {
     pump(w, 30);
     await waitFor(w, () => state()?.screen === "creating", "creating screen");
     expect(state()!.login).toBe("octo");
-    // Navigate the name-input grid to OK (67 chars + 3 actions, 10 cols).
-    for (let i = 0; i < 6; i++) press(w, BTN.DOWN);
-    for (let i = 0; i < 8; i++) press(w, BTN.RIGHT);
-    press(w, BTN.CIRCLE);
+    // Confirm the prefilled name with the grid's OK cell.
+    gridCursor = 0;
+    gridOk(w);
     pump(w, 30);
     await waitFor(w, () => state()?.screen === "world" && state()?.status === "joined", "world joined");
     expect(state()!.myId).toBeGreaterThan(0);
@@ -385,11 +423,10 @@ simDescribe("wander-online auth: rejected character creation", () => {
     pump(w, 30);
     await waitFor(w, () => state()?.screen === "creating", "creating screen");
 
-    // Submit the default name: navigate the grid to OK (67 chars + 3
-    // actions on a 10-col grid, so OK sits at row 6, col 8).
-    for (let i = 0; i < 6; i++) press(w, BTN.DOWN);
-    for (let i = 0; i < 8; i++) press(w, BTN.RIGHT);
-    press(w, BTN.CIRCLE);
+    // Submit the default name: navigate the grid to OK (66 chars + 3
+    // actions on a 10-col grid, so OK sits at row 6, col 7).
+    gridCursor = 0;
+    gridOk(w);
     pump(w, 30);
 
     // The server refused the name: the client stays on the creation
@@ -401,16 +438,236 @@ simDescribe("wander-online auth: rejected character creation", () => {
 
     // Fix the name: the scene was re-armed with the same buffer and the
     // cursor back at the first grid cell. Append a character, then OK.
-    press(w, BTN.CIRCLE); // append charset[0] ('A')
-    for (let i = 0; i < 6; i++) press(w, BTN.DOWN);
-    for (let i = 0; i < 8; i++) press(w, BTN.RIGHT);
-    press(w, BTN.CIRCLE);
+    gridCursor = 0;
+    gridType(w, "A");
+    gridOk(w);
     pump(w, 30);
 
     // The second CREATE is accepted: the client enters the world and the
     // error is cleared.
     await waitFor(w, () => state()?.screen === "world" && state()?.status === "joined", "world joined");
     expect(state()!.createError).toBe("");
+    w.frame(0);
+  });
+});
+
+simDescribe("wander-online auth: the creation grid and the shared name rule", () => {
+  test("the grid types the separators the server accepts (space and underscore) and a digit", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const w = await boot(
+      { kind: "github", token: "gho_test" },
+      fakeOnlineSocketFactory({ mode: "needCreate", login: "octo", ticket: "dev-ticket", name: "octo _1", sent }),
+    );
+    pump(w, 30);
+    await waitFor(w, () => state()?.screen === "creating", "creating screen");
+    gridCursor = 0;
+    gridType(w, " ");
+    gridType(w, "_");
+    gridType(w, "1");
+    gridOk(w);
+    pump(w, 30);
+    await waitFor(w, () => state()?.screen === "world" && state()?.status === "joined", "world joined");
+    const create = sent.find((msg) => msg.type === "create");
+    expect(create?.name).toBe("octo _1");
+    expect(state()!.createError).toBe("");
+    w.frame(0);
+  });
+
+  test("a blocked name is refused on the client, in both languages, before any CREATE is sent", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const w = await boot(
+      { kind: "github", token: "gho_test" },
+      fakeOnlineSocketFactory({ mode: "needCreate", login: "kys", ticket: "dev-ticket", name: "ok", sent }),
+    );
+    pump(w, 30);
+    await waitFor(w, () => state()?.screen === "creating", "creating screen");
+    // The login prefills the buffer: "kys" is on the blocklist.
+    gridCursor = 0;
+    gridOk(w);
+    pump(w, 10);
+    expect(state()!.screen).toBe("creating");
+    expect(state()!.createError).toContain(CREATE_ERROR_TEXT_EN["name-blocked"]!);
+    expect(state()!.createError).toContain(CREATE_ERROR_TEXT_ZH["name-blocked"]!);
+    expect(sent.some((msg) => msg.type === "create")).toBe(false);
+    // The scene is re-armed with the buffer kept: erase it and type a
+    // name that passes; the CREATE goes out and the world opens.
+    gridCursor = 0;
+    for (let i = 0; i < 3; i++) gridBack(w);
+    gridType(w, "o");
+    gridType(w, "k");
+    gridOk(w);
+    pump(w, 30);
+    await waitFor(w, () => state()?.screen === "world" && state()?.status === "joined", "world joined");
+    expect(sent.find((msg) => msg.type === "create")?.name).toBe("ok");
+    expect(state()!.createError).toBe("");
+    w.frame(0);
+  });
+});
+
+simDescribe("wander-online auth: the world after creation", () => {
+  /** Lit pixels in the field between the HUD plate and the bottom bars. */
+  function worldInk(fb: Uint8Array): number {
+    let n = 0;
+    for (let y = 70; y < 200; y++) {
+      for (let x = 0; x < 480; x++) {
+        const i = (y * 480 + x) * 4;
+        if (fb[i]! + fb[i + 1]! + fb[i + 2]! > 30) n++;
+      }
+    }
+    return n;
+  }
+
+  test("the realm paints after character creation exactly as it does for a returning player", async () => {
+    // Returning player: the world is drawn straight away.
+    const direct = await boot(
+      { kind: "github", token: "gho_test" },
+      fakeOnlineSocketFactory({ mode: "welcome4", name: "Direct", ticket: "t", realm: { tx: 503, ty: 154 } }),
+    );
+    await waitFor(direct, () => state()?.screen === "world" && state()?.status === "joined", "direct world");
+    pump(direct, 60);
+    const directInk = worldInk(direct.render());
+    direct.frame(0);
+    expect(directInk).toBeGreaterThan(20_000);
+
+    // First login: the creation screen comes first, then the same world.
+    // The field is an imperative node; it must survive the creation screen
+    // (mutation: mount it under the world screen's Show and this frame is
+    // black).
+    const created = await boot(
+      { kind: "github", token: "gho_test" },
+      fakeOnlineSocketFactory({ mode: "needCreate4", login: "octo", ticket: "t", name: "Created", realm: { tx: 503, ty: 154 } }),
+    );
+    pump(created, 30);
+    await waitFor(created, () => state()?.screen === "creating", "creating screen");
+    gridCursor = 0;
+    gridOk(created);
+    await waitFor(created, () => state()?.screen === "world" && state()?.status === "joined", "created world");
+    pump(created, 60);
+    const createdInk = worldInk(created.render());
+    created.frame(0);
+    expect(createdInk).toBe(directInk);
+  });
+});
+
+simDescribe("wander-online auth: the web page's name text box", () => {
+  const CJK = "\u6f14\u793a\u7f51\u9875"; // 演示网页, common simplified Chinese
+
+  test("a Chinese name typed into the page box is created and shown in the HUD", async () => {
+    const values = new Map<string, string>();
+    const events: PageAuthEvent[] = [];
+    const sent: Record<string, unknown>[] = [];
+    let latest: PocketSocket | null = null;
+    const w = await boot(
+      undefined,
+      fakeOnlineSocketFactory({ mode: "needCreate", login: "octo", ticket: "dev-ticket", name: CJK, sent, onSocket: (sock) => { latest = sock; } }),
+      480,
+      272,
+      {
+        __pocketWeb: true,
+        __pocketAuth: { token: "gho_octo" },
+        __pocketAuthEvent: (event: PageAuthEvent) => { events.push(event); },
+        __pocketWebStore: webStore(values),
+      },
+    );
+    pump(w, 30);
+    await waitFor(w, () => state()?.screen === "creating", "creating screen");
+    // Opening the creation screen opens the page's box, prefilled with the
+    // grid buffer and capped at the shared length.
+    const opened = events.find((event) => event.type === "nameInput");
+    expect(opened).toEqual({ type: "nameInput", title: "Your Name", maxLength: 12, value: "octo", error: "" });
+    expect(events.some((event) => event.type === "nameInputEnd")).toBe(false);
+
+    authCommand()!("name", ` ${CJK} `);
+    pump(w, 30);
+    await waitFor(w, () => state()?.screen === "world" && state()?.status === "joined", "world joined");
+    const create = sent.find((msg) => msg.type === "create");
+    expect(create?.name).toBe(CJK);
+    expect(create?.look).toBe(0);
+    expect(events.at(-1)?.type === "nameInputEnd" || events.at(-1)?.type === "login").toBe(true);
+    expect(events.some((event) => event.type === "nameInputEnd")).toBe(true);
+    expect(state()!.createError).toBe("");
+    // The created name is what the roster and the HUD show.
+    pump(w, 10);
+    expect(state()!.roster[state()!.myId]?.name).toBe(CJK);
+    expect(treeHasText(w.getTree(), CJK)).toBe(true);
+    // A later ROSTER announces only the newcomer; the published roster
+    // keeps every name known this epoch, our own included (the demo's
+    // name check reads it after other clients rejoin).
+    latest!.onMessage?.(new Uint8Array(encodeRoster([{ id: 9, name: "Late", look: 1 }])));
+    pump(w, 2);
+    expect(state()!.roster[state()!.myId]?.name).toBe(CJK);
+    expect(state()!.roster[9]?.name).toBe("Late");
+    // The page sees the login too, and the box is closed only once.
+    expect(events.filter((event) => event.type === "nameInputEnd")).toHaveLength(1);
+    w.frame(0);
+  });
+
+  test("a name the shared rule refuses never leaves the client: the box shows why, then a fixed name is created", async () => {
+    const values = new Map<string, string>();
+    const events: PageAuthEvent[] = [];
+    const sent: Record<string, unknown>[] = [];
+    const w = await boot(
+      undefined,
+      fakeOnlineSocketFactory({ mode: "needCreate", login: "octo", ticket: "dev-ticket", name: "Octo-2", sent }),
+      480,
+      272,
+      {
+        __pocketWeb: true,
+        __pocketAuth: { token: "gho_octo" },
+        __pocketAuthEvent: (event: PageAuthEvent) => { events.push(event); },
+        __pocketWebStore: webStore(values),
+      },
+    );
+    pump(w, 30);
+    await waitFor(w, () => state()?.screen === "creating", "creating screen");
+
+    const refused: Array<[string, string]> = [
+      ["bad!name", "name-charset"], // the old grid offered "!"; the server refuses it
+      ["\u30ab\u30a4", "name-charset"], // katakana: not in the name font
+      ["admin", "name-blocked"],
+      ["\u4e00".repeat(13), "name-too-long"],
+    ];
+    for (const [text, reason] of refused) {
+      authCommand()!("name", text);
+      pump(w, 10);
+      expect(state()!.screen, text).toBe("creating");
+      expect(state()!.createError, text).toContain(CREATE_ERROR_TEXT_EN[reason]!);
+      expect(state()!.createError, text).toContain(CREATE_ERROR_TEXT_ZH[reason]!);
+      const last = events.at(-1);
+      expect(last?.type).toBe("nameInput");
+      expect((last as { error?: string }).error).toBe(state()!.createError);
+    }
+    expect(sent.some((msg) => msg.type === "create")).toBe(false);
+
+    // A whitespace-only submit is refused as empty.
+    authCommand()!("name", "   ");
+    pump(w, 10);
+    expect(state()!.createError).toContain(CREATE_ERROR_TEXT_EN["name-empty"]!);
+    expect(sent.some((msg) => msg.type === "create")).toBe(false);
+
+    authCommand()!("name", "Octo-2");
+    pump(w, 30);
+    await waitFor(w, () => state()?.screen === "world" && state()?.status === "joined", "world joined");
+    expect(sent.find((msg) => msg.type === "create")?.name).toBe("Octo-2");
+    expect(state()!.createError).toBe("");
+    w.frame(0);
+  });
+
+  test("the page command is ignored outside the creation screen", async () => {
+    const values = new Map<string, string>();
+    const sent: Record<string, unknown>[] = [];
+    const w = await boot(
+      undefined,
+      fakeOnlineSocketFactory({ mode: "welcome", name: "Returning", ticket: "ready-ticket", sent }),
+      480,
+      272,
+      { __pocketWeb: true, __pocketAuth: { token: "gho_back" }, __pocketWebStore: webStore(values) },
+    );
+    await waitFor(w, () => state()?.status === "joined", "world joined");
+    authCommand()!("name", "Someone");
+    pump(w, 10);
+    expect(sent.some((msg) => msg.type === "create")).toBe(false);
+    expect(state()!.screen).toBe("world");
     w.frame(0);
   });
 });

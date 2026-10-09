@@ -12,6 +12,11 @@ export const WORLD_STATE_VERSION = 1;
  * growth ring without importing the full WanderSim/errand dependency graph. */
 export const REALM_DISCOVERY_HALF_W = 22;
 export const REALM_DISCOVERY_HALF_H = 14;
+/** Server-owned landmark sighting half-extents in tiles: the single-player
+ * rule (`floor(viewport / 32)`) evaluated once at the 480x272 baseline, so a
+ * larger window never sees, logs or claims a landmark earlier. */
+export const REALM_LANDMARK_HALF_W = 15;
+export const REALM_LANDMARK_HALF_H = 8;
 const REFERENCE_HZ = 60;
 
 export interface RealmRegionState {

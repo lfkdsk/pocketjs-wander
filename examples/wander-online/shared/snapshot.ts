@@ -22,6 +22,7 @@ export function entityFor(p: ArenaPlayer | RealmPlayer): WireEntity {
     px: m.px - m.tx * TILE_PX, py: m.py - m.ty * TILE_PX,
     dir: m.facing, phase: m.phase, stepDir: m.stepDir,
     moving: m.moving, walking: m.walking, color: p.color,
+    fast: "fast" in p ? p.fast : false,
   };
 }
 

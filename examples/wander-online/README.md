@@ -26,11 +26,82 @@ bun tools/web.ts wander-online
 
 The committed client URL ends in `/ws`; current clients map that stable base
 to `ws://127.0.0.1:8080/ws/v4`. A v3 client can still connect directly to
-`/ws`. Each local guest joins with a random name and colour and walks on its
-own (auto-walk) until a d-pad key takes over. The HUD shows world coordinates,
-connection status, current-room and whole-service online counts
-(`ROOM n · ALL m`) and a nearby landmark's first discoverer. RTT and
-correction count remain behind the debug toggle.
+`/ws`. Each local guest joins with a random name and colour. The HUD shows
+world coordinates, connection status, current-room and whole-service online
+counts (`ROOM n · ALL m`) and a nearby landmark's first discoverer. RTT and
+correction count remain behind the debug toggle in the SELECT menu.
+
+### Playing in the realm
+
+The single-player gameplay runs on the shared realm with the server as the
+authority; every line of text comes from the same pure content functions the
+offline game uses (`examples/wander/towns.ts`), so online and offline read
+the same words.
+
+| Input | Action |
+| --- | --- |
+| D-pad | walk (takes over from auto-walk) |
+| CIRCLE | talk to the resident in front (the server records the conversation), read the notice board in front, page/close the open dialog |
+| CROSS | near a town hub: accept the town's errand, or deliver the one it targets; elsewhere: page the travel log |
+| TRIANGLE | request fast mode; the HUD says `FAST` once a snapshot confirms it |
+| SELECT | the menu: link a device, delete the profile, TRIANGLE toggles debug, START toggles auto-walk |
+
+Residents of the nearby towns walk their routes on the realm clock (a pure
+function of the plan, the region's discovery time and the server time, so
+no resident state crosses the wire) and never block anyone. The bottom bars
+show the private travel log and the nearest rumor (`LOG n · kind    RUMOR:
+kind dir dist`) and the active errand with the lifetime helped count; they
+hide while a dialog is open. Notices announce accepted/delivered/visited
+errands and new sightings (`FOUND: kind`).
+
+Auto-walk is opt-in online: it starts only with the menu's START toggle or
+when the page sets `globalThis.__onlineAutoWalk = true` before boot
+(`web-check.ts --auto-walk` does that), and nothing resumes it after a
+d-pad press.
+
+### Names and the name font
+
+A display name is 1..12 code points from one charset, shared by the client,
+the local server and the hosted server (`shared/name-charset.ts`): ASCII
+letters and digits, space, `_`, `.`, `-`, and the 3755 level-1 characters of
+GB 2312 (the common simplified Chinese set). That charset is exactly what the
+app bakes for names: `fonts.json` lists `fonts/NotoSansCJKsc-subset.otf` for
+the 12 px slot (the HUD lines, the name tags and the `FIRST` suffix) with
+`fonts/cjk-charset.txt`, so every accepted name renders as glyphs on every
+host; other scripts, rare Han and accented Latin are refused at creation
+rather than drawn as replacement boxes. The 12 px atlas grows by about
+0.7 MB in the pak for those glyphs; no other slot carries them. Regenerate
+the subset with `bun tools/wander-online-cjk-font.ts` (the pinned Noto
+source is downloaded once); `--check` verifies the committed files, and
+`tests/wander-online-cjk-font.test.ts` ties the charset, the face, the
+manifest and the built atlas together. Name tags are 160 px wide, enough
+for twelve 12 px cells.
+
+Character creation uses that rule before anything is sent. The on-screen
+grid (d-pad, keyboard, touch) is generated from the same constant as the
+validator's ASCII part (`NAME_ASCII_CHARSET`: letters, digits, space, `_`,
+`.`, `-`), so it offers exactly the ASCII characters a name may contain and
+nothing the server would refuse; `tests/wander-online-name-input.test.ts`
+holds the two equal character by character. Chinese names are typed in the
+browser: while the creation screen is open the game asks the player page
+for its name text box (`__pocketAuthEvent({ type: "nameInput" })`, next to
+the Sign out button, so any input method works), and the page hands the
+text back through `__pocketAuthCommand("name", text)`. Either path runs the
+shared `validateName` on the client first; a refused name never leaves the
+client and the reason shows under the grid and beside the page box in
+English and Chinese. The server runs the same check again when the CREATE
+arrives. The acceptance demo creates the browser's character this way with
+a Chinese name (`web-check.ts --create-name`), and checks the HUD name line
+of the real Chrome screenshot cell by cell for drawn glyphs
+(`glyph-check.ts`).
+
+The private journey row (`net/journey.ts`) is JSON bounded by a derived
+worst case: full helped and talked lists at int32 coordinates, a saturated
+Bloom and a saturated count come to 1874 bytes under a 2048-byte cap, so
+every reachable journey fits; a row that still would not fit drops its
+oldest talked, then oldest exact helped entries (the Bloom and the count
+keep them helped) rather than failing. `mergeJourney` three-way merges one
+account's journey written by two sessions.
 
 ## How it works
 

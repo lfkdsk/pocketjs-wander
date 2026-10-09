@@ -91,7 +91,11 @@ export function CreateCharScene(props: CreateCharSceneProps) {
 
   const entryLabel = (index: number): string => {
     const state = st();
-    if (index < state.charset.length) return nameInputCharAt(state, index);
+    if (index < state.charset.length) {
+      // The space cell would be blank: label it so it reads as a key.
+      const ch = nameInputCharAt(state, index);
+      return ch === " " ? "SP" : ch;
+    }
     const key = ACTION_KEYS[index - state.charset.length];
     return key ? text()[key] ?? "" : "";
   };

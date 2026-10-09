@@ -32,10 +32,12 @@ import {
   REGION_STATE_FLAG_INITIAL,
   WORLD_PROTOCOL_VERSION,
   WORLD_STATE_VERSION,
+  decodeCommand,
   decodeInput,
   decodeInputBatch,
   encodeBye,
   encodePong,
+  encodePlayerJourney,
   encodePlayerProgress,
   encodeRegionState,
   encodeRoster,
@@ -154,14 +156,38 @@ export function startServer(opts: ServerOpts): ServerHandle {
       // Reliable WebSocket ordering makes the current region facts visible
       // before the movement snapshot that was simulated from them.
       emit(conn, encodeRegionState(realmArena.regionSnapshotFor(p, 0)));
+      flushPrivate(p, conn);
       emit(conn, snapshotForRealm(realmArena, p, opts.aoi, realmOnline, realmOnline));
     }
+  }
+
+  /** Recipient-only journey/progress snapshots, sent whenever the arena
+   *  changed them (a confirmed command, an arrival, a landmark sighting). */
+  function flushPrivate(p: RealmPlayer, conn: Conn): void {
+    if (p.progressDirty) {
+      p.progressDirty = false;
+      emit(conn, encodePlayerProgress(realmArena.progressMessage(p)));
+    }
+    if (p.journeyDirty) {
+      p.journeyDirty = false;
+      emit(conn, encodePlayerJourney(realmArena.journeyMessage(p)));
+    }
+  }
+
+  /** Shared rows a journey changed (improvements, landmark firsts) go to
+   *  everyone at once rather than waiting for the periodic snapshot. */
+  function flushChangedRows(): void {
+    const rows = realmArena.drainChangedRows();
+    if (rows.length === 0) return;
+    const message = encodeRegionState({ flags: 0, realmRevision: realmArena.realmRevision, serverTimeMs: Date.now(), rows });
+    for (const conn of realmConns.values()) emit(conn, message);
   }
 
   const tickTimer = setInterval(() => {
     arena.step();
     realmArena.step();
     stats.ticks++;
+    flushChangedRows();
     if (arena.frame % frameMod === 0) broadcast();
   }, 1000 / opts.hz);
 
@@ -202,6 +228,16 @@ export function startServer(opts: ServerOpts): ServerHandle {
         for (let i = 0; i < batch.buttons.length; i++) {
           activeArena.pushInput(p as never, batch.firstSeq + i, batch.buttons[i]!);
         }
+      }
+    } else if (kind === MSG.command) {
+      const p = conn.realm ? realmArena.players.get(conn.playerId) : undefined;
+      const cmd = decodeCommand(msg);
+      if (p && cmd) {
+        // The arena validates against its own mover and clock; a refused
+        // command is simply dropped. Confirmations ride the next flush.
+        realmArena.applyCommand(p, cmd);
+        flushChangedRows();
+        flushPrivate(p, conn);
       }
     } else if (kind === MSG.ping) {
       emit(conn, encodePong(v.getUint32(1, true), v.getUint32(5, true)));
@@ -359,9 +395,13 @@ export function startServer(opts: ServerOpts): ServerHandle {
         mover,
       }));
       emit(conn, encodeRegionState(initial));
-      // Local auth has no persisted private log yet. The empty full set still
-      // exercises the recipient-only PLAYER_PROGRESS contract.
-      emit(conn, encodePlayerProgress({ revision: 0, landmarks: [] }));
+      // Local auth has no persisted private log: the journey starts empty
+      // and lives in the arena for the connection's lifetime.
+      const rp = p as RealmPlayer;
+      rp.progressDirty = false;
+      rp.journeyDirty = false;
+      emit(conn, encodePlayerProgress(realmArena.progressMessage(rp)));
+      emit(conn, encodePlayerJourney(realmArena.journeyMessage(rp)));
     } else {
       emit(conn, encodeWelcome(p.id, arena.seed, arena.x0, arena.y0, grid));
     }

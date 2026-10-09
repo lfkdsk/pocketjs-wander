@@ -18,11 +18,29 @@
 //     --out web.png [--wide-out web-wide.png] [--watch] [--expect 3] \
 //     [--expect-all 3] [--expect-realm local] [--ticket value] \
 //     [--expect-first] [--expect-progress 1] [--expect-improvement 1] \
-//     [--timeout-ms 60000]
+//     [--auto-walk] [--create-name 演示网页 --create-look 40] \
+//     [--expect-name 演示网页] [--timeout-ms 60000]
+//
+// --auto-walk turns the client's opt-in auto-walk driver on at boot (the
+// movement assertion then needs no remote player to move).
+//
+// --create-name drives character creation the way a browser player does:
+// the ticket has no profile yet, so the game shows its creation screen and
+// the page's control bar shows the name text box (the input-method path for
+// a Chinese name). The script picks --create-look with real key events on
+// the game screen (R toggles to the look panel, arrows cycle it), inserts
+// the name into the page box through Chrome's text-input path and clicks
+// Create. --expect-name then requires the roster entry of this client to
+// carry that exact name, and the 480x272 screenshot's HUD name line is
+// checked cell by cell for real glyphs (no replacement boxes).
 //
 // Exit 0 on success, 1 on any failed assertion or timeout. The DevTools
 // endpoint is chrome's own loopback listener; this script never opens a
 // non-loopback socket.
+
+import { decodePng } from "../../vendor/pocket-rpgkit/vendor/pocketjs/framework/compiler/pak.ts";
+import { statusPlate } from "./hud.ts";
+import { glyphCellVerdict, NAME_FONT_PX } from "./glyph-check.ts";
 
 interface RemotePos {
   id: number;
@@ -32,6 +50,7 @@ interface RemotePos {
 
 interface PublishedState {
   status: string;
+  screen: string;
   myId: number;
   online: number;
   allOnline: number;
@@ -48,6 +67,15 @@ interface PublishedState {
   y: number;
   moving: boolean;
   auto: boolean;
+  autoWalk: boolean;
+  fast: boolean;
+  helpedCount: number;
+  errand: string;
+  logCount: number;
+  dialog: boolean;
+  createError: string;
+  look: number;
+  roster: Record<string, { name: string; look: number }>;
   remote: RemotePos[];
 }
 
@@ -67,6 +95,14 @@ export interface WebCheckFlags {
   expectImprovement: number;
   /** Auth ticket injected into the page, never included in WEBCHECK output. */
   ticket: string | null;
+  /** Boot the page with the auto-walk driver on (`__onlineAutoWalk`). */
+  autoWalk: boolean;
+  /** Create the character through the page's name box with this name. */
+  createName: string | null;
+  /** The look to pick with key events before creating (0..63). */
+  createLook: number;
+  /** The roster name this client must carry once joined. */
+  expectName: string | null;
 }
 
 export function parseFlags(args: readonly string[]): WebCheckFlags {
@@ -89,6 +125,10 @@ export function parseFlags(args: readonly string[]): WebCheckFlags {
     expectProgress: Number(get("expect-progress", "0")),
     expectImprovement: Number(get("expect-improvement", "0")),
     ticket: get("ticket", "") || null,
+    autoWalk: args.includes("--auto-walk"),
+    createName: get("create-name", "") || null,
+    createLook: Number(get("create-look", "0")),
+    expectName: get("expect-name", "") || null,
   };
 }
 
@@ -251,6 +291,7 @@ const joinedExpected = (s: PublishedState | null): boolean =>
   s !== null &&
   s.status === "joined" &&
   s.myId > 0 &&
+  (!flags.expectName || s.roster[String(s.myId)]?.name === flags.expectName) &&
   s.online === flags.expect &&
   s.allOnline === flags.expectAll &&
   (!flags.expectRealm || (s.realmId === flags.expectRealm && s.generatorVersion === 1)) &&
@@ -262,15 +303,33 @@ const joinedExpected = (s: PublishedState | null): boolean =>
 const posKey = (s: PublishedState): string =>
   `${s.x},${s.y}|` + s.remote.map((r) => `${r.id}:${r.x},${r.y}`).join(";");
 
+/** Page errors seen so far (filled by main's listeners) and the page
+ *  player's own liveness, for timeout diagnostics: a stopped page loop
+ *  keeps reporting its last state forever. */
+const browserErrors: string[] = [];
+async function liveness(cdp: Cdp): Promise<string> {
+  const read = () => evaluate(cdp, `JSON.stringify({ state: globalThis.__pocketPlayer?.state ?? null, frames: globalThis.__pocketPlayer?.frames ?? -1, hidden: document.hidden, focused: document.hasFocus(), active: document.activeElement?.id ?? "" })`);
+  const a = String(await read());
+  await sleep(1000);
+  const b = String(await read());
+  return `player before ${a}, 1 s later ${b}, errors ${JSON.stringify(browserErrors)}`;
+}
+
 /** Poll until `pred` holds, sampling every 300 ms. */
 async function waitFor(cdp: Cdp, pred: (s: PublishedState | null) => boolean, what: string): Promise<PublishedState> {
   let last: PublishedState | null = null;
+  let lastTrace = 0;
   while (timeLeft() > 0) {
     last = await readState(cdp);
     if (last && pred(last)) return last;
+    if (process.env.WEBCHECK_TRACE && Date.now() - lastTrace > 2000 && last) {
+      lastTrace = Date.now();
+      console.log(`WEBCHECK_TRACE ${JSON.stringify({ t: Date.now(), status: last.status, epoch: last.epoch, myId: last.myId, online: last.online, allOnline: last.allOnline, remotes: last.remote.length, roster: Object.keys(last.roster), unacked: last.unacked, rtt: last.rtt, x: last.x, y: last.y })}`);
+    }
     await sleep(300);
   }
-  fail(`timed out waiting for ${what}; last state: ${JSON.stringify(last)}`);
+  const live = await liveness(cdp).catch((err) => `liveness unavailable: ${String(err)}`);
+  fail(`timed out waiting for ${what}; last state: ${JSON.stringify(last)}; ${live}`);
 }
 
 /** Poll until some position (local or either remote) changed since `first`. */
@@ -284,6 +343,76 @@ async function waitForMovement(cdp: Cdp, first: PublishedState): Promise<void> {
   fail("timed out waiting for anyone to move");
 }
 
+/** One real key press on the game screen (the page maps `code` to a pad
+ *  button); held for a few frames so the game sees a clean edge. */
+async function pressKey(cdp: Cdp, code: string, key: string, vk: number): Promise<void> {
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", code, key, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
+  await sleep(70);
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", code, key, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
+  await sleep(70);
+}
+
+async function evaluate(cdp: Cdp, expression: string): Promise<unknown> {
+  const res = (await cdp.send("Runtime.evaluate", { expression, returnByValue: true })) as { result?: { value?: unknown } };
+  return res.result?.value;
+}
+
+/** Character creation as a browser player does it: pick the look with key
+ *  events on the game screen, type the name into the page's text box and
+ *  press Create. Returns once the game has left the creation screen. */
+async function createCharacter(cdp: Cdp, name: string, look: number): Promise<void> {
+  await waitFor(cdp, (s) => s !== null && s.screen === "creating", "the creation screen");
+  const boxShown = await evaluate(cdp, `(() => { const b = document.getElementById("auth-name-box"); return !!b && !b.hidden; })()`);
+  if (boxShown !== true) fail("the page did not show its name text box on the creation screen");
+  // The page focused its box when it opened; the look is chosen on the game
+  // screen, so give the keys to the screen first.
+  await evaluate(cdp, `document.getElementById("stage").focus()`);
+  await pressKey(cdp, "KeyE", "e", 69); // RTRIGGER: focus the look panel
+  const base = Math.floor(look / 4);
+  const palette = look % 4;
+  for (let i = 0; i < base; i++) await pressKey(cdp, "ArrowRight", "ArrowRight", 39);
+  for (let i = 0; i < palette; i++) await pressKey(cdp, "ArrowUp", "ArrowUp", 38);
+  await waitFor(cdp, (s) => s !== null && s.screen === "creating" && s.look === look, `look ${look} selected with key events`);
+  // Now the page's box: Chrome's own text insertion (what an IME commits).
+  await evaluate(cdp, `(() => { const i = document.getElementById("auth-name"); i.focus(); i.value = ""; })()`);
+  await cdp.send("Input.insertText", { text: name });
+  const typed = await evaluate(cdp, `document.getElementById("auth-name").value`);
+  if (typed !== name) fail(`the page box holds ${JSON.stringify(typed)}, expected ${JSON.stringify(name)}`);
+  await evaluate(cdp, `document.getElementById("auth-name-submit").click()`);
+  const left = await waitFor(cdp, (s) => s !== null && (s.screen !== "creating" || s.createError.length > 0), "the create reply");
+  if (left.screen === "creating") fail(`creation refused: ${left.createError}`);
+  const boxHidden = await evaluate(cdp, `document.getElementById("auth-name-box").hidden`);
+  if (boxHidden !== true) fail("the page kept its name box open after creation");
+  // Back to the game, as a player clicking it would: the page's keyboard
+  // hint overlay only hides while the game screen has focus.
+  await evaluate(cdp, `document.getElementById("stage").focus()`);
+}
+
+/** The game canvas's place in a capture: device-pixel origin and device
+ *  pixels per logical pixel (the page scales the canvas to fit). */
+async function canvasPlacement(cdp: Cdp, logicalWidth: number): Promise<{ x: number; y: number; scale: number }> {
+  const raw = await evaluate(cdp, `(() => { const r = document.getElementById("screen").getBoundingClientRect(); return JSON.stringify({ x: r.x, y: r.y, w: r.width, dpr: devicePixelRatio }); })()`);
+  const rect = JSON.parse(String(raw)) as { x: number; y: number; w: number; dpr: number };
+  return { x: rect.x * rect.dpr, y: rect.y * rect.dpr, scale: (rect.w * rect.dpr) / logicalWidth };
+}
+
+/** The 480x272 screenshot's HUD name line, cell by cell: every code point
+ *  of the created name must be drawn as a real glyph (ink inside the cell,
+ *  not the hollow replacement box a missing glyph leaves and not blank).
+ *  The screenshot is 3x; the plate geometry comes from hud.ts. */
+async function checkNameLine(path: string, name: string, state: PublishedState, canvas: { x: number; y: number; scale: number }): Promise<void> {
+  const image = decodePng(new Uint8Array(await Bun.file(path).arrayBuffer()));
+  const plate = statusPlate(480, 272, false);
+  const cells = Array.from(name);
+  const verdicts = cells.map((ch, i) => ({
+    ch,
+    ...glyphCellVerdict(image.rgba, image.width, canvas.x + (12 + i * NAME_FONT_PX) * canvas.scale, canvas.y + (plate.y0 + 15) * canvas.scale, canvas.scale),
+  }));
+  const bad = verdicts.filter((v) => v.verdict !== "glyph");
+  console.log(`WEBCHECK_NAME ${JSON.stringify({ name, myId: state.myId, canvas, cells: verdicts.map((v) => `${v.ch}:${v.verdict}:${v.total}/${v.ring}`) })}`);
+  if (bad.length > 0) fail(`HUD name line cells are not glyphs: ${bad.map((v) => `${v.ch}=${v.verdict}`).join(", ")}`);
+}
+
 async function screenshot(cdp: Cdp, path: string): Promise<void> {
   const res = (await cdp.send("Page.captureScreenshot", { format: "png" })) as { data?: string };
   if (!res.data) fail("screenshot returned no data");
@@ -292,7 +421,6 @@ async function screenshot(cdp: Cdp, path: string): Promise<void> {
 
 async function main(): Promise<void> {
   const cdp = await attach();
-  const browserErrors: string[] = [];
   const collectBrowserError = (method: string) => (params: unknown) => {
     const error = browserErrorFromEvent(method, params);
     if (error) browserErrors.push(error);
@@ -309,7 +437,7 @@ async function main(): Promise<void> {
     ? { kind: "ticket", ticket: flags.ticket }
     : { kind: "guest", name: "web-demo", color: 1 };
   await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
-    source: `globalThis.__onlineAuth=${JSON.stringify(auth)};`,
+    source: `globalThis.__onlineAuth=${JSON.stringify(auth)};${flags.autoWalk ? "globalThis.__onlineAutoWalk=true;" : ""}`,
   });
   // 480x272 at 3x density, matching the desktop demo captures.
   await cdp.send("Emulation.setDeviceMetricsOverride", {
@@ -319,6 +447,8 @@ async function main(): Promise<void> {
     mobile: false,
   });
   await cdp.send("Page.navigate", { url: flags.page });
+
+  if (flags.createName) await createCharacter(cdp, flags.createName, flags.createLook);
 
   // 1. join + 2. see the other clients + 3. movement.
   const joined = await waitFor(
@@ -351,6 +481,7 @@ async function main(): Promise<void> {
     restart = { dropped: dropped.status, rejoined };
   }
 
+  const canvas = await canvasPlacement(cdp, 480);
   await screenshot(cdp, flags.out);
   if (flags.wideOut) {
     await cdp.send("Emulation.setDeviceMetricsOverride", {
@@ -364,6 +495,7 @@ async function main(): Promise<void> {
   }
   const final = (await readState(cdp))!;
   if (browserErrors.length > 0) fail(`browser emitted ${browserErrors.join(" | ")}`);
+  if (flags.expectName) await checkNameLine(flags.out, flags.expectName, final, canvas);
   console.log(
     `WEBCHECK ${JSON.stringify({
       myId: final.myId,
@@ -380,6 +512,9 @@ async function main(): Promise<void> {
       epoch: final.epoch,
       x: final.x,
       y: final.y,
+      name: final.roster[String(final.myId)]?.name ?? "",
+      look: final.roster[String(final.myId)]?.look ?? -1,
+      created: flags.createName !== null,
       consoleErrors: browserErrors.length,
       restarted: restart
         ? { droppedStatus: restart.dropped, myId: restart.rejoined.myId, oldEpoch: joined.epoch, newEpoch: restart.rejoined.epoch }

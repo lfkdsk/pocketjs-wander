@@ -1,0 +1,13 @@
+{
+  "fallback": [
+    {
+      "path": "fonts/NotoSansCJKsc-subset.otf",
+      "sizes": [
+        12
+      ]
+    }
+  ],
+  "characterFiles": [
+    "fonts/cjk-charset.txt"
+  ]
+}

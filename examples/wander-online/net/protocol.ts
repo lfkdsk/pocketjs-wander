@@ -71,12 +71,14 @@ export const MSG = {
   input: 0x01,
   ping: 0x02,
   inputBatch: 0x03,
+  command: 0x04,
   welcome: 0x10,
   welcome4: 0x11,
   state: 0x20,
   state4: 0x21,
   regionState: 0x22,
   playerProgress: 0x23,
+  playerJourney: 0x24,
   pong: 0x30,
   bye: 0x40,
   roster: 0x50,
@@ -92,8 +94,22 @@ export const WORLD_PROTOCOL_VERSION = 4;
  *  server's per-connection message rate limit. */
 export const BATCH_SIZE = 3;
 
-/** D-pad bits, same values the kit's engine uses. */
-export const BTN = { up: 0x0010, right: 0x0020, down: 0x0040, left: 0x0080 } as const;
+/** D-pad bits, same values the kit's engine uses, plus the realm's fast
+ *  bit: the single-player TRIANGLE speed (8 px per reference tick instead of
+ *  2) travels inside the lockstep input stream so client prediction and the
+ *  authoritative mover apply it on the same tick. */
+export const BTN = { up: 0x0010, right: 0x0020, down: 0x0040, left: 0x0080, fast: 0x0100 } as const;
+/** Every input bit the realm honours; anything else is ignored identically
+ *  on both sides, so a forged bit can never desynchronise a mover. */
+export const INPUT_BUTTON_MASK = BTN.up | BTN.right | BTN.down | BTN.left | BTN.fast;
+/** Walking and fast movement speeds in px per reference tick (the
+ *  single-player WALK_SPEED / FAST_SPEED). The server never takes a speed
+ *  from the wire: only this bounded choice exists. */
+export const WALK_SPEED = 2;
+export const FAST_SPEED = 8;
+export function speedFor(buttons: number): number {
+  return (buttons & BTN.fast) !== 0 ? FAST_SPEED : WALK_SPEED;
+}
 
 /** Tile classes for the client's palette. */
 export const TILE = {
@@ -124,6 +140,15 @@ export const REGION_STATE_FLAG_INITIAL = 1;
 export const PLAYER_PROGRESS_HEADER_BYTES = 7;
 export const PLAYER_PROGRESS_ROW_BYTES = 8;
 export const PLAYER_PROGRESS_MAX = 1024;
+export const COMMAND_BYTES = 11;
+/** Client -> server realm commands; the server validates every one against
+ *  its authoritative mover and clock. */
+export const COMMAND = { acceptErrand: 1, deliverErrand: 2, talk: 3 } as const;
+export const PLAYER_JOURNEY_FIXED_BYTES = 159;
+export const PLAYER_JOURNEY_PAIR_BYTES = 8;
+export const PLAYER_JOURNEY_HELPED_MAX = 32;
+export const PLAYER_JOURNEY_TALKED_MAX = 24;
+export const PLAYER_JOURNEY_BLOOM_WORDS = 32;
 
 export interface Welcome4 {
   you: number;
@@ -148,6 +173,31 @@ export interface PlayerProgressLandmark {
 export interface PlayerProgressMessage {
   revision: number;
   landmarks: PlayerProgressLandmark[];
+}
+
+export interface CommandMessage {
+  kind: number;
+  rx: number;
+  ry: number;
+  /** Resident index for `talk`; zero otherwise. */
+  extra: number;
+}
+
+/** Private-to-recipient journey snapshot: the active errand (by its
+ *  offering region; the offer is pure), helped/talked towns, the helped
+ *  Bloom memory, the authoritative fast flag and the latest confirmed event. */
+export interface PlayerJourneyMessage {
+  revision: number;
+  eventSeq: number;
+  eventKind: number;
+  eventRx: number;
+  eventRy: number;
+  fast: boolean;
+  errand: PlayerProgressLandmark | null;
+  helpedCount: number;
+  bloom: readonly number[];
+  helped: readonly PlayerProgressLandmark[];
+  talked: readonly PlayerProgressLandmark[];
 }
 
 function uint32(value: number, label: string): number {
@@ -292,6 +342,122 @@ export function decodePlayerProgress(buf: ArrayBuffer | Uint8Array): PlayerProgr
   return { revision: v.getUint32(1, true), landmarks };
 }
 
+export function encodeCommand(message: CommandMessage): ArrayBuffer {
+  if (!Number.isInteger(message.kind) || message.kind < 1 || message.kind > 255) throw new RangeError(`invalid command kind ${message.kind}`);
+  if (!Number.isInteger(message.extra) || message.extra < 0 || message.extra > 255) throw new RangeError(`invalid command extra ${message.extra}`);
+  const out = new ArrayBuffer(COMMAND_BYTES);
+  const v = new DataView(out);
+  v.setUint8(0, MSG.command);
+  v.setUint8(1, message.kind);
+  v.setInt32(2, int32(message.rx, "command rx"), true);
+  v.setInt32(6, int32(message.ry, "command ry"), true);
+  v.setUint8(10, message.extra);
+  return out;
+}
+
+/** Strict-exact COMMAND decoder (server direction). */
+export function decodeCommand(buf: ArrayBuffer | Uint8Array): CommandMessage | null {
+  if (buf.byteLength !== COMMAND_BYTES) return null;
+  const v = viewOf(buf);
+  if (v.getUint8(0) !== MSG.command) return null;
+  const kind = v.getUint8(1);
+  if (kind === 0) return null;
+  return { kind, rx: v.getInt32(2, true), ry: v.getInt32(6, true), extra: v.getUint8(10) };
+}
+
+function writePairs(v: DataView, o: number, rows: readonly PlayerProgressLandmark[], label: string): number {
+  const seen = new Set<string>();
+  for (const row of rows) {
+    int32(row.rx, `${label} rx`);
+    int32(row.ry, `${label} ry`);
+    const key = `${row.rx},${row.ry}`;
+    if (seen.has(key)) throw new RangeError(`duplicate ${label} row ${key}`);
+    seen.add(key);
+    v.setInt32(o, row.rx, true);
+    v.setInt32(o + 4, row.ry, true);
+    o += PLAYER_JOURNEY_PAIR_BYTES;
+  }
+  return o;
+}
+
+function readPairs(v: DataView, o: number, count: number): PlayerProgressLandmark[] | null {
+  const out: PlayerProgressLandmark[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < count; i++) {
+    const rx = v.getInt32(o, true), ry = v.getInt32(o + 4, true);
+    const key = `${rx},${ry}`;
+    if (seen.has(key)) return null;
+    seen.add(key);
+    out.push({ rx, ry });
+    o += PLAYER_JOURNEY_PAIR_BYTES;
+  }
+  return out;
+}
+
+export function encodePlayerJourney(message: PlayerJourneyMessage): ArrayBuffer {
+  uint32(message.revision, "journey revision");
+  uint32(message.eventSeq, "journey event seq");
+  if (!Number.isInteger(message.eventKind) || message.eventKind < 0 || message.eventKind > 255) throw new RangeError("invalid journey event kind");
+  if (message.helped.length > PLAYER_JOURNEY_HELPED_MAX) throw new RangeError("PLAYER_JOURNEY exceeds helped cap");
+  if (message.talked.length > PLAYER_JOURNEY_TALKED_MAX) throw new RangeError("PLAYER_JOURNEY exceeds talked cap");
+  if (message.bloom.length !== PLAYER_JOURNEY_BLOOM_WORDS) throw new RangeError("PLAYER_JOURNEY bloom must have 32 words");
+  if (!Number.isInteger(message.helpedCount) || message.helpedCount < 0 || message.helpedCount > 0xffff) throw new RangeError("invalid journey helped count");
+  const out = new ArrayBuffer(PLAYER_JOURNEY_FIXED_BYTES + (message.helped.length + message.talked.length) * PLAYER_JOURNEY_PAIR_BYTES);
+  const v = new DataView(out);
+  v.setUint8(0, MSG.playerJourney);
+  v.setUint32(1, message.revision >>> 0, true);
+  v.setUint32(5, message.eventSeq >>> 0, true);
+  v.setUint8(9, message.eventKind);
+  v.setInt32(10, int32(message.eventRx, "journey event rx"), true);
+  v.setInt32(14, int32(message.eventRy, "journey event ry"), true);
+  v.setUint8(18, (message.errand ? 1 : 0) | (message.fast ? 2 : 0));
+  v.setInt32(19, message.errand ? int32(message.errand.rx, "journey errand rx") : 0, true);
+  v.setInt32(23, message.errand ? int32(message.errand.ry, "journey errand ry") : 0, true);
+  v.setUint16(27, message.helpedCount, true);
+  let o = 29;
+  for (let i = 0; i < PLAYER_JOURNEY_BLOOM_WORDS; i++) {
+    v.setUint32(o, uint32(message.bloom[i]!, "journey bloom word"), true);
+    o += 4;
+  }
+  v.setUint8(o, message.helped.length);
+  v.setUint8(o + 1, message.talked.length);
+  o += 2;
+  o = writePairs(v, o, message.helped, "journey helped");
+  writePairs(v, o, message.talked, "journey talked");
+  return out;
+}
+
+/** Strict-exact PLAYER_JOURNEY decoder. */
+export function decodePlayerJourney(buf: ArrayBuffer | Uint8Array): PlayerJourneyMessage | null {
+  if (buf.byteLength < PLAYER_JOURNEY_FIXED_BYTES) return null;
+  const v = viewOf(buf);
+  if (v.getUint8(0) !== MSG.playerJourney) return null;
+  const flags = v.getUint8(18);
+  if ((flags & ~3) !== 0) return null;
+  const helpedCount = v.getUint8(157), talkedCount = v.getUint8(158);
+  if (helpedCount > PLAYER_JOURNEY_HELPED_MAX || talkedCount > PLAYER_JOURNEY_TALKED_MAX) return null;
+  if (buf.byteLength !== PLAYER_JOURNEY_FIXED_BYTES + (helpedCount + talkedCount) * PLAYER_JOURNEY_PAIR_BYTES) return null;
+  const bloom: number[] = [];
+  for (let i = 0; i < PLAYER_JOURNEY_BLOOM_WORDS; i++) bloom.push(v.getUint32(29 + i * 4, true));
+  const helped = readPairs(v, PLAYER_JOURNEY_FIXED_BYTES, helpedCount);
+  if (!helped) return null;
+  const talked = readPairs(v, PLAYER_JOURNEY_FIXED_BYTES + helpedCount * PLAYER_JOURNEY_PAIR_BYTES, talkedCount);
+  if (!talked) return null;
+  return {
+    revision: v.getUint32(1, true),
+    eventSeq: v.getUint32(5, true),
+    eventKind: v.getUint8(9),
+    eventRx: v.getInt32(10, true),
+    eventRy: v.getInt32(14, true),
+    fast: (flags & 2) !== 0,
+    errand: (flags & 1) !== 0 ? { rx: v.getInt32(19, true), ry: v.getInt32(23, true) } : null,
+    helpedCount: v.getUint16(27, true),
+    bloom,
+    helped,
+    talked,
+  };
+}
+
 export function encodeInput(seq: number, buttons: number): ArrayBuffer {
   const b = new ArrayBuffer(7);
   const v = new DataView(b);
@@ -380,6 +546,8 @@ export interface WireEntity {
   stepDir: number;
   moving: boolean;
   walking: boolean;
+  /** Authoritative fast mode (v4 only; the legacy STATE never carries it). */
+  fast?: boolean;
   color: number;
 }
 
@@ -456,7 +624,7 @@ export function encodeState4(
     v.setUint8(o + 14, e.dir & 0x03);
     v.setUint8(o + 15, e.phase & 0x0f);
     v.setUint8(o + 16, e.stepDir & 0x03);
-    v.setUint8(o + 17, (e.moving ? 1 : 0) | (e.walking ? 2 : 0) | ((e.color & 0x0f) << 2));
+    v.setUint8(o + 17, (e.moving ? 1 : 0) | (e.walking ? 2 : 0) | ((e.color & 0x0f) << 2) | (e.fast ? 0x40 : 0));
     o += ENTITY4_BYTES;
   }
   if (population) {
@@ -661,6 +829,7 @@ export function decodeState4(buf: ArrayBuffer | Uint8Array): DecodedState4 | nul
       stepDir: v.getUint8(o + 16),
       moving: (flags & 1) === 1,
       walking: (flags & 2) === 2,
+      fast: (flags & 0x40) === 0x40,
       color: (flags >> 2) & 0x0f,
     });
     o += ENTITY4_BYTES;

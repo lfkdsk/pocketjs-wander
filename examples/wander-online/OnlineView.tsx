@@ -6,14 +6,20 @@
 //   creating   first sign-in: pick a name (the built-in name-input rules)
 //              default = GitHub login) and a look from the 64-entry W-CHAR
 //              pool, with a large animated preview.
-//   world      the shared frozen wander window, drawn with the single-
-//              player render ring (real terrain, roads, stamps): the local
-//              player is predicted and centred under the camera, remote
-//              players walk and show name labels, with a SELECT menu for
-//              linking a device, deleting the profile, and signing out.
+//   world      the shared realm, drawn with the single-player render ring
+//              (real terrain, roads, stamps): the local player is predicted
+//              and centred under the camera, remote players walk and show
+//              name labels, town residents walk their routes on the realm
+//              clock, and the single-player gameplay (talk, notice boards,
+//              plaza errands, the travel log and rumors) runs with the
+//              server as the authority. A SELECT menu links a device,
+//              deletes the profile, and toggles debug and auto-walk.
 //
 // The net client (net/client.ts) owns the socket, prediction and
 // interpolation; this view presents it and drives the auth handshake.
+// Every dialog, board, errand and notice string comes from the same pure
+// content functions single-player uses (../wander/towns.ts), so the words a
+// player reads online are the words the offline game would show.
 
 import { batch, createSignal, Show } from "solid-js";
 import { Text, View, type NodeMirror } from "@pocketjs/framework/components";
@@ -37,26 +43,39 @@ import {
 } from "../wander/looks.ts";
 import { walkPose } from "../../vendor/pocket-rpgkit/src/engine/movement.ts";
 import { TileTextureCache } from "../../vendor/pocket-rpgkit/src/ui/tile-texture-cache.ts";
-import { nameInputRules, type NameInputState } from "../../vendor/pocket-rpgkit/src/engine/name-input.ts";
+import { regionName, type RegionPlan } from "../wander/region.ts";
+import { regionHub, regionOf } from "../wander/world.ts";
+import { nearestLandmark } from "../wander/landmarks.ts";
+import { purePlacedLandmark, townErrand, townFacts, townPlaque, townTalk, type TownLookups } from "../wander/towns.ts";
+import { NAME_INPUT_ACTION_OK, nameInputRules, type NameInputState } from "../../vendor/pocket-rpgkit/src/engine/name-input.ts";
 import { CreateCharScene, type CreateFocus } from "./CreateCharScene.tsx";
 import {
+  DIALOG_ROWS,
+  DIALOG_ROW_H,
+  dialogRect,
+  errandBarRect,
   gateRect,
   helpRect,
   linkGateRect,
   linkHintRect,
   linkPadCell,
+  logBarRect,
   menuRect,
   noticeRect,
   statusPlate,
-  type HudRect,
-} from "./hud.ts";
+  type HudRect, NAME_LABEL_W } from "./hud.ts";
 import { createLayout, createNameGrid } from "./hud.ts";
 import type { ArenaWorld } from "./net/world.ts";
-import { RealmWorld } from "./net/realm-world.ts";
+import { RealmWorld, realmRegionKey } from "./net/realm-world.ts";
+import { RealmPredictor } from "./net/realm-predict.ts";
 import { OnlineClient, type AuthCredential, type SocketFactory } from "./net/client.ts";
-import type { RosterEntry } from "./net/protocol.ts";
+import { COMMAND, type RosterEntry } from "./net/protocol.ts";
+import { JOURNEY_EVENT, PLAZA_RADIUS, errandHudText, journeyEventText, journeyIsHelped, resolveErrand } from "./net/journey.ts";
+import { frontTile, plaqueOf, talkTarget, ticksSinceDiscovery, townResidentsAt, type NpcPose } from "./net/npc.ts";
 import { loadTicket, saveTicket, clearTicket } from "./auth-store.ts";
-import { AUTH_PROTOCOL_VERSION } from "./shared/auth.ts";
+import { AUTH_PROTOCOL_VERSION, NAME_MAX, validateName } from "./shared/auth.ts";
+import { nameGridCharset } from "./shared/name-charset.ts";
+import { describeCreateError } from "./create-text.ts";
 import { LINK_PAD_KEYS, stepLinkCode, type LinkCodeState } from "./link-code.ts";
 
 type OnlineClientOptsSocketFactory = SocketFactory | undefined;
@@ -64,10 +83,29 @@ type OnlineClientOptsSocketFactory = SocketFactory | undefined;
 const PSP_W = 480;
 const PSP_H = 272;
 const WORLD_PX = WINDOW * TILE;
-const IDLE_RESUME_SECONDS = 10;
 const HUD_EVERY = 6;
 const AUTO_DIRS = [BTN.UP, BTN.RIGHT, BTN.DOWN, BTN.LEFT] as const;
+const DPAD = BTN.UP | BTN.RIGHT | BTN.DOWN | BTN.LEFT;
 const NO_FRESH_CHUNKS: readonly never[] = [];
+/** Expanded dialog lines kept per (region, resident, helped), like the
+ *  single-player sim's talk-line memo. */
+const TALK_CACHE_CAP = 256;
+/** Notice durations, the single-player view's frame counts in ms. */
+const NOTICE_EVENT_MS = 4000;
+const NOTICE_LOG_MS = 4000;
+const NOTICE_EMPTY_MS = 2000;
+/** Rumor scan radius in regions (the single-player HUD's). */
+const RUMOR_RADIUS = 4;
+
+/** What the game reports to the web page's control bar (the page's
+ *  player.js installs `__pocketAuthEvent`). `nameInput` opens the page's
+ *  text box, which can take an input method for a Chinese name; the page
+ *  answers through `__pocketAuthCommand("name", text)`. */
+export type PageAuthEvent =
+  | { type: "login"; login: string }
+  | { type: "logout" }
+  | { type: "nameInput"; title: string; maxLength: number; value: string; error: string }
+  | { type: "nameInputEnd" };
 
 declare global {
   // eslint-disable-next-line no-var
@@ -108,6 +146,10 @@ declare global {
    *  nodes yet, so a later mount can prove nameplates are a separate layer. */
   // eslint-disable-next-line no-var
   var __onlineDeferVillagers: boolean | undefined;
+  /** Demo/test hook: start with the auto-walk driver on (it is opt-in
+   *  online; the menu's START toggles it at runtime). */
+  // eslint-disable-next-line no-var
+  var __onlineAutoWalk: boolean | undefined;
   /** Set by the web player page after the GitHub OAuth redirect: the
    *  one-time GitHub token. The game swaps it for a ticket and the page
    *  never persists it. */
@@ -116,12 +158,14 @@ declare global {
   /** Explicitly installed by the browser player before loading assets. */
   // eslint-disable-next-line no-var
   var __pocketWeb: boolean | undefined;
-  /** The game installs this so the page can show "Signed in as X". */
+  /** The game installs this so the page can show "Signed in as X" and,
+   *  while the creation screen is open, a text box for the name. */
   // eslint-disable-next-line no-var
-  var __pocketAuthEvent: ((ev: { type: "login"; login: string } | { type: "logout" }) => void) | undefined;
-  /** The page calls this to sign out. */
+  var __pocketAuthEvent: ((ev: PageAuthEvent) => void) | undefined;
+  /** The page calls this to sign out ("signout") or to submit the name
+   *  typed into its text box ("name", text). */
   // eslint-disable-next-line no-var
-  var __pocketAuthCommand: ((cmd: "signout") => void) | undefined;
+  var __pocketAuthCommand: ((cmd: "signout" | "name", value?: string) => void) | undefined;
 }
 
 export interface OnlinePublished {
@@ -149,6 +193,17 @@ export interface OnlinePublished {
   y: number;
   moving: boolean;
   auto: boolean;
+  /** Same as `auto`: the auto-walk driver is on (opt-in online). */
+  autoWalk: boolean;
+  /** Server-confirmed fast mode. */
+  fast: boolean;
+  helpedCount: number;
+  /** The ERRAND bar's line. */
+  errand: string;
+  /** Private landmark sightings (the travel log's length). */
+  logCount: number;
+  /** A talk / notice-board dialog is open (movement blocked). */
+  dialog: boolean;
   login: string;
   /** The rejection text from the last createError, "" when creation is not
    *  in a rejected state. */
@@ -163,20 +218,6 @@ export interface OnlinePublished {
 }
 
 const DEFAULT_URL = "ws://127.0.0.1:8080/ws";
-
-/** Short user-facing text per server createError reason (the NameError
- *  codes in shared/auth.ts). Kept terse so it fits the creation screen's
- *  footer. */
-const CREATE_ERROR_TEXT: Record<string, string> = {
-  "name-empty": "Name is empty.",
-  "name-too-long": "Name is too long.",
-  "name-charset": "Name has invalid characters.",
-  "name-blocked": "Name is not allowed.",
-};
-
-function describeCreateError(reason: unknown): string {
-  return CREATE_ERROR_TEXT[String(reason ?? "")] ?? "Name was rejected.";
-}
 
 function resolveUrl(injected: string | undefined): string {
   if (injected) return injected;
@@ -223,6 +264,12 @@ class AutoWalk {
 
 type Screen = "gate" | "creating" | "world";
 
+/** A private progress key ("rx,ry") -> region pair. */
+function parseKey(key: string): [number, number] {
+  const comma = key.indexOf(",");
+  return [Number(key.slice(0, comma)), Number(key.slice(comma + 1))];
+}
+
 /** Absolute rect in screen px -> a style with screen-px insets. */
 function rect(style: HudRect): Record<string, number> {
   return { posType: 1, insetL: style.x0, insetT: style.y0, width: style.x1 - style.x0, height: style.y1 - style.y0 };
@@ -252,6 +299,7 @@ export function OnlineView() {
     __onlineUrl?: string;
     __onlineSocketFactory?: OnlineClientOptsSocketFactory;
     __onlineAuth?: AuthCredential;
+    __onlineAutoWalk?: boolean;
     __pocketAuth?: { token?: string };
     __pocketWeb?: boolean;
   };
@@ -291,6 +339,15 @@ export function OnlineView() {
   const [createError, setCreateError] = createSignal("");
   const [debugOn, setDebugOn] = createSignal(false);
   const [focusSig, setFocusSig] = createSignal<CreateFocus>("name");
+  /** The bottom LOG / ERRAND bars (realm only; the legacy window has no
+   *  journey). */
+  const [realmOn, setRealmOn] = createSignal(false);
+  const [logText, setLogText] = createSignal("");
+  const [errandText, setErrandText] = createSignal("");
+  /** The open talk / notice-board dialog: its visible rows (at most
+   *  DIALOG_ROWS) or none. */
+  const [dialogRows, setDialogRows] = createSignal<readonly string[]>([]);
+  const [dialogOpen, setDialogOpen] = createSignal(false);
 
   let client: OnlineClient | null = null;
   let noticeUntil = 0;
@@ -327,6 +384,7 @@ export function OnlineView() {
 
   const signOut = () => {
     clearTicket();
+    if (screen() === "creating") pageNameInputEnd();
     try {
       globalThis.__pocketAuthEvent?.({ type: "logout" });
     } catch {
@@ -335,23 +393,28 @@ export function OnlineView() {
     client?.stop();
     client = null;
     roster.clear();
+    for (const id in publishedRoster) delete publishedRoster[id];
     setMenuOpen(false);
     setScreen("gate");
     setGateText("Signed out. Sign in again to play.");
   };
   try {
-    globalThis.__pocketAuthCommand = (cmd) => {
+    globalThis.__pocketAuthCommand = (cmd, value) => {
       if (cmd === "signout") signOut();
+      else if (cmd === "name") submitPageName(typeof value === "string" ? value : "");
     };
   } catch {
     // desktop
   }
 
   // -- character creation state ---------------------------------------------
+  // The grid offers exactly the ASCII characters the shared name rule
+  // accepts (shared/name-charset.ts), so nothing typed here is refused for
+  // its characters; Chinese names come through the web page's text box.
   const makeNameState = (defaultName: string): NameInputState => {
     const started = nameInputRules.start(
       null,
-      { default: defaultName || "player", maxLength: 12, title: "Your Name" },
+      { default: defaultName || "player", maxLength: NAME_MAX, title: "Your Name", charset: nameGridCharset() },
       0,
       { variables: {}, playerName: "" } as never,
     );
@@ -376,15 +439,23 @@ export function OnlineView() {
         createFocus = "name";
         setFocusSig("name");
         setScreen("creating");
+        pageNameInput();
       },
       onRoster: (entries) => {
-        for (const id in publishedRoster) delete publishedRoster[id];
+        // A ROSTER after the welcome carries only the players it announces,
+        // so the published copy mirrors the whole map (every name known this
+        // epoch), not the last message: a later join must not hide our own
+        // entry from the diagnostics the demo reads.
         for (const e of entries) {
           roster.set(e.id, e);
-          publishedRoster[e.id] = { name: e.name, look: e.look };
           if (e.id === client?.myId) publishLogin(e.name);
         }
-        if (client?.myId) setScreen("world");
+        for (const id in publishedRoster) delete publishedRoster[id];
+        for (const [id, e] of roster) publishedRoster[id] = { name: e.name, look: e.look };
+        if (client?.myId) {
+          if (screen() === "creating") pageNameInputEnd();
+          setScreen("world");
+        }
       },
       onText: (msg) => {
         if (msg.type === "linked" && typeof msg.login === "string") publishLogin(msg.login);
@@ -401,17 +472,14 @@ export function OnlineView() {
           // Profile created: re-JOIN with the ticket to enter the world.
           creating = false;
           setCreateError("");
+          pageNameInputEnd();
           setScreen("world");
           client?.rejoin();
         } else if (msg.type === "createError") {
-          // The server refused this name/look: release the submit lock and
-          // re-arm the name-input scene (OK left it in its "done" phase,
-          // which would auto-resubmit every frame) so the player can fix
-          // the name and try again. The entered buffer and chosen look are
-          // kept.
-          creating = false;
-          ns = makeNameState(ns.buffer);
-          setCreateError(describeCreateError(msg.reason));
+          // The server refused this name/look (the boundary check; the
+          // client ran the same rule first, so this is a blocklist/
+          // version skew case): same recovery as a local refusal.
+          rejectCreate(msg.reason);
         } else if (msg.type === "linkCode") {
           showNotice(`Link code: ${msg.code} (5 min)`, 30000);
         } else if (msg.type === "linkError") {
@@ -453,17 +521,81 @@ export function OnlineView() {
     startClient({ kind: "link", code });
   };
 
+  /** Tell the web page's control bar that the creation screen is open (it
+   *  shows a text box that can take an input method, prefilled with the
+   *  grid buffer) or that a submitted name was refused and why. No page
+   *  on desktop: the hook is simply absent. */
+  const pageNameInput = (error = "") => {
+    try {
+      globalThis.__pocketAuthEvent?.({ type: "nameInput", title: "Your Name", maxLength: NAME_MAX, value: ns.buffer, error });
+    } catch {
+      // no page
+    }
+  };
+  const pageNameInputEnd = () => {
+    try {
+      globalThis.__pocketAuthEvent?.({ type: "nameInputEnd" });
+    } catch {
+      // no page
+    }
+  };
+
+  /** A name was refused, by the shared rule here or by the server: release
+   *  the submit lock and re-arm the name-input scene (OK left it in its
+   *  "done" phase, which would auto-resubmit every frame) so the player
+   *  can fix the name and try again. The entered buffer and chosen look
+   *  are kept; the reason shows in the footer and in the page's box. */
+  const rejectCreate = (reason: unknown) => {
+    creating = false;
+    ns = makeNameState(ns.buffer);
+    setNameState({ ...ns });
+    const text = describeCreateError(reason);
+    setCreateError(text);
+    pageNameInput(text);
+  };
+
+  /** Submit the scene's committed name. The shared `validateName` (the
+   *  rule the server enforces) runs first: a refused name never leaves
+   *  the client, and the reason shows at once. */
   const submitCreate = () => {
     if (creating || !client) return;
     const c = client;
     const done = nameInputRules.done(ns as never);
     if (!done || done.cancelled) return;
-    const name = (done as { playerName?: string }).playerName ?? "";
-    if (!name) return;
+    const name = ((done as { playerName?: string }).playerName ?? "").trim();
+    const refused = validateName(name);
+    if (refused) {
+      rejectCreate(refused);
+      return;
+    }
     creating = true;
     setCreateError("");
     const ticket = c.auth.kind === "ticket" ? c.auth.ticket : loadTicket() ?? "";
     c.sendText(JSON.stringify({ type: "create", v: 3, ticket, name, look: lookSel() }));
+  };
+
+  /** A name typed into the web page's text box: it replaces the grid
+   *  buffer as typed and goes through the same OK path and the same
+   *  validation as the grid, so the page cannot bypass anything the grid
+   *  enforces (an over-long name is refused, not cut). */
+  const submitPageName = (text: string) => {
+    if (screen() !== "creating" || creating) return;
+    const name = text.trim();
+    ns = makeNameState(name);
+    ns.buffer = name;
+    if (name.length === 0) {
+      rejectCreate("name-empty");
+      return;
+    }
+    ns.cursor = ns.charset.length + NAME_INPUT_ACTION_OK;
+    ns = nameInputRules.step(
+      ns as never,
+      { buttons: 0, upEdge: false, downEdge: false, leftEdge: false, rightEdge: false, confirmEdge: true, cancelEdge: false },
+      0,
+    ) as unknown as NameInputState;
+    setNameState({ ...ns });
+    const done = nameInputRules.done(ns as never);
+    if (done && !done.cancelled) submitCreate();
   };
 
   // -- world rendering ----------------------------------------------------------
@@ -584,7 +716,7 @@ export function OnlineView() {
     setProp(node, "debugName", "online-remote");
     insertNode(spriteParent, node);
     const label = createElement("text");
-    setProp(label, "style", { posType: 1, insetL: 0, insetT: 0, width: 80, height: 12, textColor: "#ffe97a", lineHeight: 12, textAlign: 1 });
+    setProp(label, "style", { posType: 1, insetL: 0, insetT: 0, width: NAME_LABEL_W, height: 12, textColor: "#ffe97a", lineHeight: 12, textAlign: 1 });
     setProp(label, "debugName", "online-remote-name");
     insertNode(labelParent, label);
     return { node, label, tileRef: null, tileIdx: -1, live: false, worldX: 0, worldY: 0 };
@@ -619,7 +751,7 @@ export function OnlineView() {
       setProp(node, "debugName", "online-local");
       insertNode(r.sprites, node);
       const label = createElement("text");
-      setProp(label, "style", { posType: 1, insetL: 0, insetT: 0, width: 80, height: 12, textColor: "#ffffff", lineHeight: 12, textAlign: 1 });
+      setProp(label, "style", { posType: 1, insetL: 0, insetT: 0, width: NAME_LABEL_W, height: 12, textColor: "#ffffff", lineHeight: 12, textAlign: 1 });
       setProp(label, "debugName", "online-local-name");
       insertNode(nameOverlay!, label);
       local = node;
@@ -636,7 +768,7 @@ export function OnlineView() {
     jump(myNode, "translateX", lx);
     jump(myNode, "translateY", ly);
     getOps().setText(myLabel.id, roster.get(c.myId)?.name ?? login());
-    jump(myLabel, "translateX", lx - 32);
+    jump(myLabel, "translateX", lx + TILE / 2 - NAME_LABEL_W / 2);
     jump(myLabel, "translateY", ly - 14);
 
     // Frozen-world residents follow the same reducer event state and
@@ -653,36 +785,47 @@ export function OnlineView() {
     const oxScreen = r.ox * TILE - cam.x;
     const oyScreen = r.oy * TILE - cam.y;
     for (const rec of villagers.values()) rec.live = false;
-    for (const id in p.chars.chars) {
-      const ch = p.chars.chars[id]!;
-      if (!ch.visible) continue;
-      const parsed = parseVillagerId(id);
-      if (!parsed) continue;
-      const x = Math.round((worldX0 - r.ox) * TILE + ch.px);
-      const y = Math.round((worldY0 - r.oy) * TILE + ch.py);
-      const probedLook = probe ? lookId(lookFor(world.seed, parsed.rx, parsed.ry, parsed.n)) : -1;
+    const placeVillager = (id: string, rx: number, ry: number, n: number, px: number, py: number, phase: number, facing: number) => {
+      const x = Math.round((worldX0 - r.ox) * TILE + px);
+      const y = Math.round((worldY0 - r.oy) * TILE + py);
+      const probedLook = probe ? lookId(lookFor(world.seed, rx, ry, n)) : -1;
       if (probe) {
         probe[id] = {
           look: probedLook,
-          pose: walkPose(ch.phase),
-          facing: ch.facing,
-          x: ch.px,
-          y: ch.py,
+          pose: walkPose(phase),
+          facing,
+          x: px,
+          y: py,
           sx: Math.round(x + oxScreen),
           sy: Math.round(y + oyScreen),
         };
       }
-      if (globalThis.__onlineDeferVillagers === true) continue;
+      if (globalThis.__onlineDeferVillagers === true) return;
       let rec = villagers.get(id);
       if (!rec) {
         rec = villagerPool.pop() ?? makeVillager(r.sprites);
-        rec.lookId = probedLook >= 0 ? probedLook : lookId(lookFor(world.seed, parsed.rx, parsed.ry, parsed.n));
+        rec.lookId = probedLook >= 0 ? probedLook : lookId(lookFor(world.seed, rx, ry, n));
         villagers.set(id, rec);
       }
       rec.live = true;
-      setSprite(rec.node, rec.lookId, walkPose(ch.phase), ch.facing, rec);
+      setSprite(rec.node, rec.lookId, walkPose(phase), facing, rec);
       if (x !== rec.x) { jump(rec.node, "translateX", x); rec.x = x; }
       if (y !== rec.y) { jump(rec.node, "translateY", y); rec.y = y; }
+    };
+    if (world instanceof RealmWorld) {
+      // Realm residents: a pure function of (plan, discovery time, realm
+      // clock), the same the server evaluates when it validates a talk.
+      collectResidents(c, world, p.move.tx, p.move.ty);
+      for (const pose of residents) placeVillager(pose.id, pose.rx, pose.ry, pose.n, pose.px, pose.py, pose.phase, pose.facing);
+    } else {
+      // Frozen-window residents follow the reducer's event state.
+      for (const id in p.chars.chars) {
+        const ch = p.chars.chars[id]!;
+        if (!ch.visible) continue;
+        const parsed = parseVillagerId(id);
+        if (!parsed) continue;
+        placeVillager(id, parsed.rx, parsed.ry, parsed.n, ch.px, ch.py, ch.phase, ch.facing);
+      }
     }
     for (const [id, rec] of villagers) {
       if (rec.live) continue;
@@ -717,7 +860,7 @@ export function OnlineView() {
       jump(rec.node, "translateX", sx);
       jump(rec.node, "translateY", sy);
       getOps().setText(rec.label.id, entry?.name ?? "");
-      jump(rec.label, "translateX", sx - 32);
+      jump(rec.label, "translateX", sx + TILE / 2 - NAME_LABEL_W / 2);
       jump(rec.label, "translateY", sy - 14);
     });
     for (const [id, rec] of remoteUsed) {
@@ -731,14 +874,213 @@ export function OnlineView() {
     }
   };
 
+  // -- realm gameplay: residents, talk, boards, plaza, log ---------------------
+  /** Born residents of the 3x3 regions around the player, rebuilt every
+   *  frame from the realm clock (talk targets and sprites). */
+  const residents: NpcPose[] = [];
+  const collectResidents = (c: OnlineClient, world: RealmWorld, tx: number, ty: number) => {
+    residents.length = 0;
+    const now = c.estimatedServerTime();
+    const prx = regionOf(tx), pry = regionOf(ty);
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const rx = prx + dx, ry = pry + dy;
+        const row = world.regionState(rx, ry);
+        if (!row) continue;
+        const plan = world.plans.get(realmRegionKey(rx, ry));
+        if (!plan) continue;
+        for (const pose of townResidentsAt(plan, ticksSinceDiscovery(row.discoveredAtMs, now))) residents.push(pose);
+      }
+    }
+  };
+
+  /** Pure lookups behind the town facts: identical to the single-player
+   *  sim's token resolver (the point hub function and the exact pure
+   *  landmark placement). */
+  let lookups: TownLookups | null = null;
+  let lookupsSeed = NaN;
+  const lookupsFor = (seed: number): TownLookups => {
+    if (!lookups || lookupsSeed !== seed) {
+      lookupsSeed = seed;
+      lookups = {
+        hubOf: (rx, ry) => regionHub(seed, rx, ry),
+        landmarkOf: (rx, ry) => purePlacedLandmark(seed, rx, ry),
+      };
+    }
+    return lookups;
+  };
+  const talkCache = new Map<string, string[]>();
+  /** The dialog lines for a resident (by house, exactly what single-player
+   *  passes) or the notice board (house null), memoized per
+   *  (region, house, helped). */
+  const townLines = (c: OnlineClient, seed: number, plan: RegionPlan, house: number | null): string[] => {
+    const helped = journeyIsHelped(seed, c.journey, plan.rx, plan.ry);
+    const key = `${house === null ? "p" : "v"}:${plan.rx}:${plan.ry}:${house === null ? "" : `${house}:`}${helped ? 1 : 0}`;
+    let lines = talkCache.get(key);
+    if (!lines) {
+      const facts = townFacts(seed, plan, lookupsFor(seed));
+      const errand = townErrand(seed, plan.rx, plan.ry);
+      lines = house === null
+        ? townPlaque(seed, plan, facts, errand, helped)
+        : townTalk(seed, plan, house, facts, errand, helped).lines;
+      if (talkCache.size >= TALK_CACHE_CAP) talkCache.clear();
+      talkCache.set(key, lines);
+    }
+    return lines;
+  };
+
+  let dialogLines: readonly string[] = [];
+  let dialogPage = 0;
+  const openDialog = (lines: readonly string[]) => {
+    dialogLines = lines;
+    dialogPage = 0;
+    setDialogRows(lines.slice(0, DIALOG_ROWS));
+    setDialogOpen(true);
+  };
+  const advanceDialog = () => {
+    dialogPage += DIALOG_ROWS;
+    if (dialogPage >= dialogLines.length) {
+      dialogLines = [];
+      dialogPage = 0;
+      setDialogRows([]);
+      setDialogOpen(false);
+      return;
+    }
+    setDialogRows(dialogLines.slice(dialogPage, dialogPage + DIALOG_ROWS));
+  };
+
+  /** CIRCLE: talk to the resident in front (the server records the
+   *  conversation), or read the notice board in front once it is born. */
+  const pressTalk = (c: OnlineClient) => {
+    const predictor = c.predictor;
+    if (!(predictor instanceof RealmPredictor)) return;
+    const world = predictor.world;
+    const move = predictor.current.move;
+    const target = talkTarget(move, residents);
+    if (target) {
+      const plan = world.plans.get(realmRegionKey(target.rx, target.ry));
+      if (!plan) return;
+      openDialog(townLines(c, world.seed, plan, target.house));
+      c.sendCommand({ kind: COMMAND.talk, rx: target.rx, ry: target.ry, extra: target.n });
+      return;
+    }
+    const front = frontTile(move);
+    const rx = regionOf(front.x), ry = regionOf(front.y);
+    const plan = world.plans.get(realmRegionKey(rx, ry));
+    if (!plan) return;
+    const board = plaqueOf(plan);
+    if (!board || board.x !== front.x || board.y !== front.y) return;
+    if (world.regionTick(rx, ry, c.estimatedServerTime()) < board.born) return;
+    openDialog(townLines(c, world.seed, plan, null));
+  };
+
+  /** CROSS outside dialogs: the plaza action near a town hub (accept the
+   *  town's offer, or deliver the errand it targets), else page the travel
+   *  log like the single-player field. */
+  let journalIdx = 0;
+  const pageLog = (c: OnlineClient, seed: number) => {
+    const keys = c.progressKeys;
+    if (keys.length === 0) {
+      showNotice("LOG: nothing found yet", NOTICE_EMPTY_MS);
+      return;
+    }
+    journalIdx %= keys.length;
+    const [rx, ry] = parseKey(keys[journalIdx]!);
+    const kind = purePlacedLandmark(seed, rx, ry)?.kindName ?? "?";
+    showNotice(`LOG ${journalIdx + 1}/${keys.length}: ${kind} @ ${regionName(seed, rx, ry)}`, NOTICE_LOG_MS);
+    journalIdx++;
+  };
+  const pressAction = (c: OnlineClient) => {
+    const predictor = c.predictor;
+    const seed = predictor?.world.seed ?? 0;
+    if (!(predictor instanceof RealmPredictor)) {
+      pageLog(c, seed);
+      return;
+    }
+    const move = predictor.current.move;
+    const rx = regionOf(move.tx), ry = regionOf(move.ty);
+    const plan = predictor.world.plans.get(realmRegionKey(rx, ry));
+    const nearPlaza = plan !== undefined && plan.hub.town
+      && Math.abs(move.tx - plan.hub.x) + Math.abs(move.ty - plan.hub.y) <= PLAZA_RADIUS;
+    if (!nearPlaza) {
+      pageLog(c, seed);
+      return;
+    }
+    const errand = resolveErrand(seed, c.journey);
+    if (!errand) {
+      if (townErrand(seed, rx, ry)) c.sendCommand({ kind: COMMAND.acceptErrand, rx, ry, extra: 0 });
+    } else if (errand.kind === "deliver" && errand.trx === rx && errand.try === ry) {
+      c.sendCommand({ kind: COMMAND.deliverErrand, rx, ry, extra: 0 });
+    }
+  };
+
+  /** Notices from the server's confirmations: journey events (accepted,
+   *  delivered, visited) and new private landmark sightings. The first
+   *  PLAYER_PROGRESS of a socket is the stored set, announced to nobody. */
+  let lastEventSeq = 0;
+  const knownProgress = new Set<string>();
+  let progressBaselined = false;
+  const pollJourney = (c: OnlineClient, seed: number) => {
+    const ev = c.journeyEvent;
+    if (ev.seq < lastEventSeq) lastEventSeq = 0;
+    if (ev.seq !== lastEventSeq) {
+      lastEventSeq = ev.seq;
+      if (ev.kind !== JOURNEY_EVENT.talked) {
+        const text = journeyEventText(seed, ev);
+        if (text) showNotice(text, NOTICE_EVENT_MS);
+      }
+    }
+    if (c.progressMessages === 0) {
+      progressBaselined = false;
+      return;
+    }
+    const keys = c.progressKeys;
+    if (!progressBaselined) {
+      progressBaselined = true;
+      knownProgress.clear();
+      for (const key of keys) knownProgress.add(key);
+      return;
+    }
+    if (keys.length === knownProgress.size) return;
+    for (const key of keys) {
+      if (knownProgress.has(key)) continue;
+      knownProgress.add(key);
+      const [rx, ry] = parseKey(key);
+      const lm = purePlacedLandmark(seed, rx, ry);
+      if (lm) showNotice(`FOUND: ${lm.kindName}`, NOTICE_EVENT_MS);
+    }
+  };
+
+  /** Nearest unfound landmark within RUMOR_RADIUS regions, cached per
+   *  player tile and progress revision like the single-player sim. */
+  let rumorCache: { x: number; y: number; rev: number; count: number; value: { kind: string; dir: string; dist: number } | null } | null = null;
+  const nearestRumor = (c: OnlineClient, seed: number, x: number, y: number) => {
+    const rev = c.progressRevision, count = c.progressCount;
+    if (rumorCache && rumorCache.x === x && rumorCache.y === y && rumorCache.rev === rev && rumorCache.count === count) return rumorCache.value;
+    const lm = nearestLandmark(x, y, RUMOR_RADIUS, (rx, ry) => purePlacedLandmark(seed, rx, ry), (rx, ry) => c.progressLandmarks.has(`${rx},${ry}`));
+    let value: { kind: string; dir: string; dist: number } | null = null;
+    if (lm) {
+      const dist = Math.abs(x - lm.cx) + Math.abs(y - lm.cy);
+      const wx = Math.sign(lm.cx - x), wy = Math.sign(lm.cy - y);
+      const dir = wy < 0 ? (wx < 0 ? "NW" : wx > 0 ? "NE" : "N") : wy > 0 ? (wx < 0 ? "SW" : wx > 0 ? "SE" : "S") : wx < 0 ? "W" : "E";
+      value = { kind: lm.kindName, dir, dist };
+    }
+    rumorCache = { x, y, rev, count, value };
+    return value;
+  };
+
   // -- input + frame -----------------------------------------------------------
   const auto = new AutoWalk(
     () => (globalThis.performance ? globalThis.performance.now() : Date.now()),
     { x: WINDOW / 2, y: WINDOW / 2 },
   );
   let autoHome = false;
-  let idle = 0;
-  let autoMode = true;
+  /** Auto-walk is opt-in online: the boot hook or the menu's START. A
+   *  d-pad press always hands control back to the player and nothing
+   *  resumes the driver on its own. */
+  let autoMode = g.__onlineAutoWalk === true;
+  /** The menu's auto-walk line mirrors `autoMode`. */
+  const [menuAuto, setMenuAuto] = createSignal(autoMode);
   let prevButtons = 0;
   let prevTouchIds = new Set<number>();
   let hudTimer = 0;
@@ -758,11 +1100,29 @@ export function OnlineView() {
         : h.status === "joined"
           ? `ONLINE #${h.myId}`
           : h.status.toUpperCase();
+    const realm = c.predictor instanceof RealmPredictor;
+    const seed = c.predictor?.world.seed ?? 0;
+    const mode = h.fast ? "FAST" : autoMode ? "AUTO" : "YOU";
     batch(() => {
       setStatusText(status);
       setNameLine(`${roster.get(c.myId)?.name ?? (login() || "?")} · ROOM ${h.online} · ALL ${h.allOnline}`);
       setDebugText(`RTT ${h.rtt}ms  CORR ${h.corrections}  FOUND ${h.progressCount}  FIRST ${h.landmarkFirstName || "-"}`);
-      setPosText(`X ${cam.tx}  Y ${cam.ty}  ${autoMode ? "AUTO" : "YOU"}${h.landmarkFirstName ? `  FIRST ${h.landmarkFirstName}` : ""}`);
+      setPosText(`X ${cam.tx}  Y ${cam.ty}  ${mode}${h.landmarkFirstName ? `  FIRST ${h.landmarkFirstName}` : ""}`);
+      setRealmOn(realm);
+      setMenuAuto(autoMode);
+      if (realm) {
+        // Travel log: private sightings (never decrease) and the nearest rumor.
+        const keys = h.progressKeys;
+        const latest = keys.length ? keys[keys.length - 1]! : null;
+        let latestKind = "—";
+        if (latest) {
+          const [rx, ry] = parseKey(latest);
+          latestKind = purePlacedLandmark(seed, rx, ry)?.kindName ?? "—";
+        }
+        const rumor = nearestRumor(c, seed, cam.tx, cam.ty);
+        setLogText(`LOG ${keys.length} · ${latestKind}    ${rumor ? `RUMOR: ${rumor.kind} ${rumor.dir} ${rumor.dist}` : "RUMOR: nothing nearby"}`);
+        setErrandText(errandHudText(resolveErrand(seed, c.journey), c.journey.helpedCount));
+      }
     });
   };
 
@@ -791,6 +1151,12 @@ export function OnlineView() {
     out.y = camera().ty;
     out.moving = c?.predictor?.current.move.moving ?? false;
     out.auto = autoMode;
+    out.autoWalk = autoMode;
+    out.fast = h?.fast ?? false;
+    out.helpedCount = h?.helpedCount ?? 0;
+    out.errand = errandText();
+    out.logCount = h?.progressCount ?? 0;
+    out.dialog = dialogOpen();
     out.login = login();
     out.createError = createError();
     out.notice = notice();
@@ -951,33 +1317,41 @@ export function OnlineView() {
       prevButtons = buttons;
       return;
     }
-    const dpad = buttons & (BTN.UP | BTN.RIGHT | BTN.DOWN | BTN.LEFT);
-    if (dpad) {
+    // A dialog owns the frame: no movement (zero buttons reach the
+    // client, so the lockstep stream carries only the fast bit), no
+    // auto-walk, and CIRCLE pages it.
+    const dialog = dialogOpen();
+    const dpad = buttons & DPAD;
+    if (dpad && !dialog) {
       if (autoMode) auto.reset();
       autoMode = false;
-      idle = 0;
-    } else if (!autoMode && ++idle >= IDLE_RESUME_SECONDS * hz) {
-      autoMode = true;
     }
-    const autoMask = autoMode ? auto.mask(c.predictor?.current.move.tx ?? 0, c.predictor?.current.move.ty ?? 0) : 0;
+    const autoMask = autoMode && !dialog ? auto.mask(c.predictor?.current.move.tx ?? 0, c.predictor?.current.move.ty ?? 0) : 0;
     if (!autoHome && c.predictor) {
       autoHome = true;
       auto.home = { x: c.predictor.current.move.tx, y: c.predictor.current.move.ty };
     }
-    c.onFrame(buttons, hz, autoMask);
+    c.onFrame(dialog ? 0 : buttons, hz, autoMask);
     syncWorld(now);
-    if (edge(buttons, BTN.TRIANGLE)) setDebugOn(!debugOn());
+    const seed = c.predictor?.world.seed ?? 0;
+    pollJourney(c, seed);
     if (++hudTimer >= HUD_EVERY) {
       hudTimer = 0;
       refreshHud();
     }
     const menuBtn = (buttons & BTN.SELECT) !== 0;
-    if (menuBtn && !menuHeld) setMenuOpen(!menuOpen());
+    if (menuBtn && !menuHeld && !dialog) setMenuOpen(!menuOpen());
     menuHeld = menuBtn;
     if (menuOpen()) {
       if (edge(buttons, BTN.CROSS)) {
         setMenuOpen(false);
         setDeleteArmed(false);
+      }
+      if (edge(buttons, BTN.TRIANGLE)) setDebugOn(!debugOn());
+      if (edge(buttons, BTN.START)) {
+        autoMode = !autoMode;
+        if (autoMode) auto.reset();
+        setMenuAuto(autoMode);
       }
       if (edge(buttons, BTN.CIRCLE)) {
         const ticket = c.auth.kind === "ticket" ? c.auth.ticket : loadTicket() ?? "";
@@ -998,6 +1372,14 @@ export function OnlineView() {
           setDeleteArmed(true);
         }
       }
+    } else if (dialog) {
+      if (edge(buttons, BTN.CIRCLE)) advanceDialog();
+    } else {
+      // TRIANGLE requests fast mode; the HUD says FAST once the server's
+      // snapshot confirms it. CIRCLE talks, CROSS acts or pages the log.
+      if (edge(buttons, BTN.TRIANGLE)) c.fastRequested = !c.fastRequested;
+      if (edge(buttons, BTN.CIRCLE)) pressTalk(c);
+      if (edge(buttons, BTN.CROSS)) pressAction(c);
     }
     if (notice() && Date.now() > noticeUntil) setNotice("");
     publish();
@@ -1012,13 +1394,21 @@ export function OnlineView() {
   const plate = () => statusPlate(viewport().w, viewport().h, debugOn());
   const gate = () => isDesktop ? linkGateRect(viewport().w, viewport().h) : gateRect(viewport().w, viewport().h);
   const menu = () => menuRect(viewport().w, viewport().h);
+  const logBar = () => logBarRect(viewport().w, viewport().h);
+  const errandBar = () => errandBarRect(viewport().w, viewport().h);
+  const dialogBox = () => dialogRect(viewport().w, viewport().h);
 
   return (
     <View class="w-full h-full overflow-hidden bg-black">
+      {/* The field is an imperative node (the render ring draws into it)
+          and stays mounted for the view's whole life: a node a Show
+          unmounts is gone from the host, and re-inserting it after the
+          creation screen would leave the world black. Other screens
+          collapse it to nothing instead. */}
+      <View class="absolute overflow-hidden" style={{ posType: 1, insetL: 0, insetT: 0, width: screen() === "world" ? viewport().w : 0, height: screen() === "world" ? viewport().h : 0 }} debugName="online-field">
+        {fieldRoot as unknown as ReturnType<typeof View>}
+      </View>
       <Show when={screen() === "world"}>
-        <View class="absolute overflow-hidden" style={{ posType: 1, insetL: 0, insetT: 0, width: viewport().w, height: viewport().h }} debugName="online-field">
-          {fieldRoot as unknown as ReturnType<typeof View>}
-        </View>
         <View class="absolute" style={{ posType: 1, ...rect(plate()), bgColor: "#0b1626", opacity: 0.84 }} debugName="online-plate" />
         <Text class="text-xs" style={{ posType: 1, insetT: plate().y0 + 2, insetL: 12, width: plate().x1 - 18, textColor: "#ffe97a", lineHeight: 12, height: 12 }}>{statusText()}</Text>
         <Text class="text-xs" style={{ posType: 1, insetT: plate().y0 + 15, insetL: 12, width: plate().x1 - 18, textColor: "#9fd0ff", lineHeight: 12, height: 12 }}>{nameLine()}</Text>
@@ -1026,10 +1416,27 @@ export function OnlineView() {
         <Show when={debugOn()}>
           <Text class="text-xs" style={{ posType: 1, insetT: plate().y0 + 41, insetL: 12, textColor: "#c8d6ea", lineHeight: 12, height: 12 }}>{debugText()}</Text>
         </Show>
-        <View class="absolute" style={{ posType: 1, ...rect(helpRect(viewport().w, viewport().h)), bgColor: "#0b1626", opacity: 0.84 }} debugName="online-help" />
-        <Text class="text-xs" style={{ posType: 1, insetT: helpRect(viewport().w, viewport().h).y0 + 2, insetL: 12, textColor: "#c8d6ea", lineHeight: 12, height: 12 }}>
-          D-PAD MOVE · SEL MENU · TRI DEBUG
-        </Text>
+        <Show when={!dialogOpen()}>
+          <Show when={realmOn()}>
+            <View class="absolute" style={{ posType: 1, ...rect(logBar()), bgColor: "#0b1626", opacity: 0.76 }} debugName="online-logline" />
+            <Text class="text-xs" style={{ posType: 1, insetT: logBar().y0 + 2, insetL: 12, width: logBar().x1 - 12, textColor: "#ffe97a", lineHeight: 12, height: 12 }}>{logText()}</Text>
+            <View class="absolute" style={{ posType: 1, ...rect(errandBar()), bgColor: "#0b1626", opacity: 0.76 }} debugName="online-errandline" />
+            <Text class="text-xs" style={{ posType: 1, insetT: errandBar().y0 + 2, insetL: 12, width: errandBar().x1 - 12, textColor: "#ffb37a", lineHeight: 12, height: 12 }}>{errandText()}</Text>
+          </Show>
+          <View class="absolute" style={{ posType: 1, ...rect(helpRect(viewport().w, viewport().h)), bgColor: "#0b1626", opacity: 0.84 }} debugName="online-help" />
+          <Text class="text-xs" style={{ posType: 1, insetT: helpRect(viewport().w, viewport().h).y0 + 2, insetL: 12, textColor: "#c8d6ea", lineHeight: 12, height: 12 }}>
+            D-PAD MOVE · O TALK · X ACT/LOG · TRI FAST · SEL MENU
+          </Text>
+        </Show>
+        <Show when={dialogOpen()}>
+          <View class="absolute" style={{ posType: 1, ...rect(dialogBox()), bgColor: "#0b1626", borderWidth: 1, borderColor: "#3a4a6a" }} debugName="online-dialog" />
+          {Array.from({ length: DIALOG_ROWS }, (_, i) => (
+            <Text class="text-xs" style={{ posType: 1, insetT: dialogBox().y0 + 6 + i * DIALOG_ROW_H, insetL: dialogBox().x0 + 10, width: dialogBox().x1 - dialogBox().x0 - 20, textColor: "#e7edf8", lineHeight: 12, height: 12 }}>
+              {dialogRows()[i] ?? ""}
+            </Text>
+          ))}
+          <Text class="text-xs" style={{ posType: 1, insetT: dialogBox().y1 - 14, insetL: dialogBox().x1 - 56, width: 50, textColor: "#8ad0ff", lineHeight: 12, height: 12 }}>O next</Text>
+        </Show>
         <Show when={notice() !== ""}>
           <View class="absolute flex-row justify-center" style={{ posType: 1, insetT: noticeRect(viewport().w, viewport().h, debugOn()).y0, insetL: 0, insetR: 0 }} debugName="online-notice">
             <View style={{ bgColor: "#0b1626", paddingL: 10, paddingR: 10, paddingT: 2, paddingB: 2 }}>
@@ -1040,11 +1447,17 @@ export function OnlineView() {
         <Show when={menuOpen()}>
           <View class="absolute" style={{ posType: 1, ...rect(menu()), bgColor: "#0b1626", borderWidth: 1, borderColor: "#3a4a6a" }} debugName="online-menu" />
           <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 8, insetL: menu().x0 + 10, textColor: "#ffe97a", lineHeight: 14, height: 14 }}>MENU</Text>
-          <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 28, insetL: menu().x0 + 10, textColor: "#c8d6ea", lineHeight: 14, height: 14 }}>CIRCLE: link device</Text>
-          <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 46, insetL: menu().x0 + 10, textColor: deleteArmed() ? "#ffe97a" : "#c8d6ea", lineHeight: 14, height: 14 }}>
+          <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 26, insetL: menu().x0 + 10, textColor: "#c8d6ea", lineHeight: 14, height: 14 }}>CIRCLE: link device</Text>
+          <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 40, insetL: menu().x0 + 10, textColor: deleteArmed() ? "#ffe97a" : "#c8d6ea", lineHeight: 14, height: 14 }}>
             {deleteArmed() ? "SQUARE: confirm delete" : "SQUARE: delete profile"}
           </Text>
-          <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 64, insetL: menu().x0 + 10, textColor: "#c8d6ea", lineHeight: 14, height: 14 }}>CROSS: close</Text>
+          <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 54, insetL: menu().x0 + 10, textColor: "#c8d6ea", lineHeight: 14, height: 14 }}>
+            {debugOn() ? "TRIANGLE: debug off" : "TRIANGLE: debug on"}
+          </Text>
+          <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 68, insetL: menu().x0 + 10, textColor: "#c8d6ea", lineHeight: 14, height: 14 }}>
+            {menuAuto() ? "START: auto-walk off" : "START: auto-walk on"}
+          </Text>
+          <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 82, insetL: menu().x0 + 10, textColor: "#c8d6ea", lineHeight: 14, height: 14 }}>CROSS: close</Text>
         </Show>
       </Show>
       <Show when={screen() === "gate"}>

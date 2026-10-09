@@ -66,5 +66,9 @@
   {
     "key": "ui:tile.wander-look-b15",
     "file": "../wander/assets/look/tilesets/b15.pkts"
+  },
+  {
+    "key": "license:NotoSansCJK.txt",
+    "file": "fonts/LICENSE-NotoSansCJK.txt"
   }
 ]

@@ -12,6 +12,7 @@ describe("wander-online web-check flags", () => {
     expect(flags.expectFirst).toBe(false);
     expect(flags.expectProgress).toBe(0);
     expect(flags.expectImprovement).toBe(0);
+    expect(flags.autoWalk).toBe(false);
   });
 
   test("accepts an independent cross-room total and an auth ticket", () => {
@@ -24,6 +25,7 @@ describe("wander-online web-check flags", () => {
       "--expect-first",
       "--expect-progress", "1",
       "--expect-improvement", "2",
+      "--auto-walk",
       "--watch",
     ]);
     expect(flags.expect).toBe(2);
@@ -34,6 +36,7 @@ describe("wander-online web-check flags", () => {
     expect(flags.expectFirst).toBe(true);
     expect(flags.expectProgress).toBe(1);
     expect(flags.expectImprovement).toBe(2);
+    expect(flags.autoWalk).toBe(true);
     expect(flags.watch).toBe(true);
   });
 });

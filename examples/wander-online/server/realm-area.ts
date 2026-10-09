@@ -5,6 +5,25 @@
 import { motionTicksPerFrame } from "../../../vendor/pocket-rpgkit/src/engine/motion-clock.ts";
 import type { Dir4 } from "../../../vendor/pocket-rpgkit/src/engine/passability.ts";
 import { regionOf } from "../../wander/world.ts";
+import { planRegion, type RegionPlan } from "../../wander/region.ts";
+import { purePlacedLandmark, type Errand } from "../../wander/towns.ts";
+import type { Landmark } from "../../wander/landmarks.ts";
+import {
+  emptyJourney,
+  journeyAccept,
+  journeyComplete,
+  journeyTalk,
+  JOURNEY_EVENT,
+  PLAZA_RADIUS,
+  resolveErrand,
+  VISIT_ARRIVE,
+  type JourneyEvent,
+  type JourneyEventKind,
+  type JourneyPair,
+  type PlayerJourney,
+} from "../net/journey.ts";
+import { residentDistance, ticksSinceDiscovery, townResidentsAt } from "../net/npc.ts";
+import { BTN, COMMAND, PLAYER_PROGRESS_MAX, type CommandMessage, type PlayerJourneyMessage, type PlayerProgressMessage } from "../net/protocol.ts";
 import {
   MultiFocusWorld,
   startRealmState,
@@ -15,6 +34,8 @@ import {
 import {
   REALM_DISCOVERY_HALF_H,
   REALM_DISCOVERY_HALF_W,
+  REALM_LANDMARK_HALF_H,
+  REALM_LANDMARK_HALF_W,
   type RealmRegionSnapshot,
   type RealmRegionState,
 } from "../net/realm-state.ts";
@@ -40,6 +61,41 @@ export interface RealmPlayer {
   lastSeq: number;
   queue: QueuedInput[];
   dropped: number;
+  /** Authoritative fast mode: the fast bit of the last applied input. */
+  fast: boolean;
+  /** Private errand journey; every mutation happens here, never on a client. */
+  journey: PlayerJourney;
+  /** Bumped on every journey change. Hosts with storage overwrite it with
+   *  the persisted per-account revision before sending. */
+  journeyRevision: number;
+  /** The journey changed since the host last persisted/sent it. */
+  journeyDirty: boolean;
+  /** Latest confirmed journey event (seq 0 = none yet). */
+  event: JourneyEvent;
+  /** Private landmark sightings, oldest first, exact, at most PLAYER_PROGRESS_MAX. */
+  landmarks: JourneyPair[];
+  progressRevision: number;
+  progressDirty: boolean;
+  /** Tile of the last landmark scan; the scan only reruns on a tile change. */
+  scanX: number | null;
+  scanY: number | null;
+}
+
+/** Private state a host restores from storage when a player is admitted. */
+export interface RealmPlayerRestore {
+  journey?: PlayerJourney;
+  journeyRevision?: number;
+  landmarks?: readonly JourneyPair[];
+  progressRevision?: number;
+}
+
+/** Storage-backed hosts intercept the two shared facts a journey can
+ *  create. Each returns the authoritative row after its compare-and-set (or
+ *  the unchanged row), or null to refuse; the arena then applies and queues
+ *  it for broadcast. Without hooks the arena keeps the facts in memory. */
+export interface RealmArenaHooks {
+  improveRegion?(rx: number, ry: number, level: number, nowMs: number): RealmRegionState | null;
+  landmarkFirst?(rx: number, ry: number, player: RealmPlayer, nowMs: number): RealmRegionState | null;
 }
 
 export interface RealmArenaConfig {
@@ -51,7 +107,18 @@ export interface RealmArenaConfig {
   maxPlayers?: number;
   /** Wall clock injection for deterministic growth tests. */
   now?: () => number;
+  hooks?: RealmArenaHooks;
 }
+
+/** Bounded cache of pure town plans the journey rules read (hub, residents,
+ *  notice board). Independent of the streamed world cache, whose plans are
+ *  mutated in place by shared improvements. */
+const TOWN_PLAN_CAP = 64;
+
+/** Chebyshev tolerance when the server validates a talk command: the client
+ *  judged adjacency at its estimated clock, so the resident may have taken
+ *  one more step by the time the command arrives. */
+export const TALK_TOLERANCE = 2;
 
 function heading(p: RealmPlayer): Pick<RealmFocus, "hx" | "hy"> {
   const dir = p.state.move.moving ? p.state.move.stepDir : p.state.move.facing;
@@ -76,6 +143,10 @@ export class RealmArena {
   private nextId = 1;
   private readonly cells = new Map<number, Map<number, RealmPlayer[]>>();
   private readonly now: () => number;
+  private readonly hooks: RealmArenaHooks;
+  private readonly townPlans = new Map<string, RegionPlan>();
+  /** Shared rows a journey changed since the host last drained them. */
+  private changedRows: RealmRegionState[] = [];
 
   constructor(cfg: RealmArenaConfig) {
     this.seed = cfg.seed >>> 0;
@@ -90,6 +161,26 @@ export class RealmArena {
     this.ticksPerFrame = motionTicksPerFrame(this.hz);
     this.world = new MultiFocusWorld(this.seed);
     this.now = cfg.now ?? Date.now;
+    this.hooks = cfg.hooks ?? {};
+  }
+
+  /** Shared rows changed by journeys (improvements, landmark firsts) since
+   *  the last drain, for the host to broadcast. */
+  drainChangedRows(): RealmRegionState[] {
+    const rows = this.changedRows;
+    this.changedRows = [];
+    return rows;
+  }
+
+  /** A town plan by region, cached and never mutated. */
+  townPlan(rx: number, ry: number): RegionPlan {
+    const key = `${rx},${ry}`;
+    const cached = this.townPlans.get(key);
+    if (cached) return cached;
+    const plan = planRegion(this.seed, rx, ry);
+    if (this.townPlans.size >= TOWN_PLAN_CAP) this.townPlans.delete(this.townPlans.keys().next().value!);
+    this.townPlans.set(key, plan);
+    return plan;
   }
 
   private focuses(): RealmFocus[] {
@@ -133,7 +224,13 @@ export class RealmArena {
   }
 
   /** Refuse before allocating an id, inserting a player or changing focus. */
-  tryAdd(name: string, color: number, look = 0, at?: { tx: number; ty: number; facing?: number }): RealmPlayer | null {
+  tryAdd(
+    name: string,
+    color: number,
+    look = 0,
+    at?: { tx: number; ty: number; facing?: number },
+    restore?: RealmPlayerRestore,
+  ): RealmPlayer | null {
     if (this.players.size >= this.maxPlayers) return null;
     if (at?.facing !== undefined && (!Number.isInteger(at.facing) || at.facing < 0 || at.facing > 3)) {
       throw new RangeError("realm spawn facing must be an integer in 0..3");
@@ -166,19 +263,29 @@ export class RealmArena {
       lastSeq: 0,
       queue: [],
       dropped: 0,
+      fast: false,
+      journey: restore?.journey ?? emptyJourney(),
+      journeyRevision: restore?.journeyRevision ?? 0,
+      journeyDirty: false,
+      event: { seq: 0, kind: JOURNEY_EVENT.none, rx: 0, ry: 0 },
+      landmarks: [...(restore?.landmarks ?? [])],
+      progressRevision: restore?.progressRevision ?? 0,
+      progressDirty: false,
+      scanX: null,
+      scanY: null,
     };
     this.players.set(id, player);
-    this.discoverRegions(this.now());
+    const nowMs = this.now();
+    this.discoverRegions(nowMs);
     // Admission is rare and must leave the spawn's full authoritative ring
     // ready before WELCOME; steady movement stays on the per-frame budget.
     this.world.prime(this.focuses(), this.refTicks);
+    this.scanLandmarks(player, nowMs);
     return player;
   }
 
-  /** Add at the deterministic starter tile. Tests may supply another signed
-   * coordinate to exercise separated residents without mutating internals. */
-  add(name: string, color: number, look = 0, at?: { tx: number; ty: number; facing?: number }): RealmPlayer {
-    const player = this.tryAdd(name, color, look, at);
+  add(name: string, color: number, look = 0, at?: { tx: number; ty: number; facing?: number }, restore?: RealmPlayerRestore): RealmPlayer {
+    const player = this.tryAdd(name, color, look, at, restore);
     if (!player) throw new RangeError(`realm is full (${this.maxPlayers} players)`);
     return player;
   }
@@ -216,9 +323,174 @@ export class RealmArena {
         p.buttons = input.buttons;
         p.lastSeq = input.seq;
       }
+      p.fast = (p.buttons & BTN.fast) !== 0;
       p.state = { ...p.state, move: stepRealmMovement(this.world, p.state.move, p.buttons) };
+      this.scanLandmarks(p, nowMs);
+      this.checkVisit(p, nowMs);
     }
     this.refTicks++;
+  }
+
+  // -- journeys ------------------------------------------------------------------
+
+  private playerRegion(p: RealmPlayer): { rx: number; ry: number } {
+    return { rx: regionOf(p.state.move.tx), ry: regionOf(p.state.move.ty) };
+  }
+
+  private onPlaza(p: RealmPlayer, plan: RegionPlan): boolean {
+    if (plan.empty || !plan.hub.town) return false;
+    const { tx, ty } = p.state.move;
+    return Math.abs(tx - plan.hub.x) + Math.abs(ty - plan.hub.y) <= PLAZA_RADIUS;
+  }
+
+  private confirm(p: RealmPlayer, kind: JourneyEventKind, rx: number, ry: number): JourneyEventKind {
+    p.event = { seq: (p.event.seq + 1) >>> 0, kind, rx, ry };
+    p.journeyDirty = true;
+    return kind;
+  }
+
+  private setJourney(p: RealmPlayer, journey: PlayerJourney): void {
+    p.journey = journey;
+    p.journeyRevision = (p.journeyRevision + 1) >>> 0;
+    p.journeyDirty = true;
+  }
+
+  /** Validate and apply a client command against the authoritative mover
+   *  and clock. Returns the confirmed event kind, or null when refused. */
+  applyCommand(p: RealmPlayer, cmd: CommandMessage, nowMs = this.now()): JourneyEventKind | null {
+    const here = this.playerRegion(p);
+    if (cmd.rx !== here.rx || cmd.ry !== here.ry) return null;
+    const plan = this.townPlan(here.rx, here.ry);
+    if (cmd.kind === COMMAND.acceptErrand) {
+      if (!this.onPlaza(p, plan)) return null;
+      const accepted = journeyAccept(this.seed, p.journey, here.rx, here.ry);
+      if (!accepted) return null;
+      this.setJourney(p, accepted.journey);
+      return this.confirm(p, JOURNEY_EVENT.accepted, here.rx, here.ry);
+    }
+    if (cmd.kind === COMMAND.deliverErrand) {
+      if (!this.onPlaza(p, plan)) return null;
+      const errand = resolveErrand(this.seed, p.journey);
+      if (!errand || errand.kind !== "deliver" || errand.trx !== here.rx || errand.try !== here.ry) return null;
+      return this.complete(p, errand, JOURNEY_EVENT.delivered, nowMs);
+    }
+    if (cmd.kind === COMMAND.talk) {
+      if (plan.empty || !plan.hub.town) return null;
+      const row = this.world.regionState(here.rx, here.ry);
+      if (!row) return null;
+      const residents = townResidentsAt(plan, ticksSinceDiscovery(row.discoveredAtMs, nowMs));
+      const resident = residents.find((r) => r.n === cmd.extra);
+      if (!resident || residentDistance(p.state.move, resident) > TALK_TOLERANCE) return null;
+      const talked = journeyTalk(p.journey, here.rx, here.ry);
+      if (talked.changed) this.setJourney(p, talked.journey);
+      return this.confirm(p, JOURNEY_EVENT.talked, here.rx, here.ry);
+    }
+    return null;
+  }
+
+  private complete(p: RealmPlayer, errand: Errand, kind: JourneyEventKind, nowMs: number): JourneyEventKind {
+    const done = journeyComplete(this.seed, p.journey, errand);
+    this.setJourney(p, done.journey);
+    if (done.newlyHelped) this.improve(done.hrx, done.hry, 1, nowMs);
+    return this.confirm(p, kind, done.hrx, done.hry);
+  }
+
+  /** A visit errand completes on arrival, checked every reference tick. */
+  private checkVisit(p: RealmPlayer, nowMs: number): void {
+    if (!p.journey.errand) return;
+    const errand = resolveErrand(this.seed, p.journey);
+    if (!errand || errand.kind !== "visit") return;
+    const { tx, ty } = p.state.move;
+    if (Math.abs(tx - errand.ax) + Math.abs(ty - errand.ay) > VISIT_ARRIVE) return;
+    this.complete(p, errand, JOURNEY_EVENT.visited, nowMs);
+  }
+
+  /** Raise a town's shared improvement once: the storage hook decides with
+   *  a compare-and-set; in memory the level is simply monotonic. */
+  private improve(rx: number, ry: number, level: number, nowMs: number): void {
+    const current = this.world.regionState(rx, ry);
+    let row: RealmRegionState | null;
+    if (this.hooks.improveRegion) {
+      row = this.hooks.improveRegion(rx, ry, level, nowMs);
+    } else if (!current || current.improvementLevel >= level) {
+      row = null;
+    } else {
+      row = { ...current, improvementLevel: level, revision: ++this.realmRevision };
+    }
+    if (!row || (current && row.revision <= current.revision)) return;
+    this.world.applyRegionState({ flags: 0, realmRevision: this.realmRevision, serverTimeMs: nowMs, rows: [row] });
+    this.changedRows.push(row);
+  }
+
+  // -- landmarks --------------------------------------------------------------------
+
+  private hasLandmark(p: RealmPlayer, rx: number, ry: number): boolean {
+    return p.landmarks.some((l) => l.rx === rx && l.ry === ry);
+  }
+
+  /** Log every born landmark whose centre lies inside the fixed sighting
+   *  box around the player; the first player to see one names it for the
+   *  whole realm. Pure placement, no viewport, no client input. */
+  private scanLandmarks(p: RealmPlayer, nowMs: number): void {
+    const { tx, ty } = p.state.move;
+    if (p.scanX === tx && p.scanY === ty) return;
+    p.scanX = tx;
+    p.scanY = ty;
+    const prx = regionOf(tx), pry = regionOf(ty);
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const lm = purePlacedLandmark(this.seed, prx + dx, pry + dy);
+      if (!lm || this.hasLandmark(p, lm.rx, lm.ry)) continue;
+      if (!this.landmarkVisible(lm, tx, ty, nowMs)) continue;
+      if (p.landmarks.length >= PLAYER_PROGRESS_MAX) p.landmarks.shift();
+      p.landmarks.push({ rx: lm.rx, ry: lm.ry });
+      p.progressRevision = (p.progressRevision + 1) >>> 0;
+      p.progressDirty = true;
+      this.electFirst(lm.rx, lm.ry, p, nowMs);
+    }
+  }
+
+  landmarkVisible(lm: Landmark, tx: number, ty: number, nowMs: number): boolean {
+    const row = this.world.regionState(lm.rx, lm.ry);
+    if (!row) return false;
+    if (this.world.regionTick(lm.rx, lm.ry, nowMs) < lm.bornTick) return false;
+    return Math.abs(lm.cx - tx) <= REALM_LANDMARK_HALF_W && Math.abs(lm.cy - ty) <= REALM_LANDMARK_HALF_H;
+  }
+
+  private electFirst(rx: number, ry: number, p: RealmPlayer, nowMs: number): void {
+    const current = this.world.regionState(rx, ry);
+    let row: RealmRegionState | null;
+    if (this.hooks.landmarkFirst) {
+      row = this.hooks.landmarkFirst(rx, ry, p, nowMs);
+    } else if (!current || current.landmarkFirstName !== "") {
+      row = null;
+    } else {
+      row = { ...current, landmarkFirstName: p.name, revision: ++this.realmRevision };
+    }
+    if (!row || (current && row.revision <= current.revision)) return;
+    this.world.applyRegionState({ flags: 0, realmRevision: this.realmRevision, serverTimeMs: nowMs, rows: [row] });
+    this.changedRows.push(row);
+  }
+
+  // -- private wire snapshots -------------------------------------------------------
+
+  journeyMessage(p: RealmPlayer): PlayerJourneyMessage {
+    return {
+      revision: p.journeyRevision,
+      eventSeq: p.event.seq,
+      eventKind: p.event.kind,
+      eventRx: p.event.rx,
+      eventRy: p.event.ry,
+      fast: p.fast,
+      errand: p.journey.errand ? { rx: p.journey.errand.rx, ry: p.journey.errand.ry } : null,
+      helpedCount: p.journey.helpedCount,
+      bloom: p.journey.bloom,
+      helped: p.journey.helped,
+      talked: p.journey.talked,
+    };
+  }
+
+  progressMessage(p: RealmPlayer): PlayerProgressMessage {
+    return { revision: p.progressRevision, landmarks: p.landmarks.map((l) => ({ rx: l.rx, ry: l.ry })) };
   }
 
   step(): void {

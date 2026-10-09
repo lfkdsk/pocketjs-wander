@@ -35,6 +35,7 @@
 //   {"type":"deleteError","reason":string}  (the delete was refused or could
 //          not be confirmed; the client stays signed in and shows why)
 
+import { nameCodePointAllowed } from "./name-charset.ts";
 import { CLOSE_REASON } from "./limits.ts";
 
 export const AUTH_CLOSE_REASON = {
@@ -88,10 +89,14 @@ export type NameError =
   | "name-charset"
   | "name-blocked";
 
-/** Letters and numbers (any script, so CJK names pass), plus a small set of
- *  harmless separators. Everything else — control chars, emoji, combining
- *  marks, confusables — is refused. */
-const NAME_CHARSET = /^[\p{L}\p{N} _.-]+$/u;
+/** The name charset is the set the app's name font covers (see
+ *  shared/name-charset.ts): ASCII letters and digits, four separators and
+ *  the common simplified Chinese characters. Everything else — other
+ *  scripts, rare Han, control chars, emoji, combining marks, confusables —
+ *  is refused on both ends, so an accepted name always renders as glyphs. */
+function nameCharsetOk(name: readonly string[]): boolean {
+  return name.every((ch) => nameCodePointAllowed(ch.codePointAt(0)!));
+}
 
 /** A small, deliberately crude blocklist (lowercase substring match). It is
  *  not a moderation system; it keeps the worst slurs and impersonation bait
@@ -116,8 +121,8 @@ export function validateName(raw: string): NameError | null {
   const name = Array.from(raw.trim());
   if (name.length < NAME_MIN) return "name-empty";
   if (name.length > NAME_MAX) return "name-too-long";
+  if (!nameCharsetOk(name)) return "name-charset";
   const joined = name.join("");
-  if (!NAME_CHARSET.test(joined)) return "name-charset";
   const lower = joined.toLowerCase();
   for (const bad of NAME_BLOCKLIST) {
     if (lower.includes(bad)) return "name-blocked";

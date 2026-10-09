@@ -178,8 +178,8 @@ describe("wander-online protocol", () => {
 
   test("STATE4 preserves signed world coordinates and rejects non-exact frames", () => {
     const entities: WireEntity[] = [
-      { id: 1, tx: -500, ty: 900, px: -12, py: 14, dir: 1, phase: 6, stepDir: 1, moving: true, walking: true, color: 15 },
-      { id: 2, tx: 1_000_000, ty: -1_000_000, px: 0, py: 0, dir: 3, phase: 0, stepDir: 3, moving: false, walking: false, color: 2 },
+      { id: 1, tx: -500, ty: 900, px: -12, py: 14, dir: 1, phase: 6, stepDir: 1, moving: true, walking: true, fast: true, color: 15 },
+      { id: 2, tx: 1_000_000, ty: -1_000_000, px: 0, py: 0, dir: 3, phase: 0, stepDir: 3, moving: false, walking: false, fast: false, color: 2 },
     ];
     const buf = encodeState4(99, 77, 7, entities, { roomOnline: 2, allOnline: 35 });
     expect(buf.byteLength).toBe(STATE4_HEADER_BYTES + 2 * ENTITY4_BYTES + STATE_POPULATION_BYTES);

@@ -47,9 +47,10 @@ import { blocksAt, roadAt, type ChunkData } from "./chunk.ts";
 import { AutoWalker } from "./driver.ts";
 import { chunkKey, regionKey, Residency, STEP_MAX, TICK_BUDGET, type Focus, type ResidencyStats } from "./residency.ts";
 import { buildWindow, windowChunks, windowJob, windowRegions, WINDOW, type WindowBuild } from "./window.ts";
-import { CHUNK, REGION, REGION_CHUNKS, regionOf, regionHub, growHash } from "./world.ts";
+import { CHUNK, REGION, REGION_CHUNKS, regionOf, regionHub } from "./world.ts";
 import { landmarkFor, isWilderness, nearestLandmark, type Landmark } from "./landmarks.ts";
 import { TravelLog } from "./travel-log.ts";
+import { HelpedBloom } from "./helped-bloom.ts";
 import { improvementCells, pureLmIsWarm, pureLmPeek, pureLmSet, townErrand, townFacts, townPlaque, townTalk, type Errand, type TownLookups } from "./towns.ts";
 import { F_DECOR, F_UPPER, planRegion, regionName, type RegionPlan } from "./region.ts";
 
@@ -173,32 +174,6 @@ function startTile(res: Residency): { x: number; y: number } {
     if (!best || d < best.d) best = { x: h.x, y: h.y + 1, d };
   }
   return best ?? { x: REGION / 2, y: REGION / 2 };
-}
-
-/** A bounded Bloom filter of helped towns. The exact set (HELP_CAP) drives
- *  dialog and immediate flowers; the Bloom never forgets, so a town helped
- *  long ago still flowers when its plan is regenerated. False positives
- *  only ever add flowers — acceptable (R2 5.1). 1024 bits, 3 hashes: a few
- *  hundred helps keep the false-positive rate in the low percent. */
-class HelpedBloom {
-  private readonly bits = new Uint32Array(32);
-  constructor(private readonly seed: number) {}
-  add(rx: number, ry: number): void {
-    for (const b of this.bitsFor(rx, ry)) this.bits[b >>> 5]! |= 1 << (b & 31);
-  }
-  has(rx: number, ry: number): boolean {
-    for (const b of this.bitsFor(rx, ry)) if (!(this.bits[b >>> 5]! & (1 << (b & 31)))) return false;
-    return true;
-  }
-  private bitsFor(rx: number, ry: number): [number, number, number] {
-    const h1 = growHash(this.seed, rx, ry, 0xb100a), h2 = growHash(this.seed, rx, ry, 0xb100b);
-    return [h1 % 1024, h2 % 1024, ((h1 ^ (h2 >>> 7)) >>> 0) % 1024];
-  }
-  toJSON(): number[] { return [...this.bits]; }
-  copyFrom(arr: readonly number[]): void {
-    this.bits.fill(0);
-    for (let i = 0; i < this.bits.length; i++) this.bits[i] = arr[i] ?? 0;
-  }
 }
 
 export class WanderSim {

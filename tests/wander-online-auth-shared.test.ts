@@ -16,6 +16,7 @@ import {
   validateLook,
   validateName,
 } from "../examples/wander-online/shared/auth.ts";
+import { hanLevel1, hanLevel1Text, nameCodePointAllowed } from "../examples/wander-online/shared/name-charset.ts";
 import { TicketSigner } from "../examples/wander-online/shared/ticket-signer.ts";
 
 const T0 = 1_700_000_000; // fixed unix-seconds clock
@@ -80,11 +81,11 @@ describe("shared auth: ticket signer", () => {
 });
 
 describe("shared auth: name validation", () => {
-  test("accepts names of 1..12 code points, including CJK", () => {
+  test("accepts names of 1..12 code points, including common Chinese", () => {
     expect(validateName("a")).toBeNull();
     expect(validateName("lfkdsk")).toBeNull();
     expect(validateName("口袋妖怪")).toBeNull(); // 4 CJK chars
-    expect(validateName("カイ123")).toBeNull();
+    expect(validateName("演示二号")).toBeNull();
     expect(validateName("A B-C_D.E")).toBeNull();
     // 12 code points passes; 13 fails (by code point, not UTF-16 length).
     expect(validateName("一二三四五六七八九十一二")).toBeNull(); // 12 CJK
@@ -104,6 +105,28 @@ describe("shared auth: name validation", () => {
     expect(validateName("a\nb")).toBe("name-charset");
     expect(validateName("é")).toBe("name-charset"); // combining accent
     // Mutation: widen the regex to \p{M} -> the combining mark passes.
+  });
+
+  test("the charset is exactly what the name font bakes: no other scripts, no rare Han", () => {
+    // Scripts the 12 px slot has no glyphs for are refused, however short.
+    expect(validateName("カイ123")).toBe("name-charset"); // katakana
+    expect(validateName("한글")).toBe("name-charset"); // hangul
+    expect(validateName("Ωmega")).toBe("name-charset"); // greek
+    expect(validateName("Jos\u00e9")).toBe("name-charset"); // precomposed e-acute
+    // Han outside GB 2312 level 1 (rare or traditional-only forms) is refused.
+    expect(validateName("龘")).toBe("name-charset");
+    expect(validateName("國")).toBe("name-charset"); // traditional form of 国
+    expect(validateName("国")).toBeNull();
+    // Every character of the level-1 set passes on its own and the set has
+    // exactly the GB 2312 level-1 count.
+    const han = hanLevel1();
+    expect(han.size).toBe(3755);
+    for (const cp of han) expect(nameCodePointAllowed(cp)).toBe(true);
+    expect(validateName(hanLevel1Text().slice(0, NAME_MAX))).toBeNull();
+    // ASCII outside the four separators is refused too (the font has it,
+    // the name policy does not).
+    expect(validateName("a!b")).toBe("name-charset");
+    expect(validateName("a'b")).toBe("name-charset");
   });
 
   test("the blocklist catches slurs and impersonation bait, case-insensitively", () => {

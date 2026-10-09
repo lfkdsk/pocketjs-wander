@@ -32,6 +32,7 @@ import {
   REGION_STATE_FLAG_INITIAL,
   WORLD_PROTOCOL_VERSION,
   WORLD_STATE_VERSION,
+  decodePlayerJourney,
   decodePlayerProgress,
   decodeRegionState,
   decodeRoster,
@@ -39,10 +40,14 @@ import {
   decodeState4,
   decodeWelcome,
   decodeWelcome4,
+  encodeCommand,
   encodeInputBatch,
   encodePing,
+  type CommandMessage,
+  type PlayerJourneyMessage,
   type RosterEntry,
 } from "./protocol.ts";
+import { emptyJourney, type JourneyEvent, type PlayerJourney } from "./journey.ts";
 import { Predictor, type AuthoritativeMover } from "./predict.ts";
 import { RealmPredictor } from "./realm-predict.ts";
 import { GENERATOR_VERSION } from "./realm-world.ts";
@@ -167,6 +172,10 @@ export interface OnlineHud {
   progressKeys: readonly string[];
   /** Shared improvement applied to the player's current v4 region. */
   improvementLevel: number;
+  /** Server-confirmed fast mode (from the latest authoritative snapshot). */
+  fast: boolean;
+  /** Distinct towns this player helped (private journey). */
+  helpedCount: number;
   /** Hosted-server rejection token ("full", "rate", ...) when the last
    *  close was a 1008 policy rejection, else null. */
   rejectReason: string | null;
@@ -197,7 +206,22 @@ export class OnlineClient {
   realmRevision = 0;
   landmarkFirstName = "";
   progressRevision = 0;
+  /** PLAYER_PROGRESS messages applied on the current socket. The first one
+   *  is the stored set (no sighting happened now); the view only announces
+   *  landmarks that appear after it. */
+  progressMessages = 0;
   readonly progressLandmarks = new Set<string>();
+  /** Private errand journey, replaced wholesale by each PLAYER_JOURNEY. */
+  journey: PlayerJourney = emptyJourney();
+  journeyRevision = 0;
+  /** Latest server-confirmed journey event; `seq` only ever increases. */
+  journeyEvent: JourneyEvent = { seq: 0, kind: 0, rx: 0, ry: 0 };
+  /** Server-confirmed fast mode: the fast flag of this player's entity in
+   *  the latest STATE4 (the HUD shows FAST only once confirmed). */
+  fastConfirmed = false;
+  /** The player's fast toggle (TRIANGLE). Sent as the input fast bit; the
+   *  server's snapshot flag is the only thing the HUD calls "FAST". */
+  fastRequested = false;
   /** Classified window grid (WINDOW*WINDOW), null until WELCOME. */
   grid: Uint8Array | null = null;
   predictor: Predictor | RealmPredictor | null = null;
@@ -284,8 +308,13 @@ export class OnlineClient {
       this.realmRevision = 0;
       this.landmarkFirstName = "";
       this.progressRevision = 0;
+      this.progressMessages = 0;
       this.progressLandmarks.clear();
       this.progressKeyList = [];
+      this.journey = emptyJourney();
+      this.journeyRevision = 0;
+      this.journeyEvent = { seq: 0, kind: 0, rx: 0, ry: 0 };
+      this.fastConfirmed = false;
       this.worldStateReady = false;
       this.serverClockMs = 0;
       this.serverClockLocalMs = 0;
@@ -469,9 +498,16 @@ export class OnlineClient {
       const message = decodePlayerProgress(data);
       if (!message || message.revision < this.progressRevision) return;
       this.progressRevision = message.revision;
+      this.progressMessages++;
       this.progressLandmarks.clear();
       for (const row of message.landmarks) this.progressLandmarks.add(`${row.rx},${row.ry}`);
       this.progressKeyList = [...this.progressLandmarks];
+      return;
+    }
+    if (kind === MSG.playerJourney) {
+      const message = decodePlayerJourney(data);
+      if (!message) return;
+      this.applyJourney(message);
       return;
     }
     if (kind === MSG.roster) {
@@ -530,6 +566,7 @@ export class OnlineClient {
             facing: me.dir, phase: me.phase, stepDir: me.stepDir,
             moving: me.moving, walking: me.walking,
           };
+          this.fastConfirmed = me.fast === true;
           const result = predictor.reconcile(st.epoch, st.ackSeq, auth);
           if (result === "corrected") this.corrections++;
           else if (result === "rebase-required") {
@@ -575,9 +612,11 @@ export class OnlineClient {
     if (!this.predictor || this.frozen) return 0;
     if (this.predictor instanceof RealmPredictor && !this.worldStateReady) return 0;
 
-    // The held mask: live d-pad wins, else the auto-walk driver.
+    // The held mask: live d-pad wins, else the auto-walk driver. The realm
+    // fast request rides every input so the server confirms it in lockstep.
     const live = buttons & DPAD;
-    const mask = live !== 0 ? live : autoMask;
+    const fastBit = this.fastRequested && this.predictor instanceof RealmPredictor ? BTN.fast : 0;
+    const mask = (live !== 0 ? live : autoMask) | fastBit;
 
     // Predict one reference tick per INPUT as before, but pack every
     // BATCH_SIZE ticks into one INPUT_BATCH message (20 Hz wire rate).
@@ -606,6 +645,30 @@ export class OnlineClient {
     const buttons = this.pending.map((p) => p.buttons);
     this.pending.length = 0;
     this.send(encodeInputBatch(firstSeq, buttons));
+  }
+
+  /** Send one realm command (accept/deliver/talk). The server validates it
+   *  against its own mover and clock and confirms through PLAYER_JOURNEY. */
+  sendCommand(cmd: CommandMessage): void {
+    if (!(this.predictor instanceof RealmPredictor) || !this.worldStateReady) return;
+    this.send(encodeCommand(cmd));
+  }
+
+  private applyJourney(message: PlayerJourneyMessage): void {
+    // Journey revisions are per account and restart on reconnect; an event
+    // seq only moves forward within the current socket.
+    if (message.revision < this.journeyRevision && message.eventSeq <= this.journeyEvent.seq) return;
+    this.journeyRevision = message.revision;
+    this.journey = {
+      errand: message.errand ? { rx: message.errand.rx, ry: message.errand.ry } : null,
+      helped: message.helped.map((p) => ({ rx: p.rx, ry: p.ry })),
+      bloom: [...message.bloom],
+      talked: message.talked.map((p) => ({ rx: p.rx, ry: p.ry })),
+      helpedCount: message.helpedCount,
+    };
+    if (message.eventSeq > this.journeyEvent.seq) {
+      this.journeyEvent = { seq: message.eventSeq, kind: message.eventKind as JourneyEvent["kind"], rx: message.eventRx, ry: message.eventRy };
+    }
   }
 
   /** Send a text message (CREATE/LINKQ/...) on the live socket. */
@@ -673,6 +736,8 @@ export class OnlineClient {
       progressCount: this.progressCount,
       progressKeys: this.progressKeys,
       improvementLevel: this.improvementLevel,
+      fast: this.fastConfirmed,
+      helpedCount: this.journey.helpedCount,
       rejectReason: this.rejectReason,
       rejectText: this.rejectReason ? (REJECT_TEXT[this.rejectReason] ?? this.rejectReason) : null,
       retryIn,

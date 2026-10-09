@@ -243,8 +243,8 @@ simDescribe("wander-online view: the world on screen", () => {
       );
       pump(w, 5);
       await waitFor(w, () => state()?.status === "joined", "v4 joined");
-      // A live d-pad edge takes control from the default auto walker. Let
-      // that one step settle, then sample a stationary HUD refresh.
+      // Auto-walk is opt-in online, so the player stands still; one d-pad
+      // step keeps the published camera and the HUD refresh in agreement.
       press(w, BTN.RIGHT);
       pump(w, 18);
       const pos = state()!;
@@ -346,7 +346,7 @@ simDescribe("wander-online view: the world on screen", () => {
 });
 
 simDescribe("wander-online view: HUD", () => {
-  test("debug info is hidden by default; TRIANGLE toggles it; name and status always show", async () => {
+  test("debug info is hidden by default; TRIANGLE in the menu toggles it; name and status always show", async () => {
     const w = await boot(
       { kind: "ticket", ticket: "t1" },
       fakeOnlineSocketFactory({ mode: "welcome", name: "Octo", look: 3, ticket: "t1", population: { roomOnline: 3, allOnline: 12 } }),
@@ -359,10 +359,20 @@ simDescribe("wander-online view: HUD", () => {
     expect(state()?.online).toBe(3);
     expect(state()?.allOnline).toBe(12);
     expect(treeHasText(w.getTree(), "RTT")).toBe(false);
+    // TRIANGLE outside the menu is the fast toggle, not debug.
+    press(w, BTN.TRIANGLE);
+    pump(w, 12);
+    expect(treeHasText(w.getTree(), "RTT")).toBe(false);
+    press(w, BTN.SELECT);
+    pump(w, 2);
+    expect(treeHasText(w.getTree(), "TRIANGLE: debug on")).toBe(true);
     press(w, BTN.TRIANGLE);
     pump(w, 12);
     expect(treeHasText(w.getTree(), "RTT")).toBe(true);
     expect(treeHasText(w.getTree(), "CORR")).toBe(true);
+    expect(treeHasText(w.getTree(), "TRIANGLE: debug off")).toBe(true);
+    press(w, BTN.CROSS);
+    pump(w, 2);
     w.frame(0);
   });
 
@@ -383,8 +393,8 @@ simDescribe("wander-online view: HUD", () => {
     );
     pump(w, 5);
     await waitFor(w, () => state()?.status === "joined", "v4 joined");
-    // Stop the default auto walker and let its in-flight step settle so the
-    // six-frame HUD refresh and the per-frame published camera agree.
+    // One d-pad step, settled, so the six-frame HUD refresh and the
+    // per-frame published camera agree.
     press(w, BTN.RIGHT);
     pump(w, 18);
     pump(w, 12);

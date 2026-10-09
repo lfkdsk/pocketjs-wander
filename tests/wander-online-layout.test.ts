@@ -5,17 +5,22 @@
 // at both 480x272 and 960x544.
 import { describe, expect, test } from "bun:test";
 import {
+  DIALOG_ROWS,
+  DIALOG_ROW_H,
   contains,
   createEditBox,
   createLayout,
   createNameGrid,
   createTitleRect,
+  dialogRect,
+  errandBarRect,
   gateRect,
   helpRect,
   intersects,
   linkGateRect,
   linkHintRect,
   linkPadCell,
+  logBarRect,
   menuRect,
   noticeRect,
   statusPlate,
@@ -36,6 +41,9 @@ describe("wander-online layout: world overlays", () => {
         expect(contains(screen, noticeRect(w, h, debug)), "notice band").toBe(true);
       }
       expect(contains(screen, helpRect(w, h)), "help strip").toBe(true);
+      expect(contains(screen, logBarRect(w, h)), "log bar").toBe(true);
+      expect(contains(screen, errandBarRect(w, h)), "errand bar").toBe(true);
+      expect(contains(screen, dialogRect(w, h)), "dialog panel").toBe(true);
       expect(contains(screen, menuRect(w, h)), "menu box").toBe(true);
       expect(contains(screen, gateRect(w, h)), "gate panel").toBe(true);
       const linkGate = linkGateRect(w, h);
@@ -50,12 +58,48 @@ describe("wander-online layout: world overlays", () => {
       for (const debug of [false, true]) {
         const plate = statusPlate(w, h, debug);
         expect(intersects(plate, helpRect(w, h)), "plate vs help").toBe(false);
+        expect(intersects(plate, logBarRect(w, h)), "plate vs log bar").toBe(false);
+        expect(intersects(plate, errandBarRect(w, h)), "plate vs errand bar").toBe(false);
+        expect(intersects(noticeRect(w, h, debug), logBarRect(w, h)), "notice vs log bar").toBe(false);
         // The notice band sits directly below the plate; the menu must not
         // reach either (it is centred, the band is at the top).
         expect(intersects(menuRect(w, h), noticeRect(w, h, debug)), "menu vs notice").toBe(false);
         expect(intersects(menuRect(w, h), plate), "menu vs plate").toBe(false);
         expect(intersects(menuRect(w, h), helpRect(w, h)), "menu vs help").toBe(false);
+        expect(intersects(menuRect(w, h), logBarRect(w, h)), "menu vs log bar").toBe(false);
+        expect(intersects(menuRect(w, h), errandBarRect(w, h)), "menu vs errand bar").toBe(false);
       }
+    });
+
+    test(`${w}x${h}: the bottom bars stack above the help strip without touching`, () => {
+      const log = logBarRect(w, h);
+      const errand = errandBarRect(w, h);
+      const help = helpRect(w, h);
+      expect(intersects(log, errand), "log vs errand").toBe(false);
+      expect(intersects(errand, help), "errand vs help").toBe(false);
+      expect(intersects(log, help), "log vs help").toBe(false);
+      expect(log.y1).toBeLessThanOrEqual(errand.y0);
+      expect(errand.y1).toBeLessThanOrEqual(help.y0);
+      // Each bar is one 12 px text row with 2 px of padding above and below.
+      expect(log.y1 - log.y0).toBe(16);
+      expect(errand.y1 - errand.y0).toBe(16);
+      // The bars span the viewport width like the single-player field's.
+      expect(log.x0).toBe(6);
+      expect(log.x1).toBe(w - 6);
+    });
+
+    test(`${w}x${h}: the dialog panel holds four 12 px rows and a legend, clear of the plate and notice`, () => {
+      const box = dialogRect(w, h);
+      expect(box.y1 - box.y0).toBeGreaterThanOrEqual(6 + DIALOG_ROWS * DIALOG_ROW_H + 14);
+      for (const debug of [false, true]) {
+        expect(intersects(box, statusPlate(w, h, debug)), "dialog vs plate").toBe(false);
+        expect(intersects(box, noticeRect(w, h, debug)), "dialog vs notice").toBe(false);
+      }
+      // It replaces the bottom bars (the view hides them while it is open):
+      // docked to the same bottom edge, spanning the same width.
+      expect(box.y1).toBe(helpRect(w, h).y1);
+      expect(box.x0).toBe(logBarRect(w, h).x0);
+      expect(box.x1).toBe(logBarRect(w, h).x1);
     });
 
     test(`${w}x${h}: the population plate reserves the worst-case name line width`, () => {

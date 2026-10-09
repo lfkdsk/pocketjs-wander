@@ -15,6 +15,7 @@ import { initialMovement, stepMovementLegacy, type MovementState } from "../../.
 import type { PassageTable } from "../../../vendor/pocket-rpgkit/src/engine/passability.ts";
 import type { CharsState } from "../../../vendor/pocket-rpgkit/src/engine/chars.ts";
 import { RealmStateCache, type RealmRegionSnapshot, type RealmRegionState } from "./realm-state.ts";
+import { INPUT_BUTTON_MASK, speedFor } from "./protocol.ts";
 
 /** Bump this when the realm's deterministic terrain or scheduling contract changes. */
 export const GENERATOR_VERSION = 1;
@@ -517,7 +518,10 @@ export function stepRealmMover(
     px: move.px - ox * TILE,
     py: move.py - oy * TILE,
   };
-  const next = stepMovementLegacy(local, buttons, localPassage(collision, ox, oy), { tile: TILE, speed: 2 });
+  // Unknown input bits are dropped before the reducer sees them; the speed
+  // is the bounded single-player choice (walk/fast), never a wire value.
+  const held = buttons & INPUT_BUTTON_MASK;
+  const next = stepMovementLegacy(local, held, localPassage(collision, ox, oy), { tile: TILE, speed: speedFor(held) });
   const absolute: MovementState = {
     ...next,
     tx: next.tx + ox,

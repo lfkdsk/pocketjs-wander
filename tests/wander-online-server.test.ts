@@ -14,9 +14,13 @@ import {
   decodeState4,
   decodeWelcome,
   decodeWelcome4,
+  COMMAND,
+  decodePlayerJourney,
+  encodeCommand,
   encodeInput,
   encodePing,
 } from "../examples/wander-online/net/protocol.ts";
+import { JOURNEY_EVENT } from "../examples/wander-online/net/journey.ts";
 import { WINDOW } from "../examples/wander/window.ts";
 import { startServer, type ServerHandle } from "../examples/wander-online/server/server.ts";
 import { connect, type TestSocket } from "./lib/ws-helper.ts";
@@ -313,5 +317,47 @@ describe("wander-online server", () => {
     }
     c.close();
     throw new Error("no pong");
+  });
+
+  test("a realm command is validated and confirmed through a recipient-only PLAYER_JOURNEY", async () => {
+    // Region (0,0) of this seed is a town whose plaza offers a delivery, and
+    // the realm spawn is its hub, so a fresh guest can accept at once.
+    const errandServer = startServer({ port: 0, seed: 1593842689, hz: 20, broadcastHz: 10, aoi: 16, simLatency: 0, webRoot: "", allowGuests: true });
+    try {
+      const url = `ws://127.0.0.1:${errandServer.port}/ws/v4`;
+      const join = (name: string) => JSON.stringify({ type: "join", v: WORLD_PROTOCOL_VERSION, supportedGeneratorVersions: [1], worldStateVersion: WORLD_STATE_VERSION, name, color: 1 });
+      const a = await connect(url);
+      const b = await connect(url);
+      a.send(join("accepter"));
+      b.send(join("bystander"));
+      const journeys = async (c: typeof a, until: number) => {
+        const out: NonNullable<ReturnType<typeof decodePlayerJourney>>[] = [];
+        while (Date.now() < until) {
+          const msg = (await c.nextMessage(300)) as ArrayBuffer | undefined;
+          if (!msg) continue;
+          const decoded = typeof msg === "string" ? null : decodePlayerJourney(msg);
+          if (decoded) out.push(decoded);
+        }
+        return out;
+      };
+      const initial = await journeys(a, Date.now() + 600);
+      expect(initial.length).toBeGreaterThanOrEqual(1);
+      expect(initial[0]!.errand).toBeNull();
+      expect(initial[0]!.eventSeq).toBe(0);
+      // A command for the wrong region is dropped; the right one is confirmed.
+      a.send(encodeCommand({ kind: COMMAND.acceptErrand, rx: 5, ry: 5, extra: 0 }));
+      a.send(encodeCommand({ kind: COMMAND.acceptErrand, rx: 0, ry: 0, extra: 0 }));
+      const confirmed = await journeys(a, Date.now() + 800);
+      expect(confirmed.length).toBe(1);
+      expect(confirmed[0]!.errand).toEqual({ rx: 0, ry: 0 });
+      expect(confirmed[0]!.eventKind).toBe(JOURNEY_EVENT.accepted);
+      expect(confirmed[0]!.eventSeq).toBe(1);
+      const other = await journeys(b, Date.now() + 300);
+      expect(other.every((m) => m.errand === null && m.eventSeq === 0), "the bystander never sees the accepter's errand").toBe(true);
+      a.close();
+      b.close();
+    } finally {
+      errandServer.close();
+    }
   });
 });

@@ -28,9 +28,39 @@ export function statusPlate(w: number, _h: number, debug: boolean): HudRect {
   return { x0: 6, y0: 4, x1: 6 + W, y1: 4 + H };
 }
 
+/** Width of a walker's name tag, centred on the sprite. A name is at most
+ *  NAME_MAX (12) code points and the widest glyph of the 12 px slot is the
+ *  12 px CJK cell, so 144 px of text plus a margin never truncates. */
+export const NAME_LABEL_W = 160;
+
 /** The bottom-left controls hint strip. */
 export function helpRect(w: number, h: number): HudRect {
-  return { x0: 6, y0: h - 20, x1: Math.min(w - 6, 6 + 320), y1: h - 4 };
+  // 350 px holds the 336 px help line of the 12 px slot plus its inset.
+  return { x0: 6, y0: h - 20, x1: Math.min(w - 6, 6 + 350), y1: h - 4 };
+}
+
+/** The LOG / RUMOR bar, directly above the ERRAND bar (the single-player
+ *  field's bottom strips, same placement). */
+export function logBarRect(w: number, h: number): HudRect {
+  return { x0: 6, y0: h - 60, x1: w - 6, y1: h - 44 };
+}
+
+/** The ERRAND / HELPED bar, directly above the help strip. */
+export function errandBarRect(w: number, h: number): HudRect {
+  return { x0: 6, y0: h - 40, x1: w - 6, y1: h - 24 };
+}
+
+/** Rows a dialog panel shows at once (the kit's four-row text box). */
+export const DIALOG_ROWS = 4;
+/** Row pitch inside the dialog panel (12 px font + 2 px leading). */
+export const DIALOG_ROW_H = 14;
+
+/** The talk / notice-board panel, docked over the bottom bars: four rows
+ *  of 12 px text plus the "O next" legend. It covers the LOG, ERRAND and
+ *  help strips, which the view hides while a dialog is open. */
+export function dialogRect(w: number, h: number): HudRect {
+  const H = 8 + DIALOG_ROWS * DIALOG_ROW_H + 14;
+  return { x0: 6, y0: h - 4 - H, x1: w - 6, y1: h - 4 };
 }
 
 /** The transient notice band, centred just under the status plate. */
