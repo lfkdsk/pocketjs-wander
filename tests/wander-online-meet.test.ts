@@ -19,7 +19,6 @@ import {
   encodeCommand,
   encodeEmote,
   encodeFarPlayers,
-  encodeInputBatch,
 } from "../examples/wander-online/net/protocol.ts";
 import { EMOTE, EMOTE_COUNT, EMOTE_MIN_INTERVAL_MS, EMOTE_SHOW_MS, EMOTE_TABLE, isEmoteId } from "../examples/wander-online/net/emote.ts";
 import { FAR_BANDS, FAR_DIR_NAMES, farBand, farDir, farRowsFor, farVector } from "../examples/wander-online/net/far.ts";
@@ -481,32 +480,65 @@ describe("loopback server: pins, invites, far band and emotes", () => {
   }, 20_000);
 
   test("a player outside the AOI is a far row (octant + band), never an entity; inside it is the reverse", async () => {
-    const near = await rawJoin("near");
-    const wn = decodeWelcome4((await nextOfKind(near, MSG.welcome4))!)!;
-    // Walk the second player east with the fast bit until it leaves the 16-tile AOI.
-    const walker = await rawJoin("walker");
-    const ww = decodeWelcome4((await nextOfKind(walker, MSG.welcome4))!)!;
-    let seq = 1;
-    const fastRight = 0x0020 | 0x0100;
-    let far: ReturnType<typeof decodeFarPlayers> = null;
-    const deadline = Date.now() + 12_000;
-    while (Date.now() < deadline && !far) {
-      for (let i = 0; i < 4; i++) {
-        walker.send(encodeInputBatch(seq, [fastRight, fastRight, fastRight]));
-        seq += 3;
+    // A dedicated manual server keeps the real socket/broadcast path but
+    // advances simulation cadence by frame count, independent of host load.
+    const manual = startServer({ port: 0, seed: SEED, hz: 20, broadcastHz: 10, aoi: 16, simLatency: 0, webRoot: "", allowGuests: true, realmEpoch: 0x1234, manualTick: true });
+    const localSockets: TestSocket[] = [];
+    const join = async (name: string): Promise<TestSocket> => {
+      const socket = await connect(`ws://127.0.0.1:${manual.port}/ws/v4`);
+      localSockets.push(socket);
+      socket.send(JSON.stringify({ type: "join", v: WORLD_PROTOCOL_VERSION, supportedGeneratorVersions: [1], worldStateVersion: WORLD_STATE_VERSION, name, color: 1 }));
+      return socket;
+    };
+    const stateAt = async (socket: TestSocket, frame: number): Promise<NonNullable<ReturnType<typeof decodeState4>>> => {
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        const message = await socket.nextMessage(Math.max(1, deadline - Date.now()));
+        if (message === undefined) break;
+        if (typeof message === "string" || new Uint8Array(message)[0] !== MSG.state4) continue;
+        const state = decodeState4(message);
+        if (state?.frame === frame) return state;
       }
-      const m = await nextOfKind(near, MSG.farPlayers, 250);
-      if (m) far = decodeFarPlayers(m);
+      throw new Error(`no STATE4 for authoritative frame ${frame}`);
+    };
+
+    try {
+      const near = await join("near");
+      const wn = decodeWelcome4((await nextOfKind(near, MSG.welcome4))!)!;
+      const walker = await join("walker");
+      const ww = decodeWelcome4((await nextOfKind(walker, MSG.welcome4))!)!;
+
+      // The first 10 Hz snapshot proves the inside half of the contract.
+      manual.advance(2);
+      const inside = await stateAt(near, 2);
+      expect(inside.entities.map((e) => e.id)).toEqual([wn.you, ww.you]);
+
+      // Positioning is test setup, not movement coverage: guest spawn is
+      // intentionally random and a straight path through real terrain may
+      // be blocked. Put the authoritative walker exactly one tile past AOI.
+      const nearPlayer = manual.realmArena.players.get(wn.you)!;
+      const walkerPlayer = manual.realmArena.players.get(ww.you)!;
+      const tx = nearPlayer.state.move.tx + 17;
+      const ty = nearPlayer.state.move.ty;
+      walkerPlayer.state = {
+        ...walkerPlayer.state,
+        move: { ...walkerPlayer.state.move, tx, ty, px: tx * 16, py: ty * 16, phase: 0, moving: false, walking: false },
+      };
+      walkerPlayer.buttons = 0;
+      walkerPlayer.queue.length = 0;
+
+      // Frame 20 is both a 10 Hz snapshot boundary and the one-second FAR
+      // boundary. The state and far row therefore describe the same frame.
+      manual.advance(18);
+      const outside = await stateAt(near, 20);
+      expect(outside.entities.map((e) => e.id)).toEqual([wn.you]);
+      const farWire = await nextOfKind(near, MSG.farPlayers);
+      expect(farWire).not.toBeNull();
+      expect(farWire!.byteLength).toBe(2 + FAR_PLAYERS_ROW_BYTES);
+      expect(decodeFarPlayers(farWire!)).toEqual([{ id: ww.you, dir: 2, band: 0 }]);
+    } finally {
+      for (const socket of localSockets) socket.close();
+      manual.close();
     }
-    if (!far) throw new Error("no FAR_PLAYERS frame within 12 s");
-    expect(far).toHaveLength(1);
-    expect(far[0]!.id).toBe(ww.you);
-    expect(far[0]!.band).toBe(0);
-    expect([1, 2, 3]).toContain(far[0]!.dir); // roughly east of the hub
-    // The exact snapshot no longer carries the walker.
-    const state = decodeState4((await nextOfKind(near, MSG.state4))!)!;
-    expect(state.entities.map((e) => e.id)).toEqual([wn.you]);
-    // The far frame itself is 8 bytes: no room for a coordinate.
-    expect(2 + FAR_PLAYERS_ROW_BYTES).toBe(8);
   }, 30_000);
 });

@@ -79,6 +79,9 @@ export interface ServerOpts {
   realmPlayerCap?: number;
   /** Deterministic restart hook for tests; production creates a fresh epoch. */
   realmEpoch?: number;
+  /** Disable the wall-clock timer so a deterministic host/test can advance
+   *  complete server frames through ServerHandle.advance(). */
+  manualTick?: boolean;
 }
 
 interface Conn {
@@ -109,6 +112,9 @@ export interface ServerHandle {
   hostname: string;
   arena: Arena;
   realmArena: RealmArena;
+  /** Advance complete authoritative frames, including cadence-controlled
+   *  snapshots and FAR_PLAYERS broadcasts. */
+  advance: (frames?: number) => void;
   close: () => void;
 }
 
@@ -221,13 +227,19 @@ export function startServer(opts: ServerOpts): ServerHandle {
     for (const conn of realmConns.values()) emit(conn, message);
   }
 
-  const tickTimer = setInterval(() => {
-    arena.step();
-    realmArena.step();
-    stats.ticks++;
-    flushChangedRows();
-    if (arena.frame % frameMod === 0) broadcast();
-  }, 1000 / opts.hz);
+  const advance = (frames = 1): void => {
+    if (!Number.isSafeInteger(frames) || frames < 1) {
+      throw new RangeError("server advance frames must be a positive safe integer");
+    }
+    for (let i = 0; i < frames; i++) {
+      arena.step();
+      realmArena.step();
+      stats.ticks++;
+      flushChangedRows();
+      if (arena.frame % frameMod === 0) broadcast();
+    }
+  };
+  const tickTimer = opts.manualTick ? undefined : setInterval(advance, 1000 / opts.hz);
 
   // The dev auth (in-memory). Created lazily so a guest-only demo never
   // pays for it; the first authenticated JOIN awaits it.
@@ -542,8 +554,9 @@ export function startServer(opts: ServerOpts): ServerHandle {
     hostname: server.hostname ?? "127.0.0.1",
     arena,
     realmArena,
+    advance,
     close() {
-      clearInterval(tickTimer);
+      if (tickTimer) clearInterval(tickTimer);
       server.stop(true);
     },
   };
