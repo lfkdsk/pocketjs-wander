@@ -534,7 +534,8 @@ describe("loopback server: pins, invites, far band and emotes", () => {
       expect(outside.entities.map((e) => e.id)).toEqual([wn.you]);
       const farWire = await nextOfKind(near, MSG.farPlayers);
       expect(farWire).not.toBeNull();
-      expect(farWire!.byteLength).toBe(2 + FAR_PLAYERS_ROW_BYTES);
+      expect(farWire!.byteLength).toBe(8);
+      expect(FAR_PLAYERS_ROW_BYTES).toBe(6);
       expect(decodeFarPlayers(farWire!)).toEqual([{ id: ww.you, dir: 2, band: 0 }]);
     } finally {
       for (const socket of localSockets) socket.close();
