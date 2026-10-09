@@ -20,6 +20,7 @@ import {
   encodePlayerProgress,
   encodeRoster,
   encodeState4,
+  V4_BATCH_SIZE,
   type CommandMessage,
 } from "../examples/wander-online/net/protocol.ts";
 import { JOURNEY_EVENT, errandHudText, journeyEventText } from "../examples/wander-online/net/journey.ts";
@@ -492,15 +493,28 @@ simDescribe("wander-online journey view: auto-walk and fast", () => {
     const f = fixture(TOWN.hub.x, TOWN.hub.y);
     const w = await boot(f.opts);
     await enterWorld(w);
+    // Stop immediately after a packet flush, so each toggle below starts
+    // with an empty pending batch. Otherwise a six-tick packet can contain
+    // both the old and new fast request around the input edge.
+    const alignBatch = () => {
+      const before = f.inputs.length;
+      for (let frame = 0; frame < V4_BATCH_SIZE; frame++) {
+        pump(w, 1);
+        if (f.inputs.length > before) return;
+      }
+      throw new Error("input batch did not flush");
+    };
     const line = (mode: string) => `X ${TOWN.hub.x}  Y ${TOWN.hub.y}  ${mode}`;
     expect(treeHasText(w.getTree(), line("YOU"))).toBe(true);
     expect(f.inputs.every((mask) => (mask & WIRE_BTN.fast) === 0)).toBe(true);
+    alignBatch();
     const before = f.inputs.length;
     press(w, BTN.TRIANGLE);
-    pump(w, 8);
-    // Every input since the press carries the fast bit (the request).
-    expect(f.inputs.length).toBeGreaterThan(before + 3);
-    expect(f.inputs.slice(before + 3).every((mask) => (mask & WIRE_BTN.fast) !== 0)).toBe(true);
+    pump(w, V4_BATCH_SIZE);
+    // onFrame records the press frame before the view consumes its edge;
+    // every following reference tick carries the fast request.
+    expect(f.inputs.length).toBeGreaterThanOrEqual(before + V4_BATCH_SIZE);
+    expect(f.inputs.slice(before + 1).every((mask) => (mask & WIRE_BTN.fast) !== 0)).toBe(true);
     // Not confirmed yet: the HUD keeps YOU.
     expect(state()!.fast).toBe(false);
     expect(treeHasText(w.getTree(), line("YOU"))).toBe(true);
@@ -514,10 +528,12 @@ simDescribe("wander-online journey view: auto-walk and fast", () => {
     expect(treeHasText(w.getTree(), line("FAST"))).toBe(true);
     // TRIANGLE again drops the request; the snapshot still says fast
     // until the server's next one, so the HUD keeps FAST.
+    alignBatch();
     const again = f.inputs.length;
     press(w, BTN.TRIANGLE);
-    pump(w, 4);
-    expect(f.inputs.slice(again + 3).every((mask) => (mask & WIRE_BTN.fast) === 0)).toBe(true);
+    pump(w, V4_BATCH_SIZE);
+    expect(f.inputs.length).toBeGreaterThanOrEqual(again + V4_BATCH_SIZE);
+    expect(f.inputs.slice(again + 1).every((mask) => (mask & WIRE_BTN.fast) === 0)).toBe(true);
     expect(state()!.fast).toBe(true);
     unmount(w);
   }, 30_000);

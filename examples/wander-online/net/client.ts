@@ -4,9 +4,10 @@
 //
 // One OnlineClient owns one PocketSocket. The view calls onFrame() once per
 // host frame with the held buttons; the client predicts one reference tick
-// per INPUT (60/hz per frame) and packs every BATCH_SIZE ticks into one
-// INPUT_BATCH message (20 Hz wire rate at any host rate), each carrying the
-// first tick's sequence number. It reconciles against every STATE snapshot.
+// per INPUT (60/hz per frame) and packs consecutive ticks into INPUT_BATCH:
+// legacy/old-v4 servers use three ticks (20 Hz), while a capable v4 WELCOME
+// selects six (10 Hz). Each packet carries the first tick's sequence number.
+// The client reconciles against every STATE snapshot.
 // Socket callbacks fire during the framework's service pump (inside the
 // host's frame loop), so all of this runs on one thread with no races.
 //
@@ -41,7 +42,7 @@ import {
   decodeState,
   decodeState4,
   decodeWelcome,
-  decodeWelcome4,
+  decodeWelcome4Capabilities,
   encodeCommand,
   encodeInputBatch,
   encodePing,
@@ -295,6 +296,9 @@ export class OnlineClient {
   private serverClockMs = 0;
   private serverClockLocalMs = 0;
   private stopped = false;
+  /** Negotiated ticks per INPUT_BATCH. Three is the safe fallback until a
+   *  WELCOME4 explicitly advertises the six-tick codec capability. */
+  private inputBatchSize = BATCH_SIZE;
   /** Predicted ticks waiting to be packed into the next INPUT_BATCH. */
   private pending: { seq: number; buttons: number }[] = [];
   private now: () => number;
@@ -341,6 +345,10 @@ export class OnlineClient {
     this.invite = null;
     this.rejectReason = null;
     this.slowBackoffMs = SLOW_BACKOFF_START_MS;
+    // A new realm is a fresh sequence epoch. Never let a partial packet from
+    // the old realm choose the firstSeq or buttons of the next connection.
+    this.pending.length = 0;
+    this.inputBatchSize = BATCH_SIZE;
     const old = this.socket;
     if (old) {
       // Detach first: the old socket's close must not clobber the state of
@@ -418,6 +426,7 @@ export class OnlineClient {
       this.serverClockMs = 0;
       this.serverClockLocalMs = 0;
       this.pending.length = 0;
+      this.inputBatchSize = BATCH_SIZE;
       this.far.clear();
       this.emotes.clear();
       this.inviteWaiters.length = 0;
@@ -548,6 +557,8 @@ export class OnlineClient {
       this.generatorVersion = 0;
       this.epoch = 0;
       this.seq = 0;
+      this.pending.length = 0;
+      this.inputBatchSize = BATCH_SIZE;
       this.frozen = false;
       this.status = "joined";
       // WELCOME means this client has been admitted. Count the local player
@@ -563,13 +574,14 @@ export class OnlineClient {
       return;
     }
     if (kind === MSG.welcome4) {
-      const welcome = decodeWelcome4(data);
-      if (!welcome || welcome.generatorVersion !== GENERATOR_VERSION) {
+      const decoded = decodeWelcome4Capabilities(data);
+      if (!decoded || decoded.welcome.generatorVersion !== GENERATOR_VERSION) {
         this.rejectReason = "upgrade-required";
         this.status = "rejected";
         this.socket?.close(1008, "upgrade-required");
         return;
       }
+      const welcome = decoded.welcome;
       this.myId = welcome.you;
       this.grid = null;
       this.predictor = new RealmPredictor(welcome);
@@ -584,6 +596,8 @@ export class OnlineClient {
       this.realmRevision = welcome.realmRevision;
       this.observeServerClock(welcome.serverTimeMs);
       this.seq = 0;
+      this.pending.length = 0;
+      this.inputBatchSize = decoded.inputBatchSize;
       this.frozen = false;
       this.worldStateReady = false;
       this.status = "connecting";
@@ -756,15 +770,16 @@ export class OnlineClient {
     const fastBit = this.fastRequested && this.predictor instanceof RealmPredictor ? BTN.fast : 0;
     const mask = (live !== 0 ? live : autoMask) | fastBit;
 
-    // Predict one reference tick per INPUT as before, but pack every
-    // BATCH_SIZE ticks into one INPUT_BATCH message (20 Hz wire rate).
+    // Predict one reference tick per INPUT as before. Transport batching is
+    // negotiated by WELCOME4: six ticks/10 Hz when advertised, else the
+    // legacy three ticks/20 Hz.
     const ticks = Math.max(1, Math.round(60 / hz));
     for (let t = 0; t < ticks; t++) {
       const seq = this.predictor instanceof RealmPredictor
         ? this.predictor.pushInput(mask, this.estimatedServerTime(now))
         : this.predictor.pushInput(mask);
       this.pending.push({ seq, buttons: mask });
-      if (this.pending.length >= BATCH_SIZE) this.flushPending();
+      if (this.pending.length >= this.inputBatchSize) this.flushPending();
     }
 
     // RTT probe.

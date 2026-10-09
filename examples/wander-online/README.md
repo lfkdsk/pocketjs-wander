@@ -219,7 +219,7 @@ Little-endian, single source in [`net/protocol.ts`](net/protocol.ts):
 | JOIN (text) | — | `{"type":"join","v":3,...credential fields...}` |
 | JOIN v4 (text) | — | `{"type":"join","v":4,"supportedGeneratorVersions":[1],"worldStateVersion":1,...credential fields...}` |
 | INPUT | 7 | `0x01` seq u32, buttons u16 |
-| INPUT_BATCH | 6 + 2n | `0x03` firstSeq u32, count u8, buttons[count] u16 (v2: up to 3 ticks per message) |
+| INPUT_BATCH | 6 + 2n | `0x03` firstSeq u32, count u8, buttons[count] u16 (codec max 6 ticks; legacy sends 3) |
 | PING | 9 | `0x02` id u32, t u32 |
 | WELCOME | 17 + 9216 | `0x10` you u32, seed u32, x0 i32, y0 i32, grid |
 | WELCOME4 | 42 + realm id | `0x11` you, seed, generator, epoch, signed mover, revision, server time, realm id |
@@ -240,15 +240,17 @@ module's 64 KiB message limit. The tail follows the counted rows, so old
 clients ignore it; new clients talking to an old server fall back to the AOI
 count for both HUD values.
 
-**Batching (v2).** The client predicts one reference tick per INPUT as
-before, but packs every 3 ticks (60 Hz reference) into one INPUT_BATCH
-message, so the wire rate is 20 Hz at any host rate. The server expands
-a batch into the same per-tick input queue, so prediction,
-reconciliation and the zero-correction lockstep are unchanged. Both
-servers decode INPUT_BATCH and plain INPUT (the bots still send plain
-INPUT by default), so a v1 client works against a batching-capable server.
-The current authenticated protocol requires JOIN `"v":3`; batching was
-introduced by v2 and remains part of v3.
+**Batching (v2/v4).** The client predicts one reference tick per INPUT as
+before. Legacy v3 clients and batched bots keep packing 3 ticks into one
+INPUT_BATCH (20 Hz). A v4 WELCOME uses an otherwise-unused mover flags bit to
+advertise support for 6 ticks per packet (10 Hz); a new client falls back to 3
+when talking to an older v4 server without that bit. The codec accepts at most
+6 and refuses oversized encodes instead of silently truncating them. The
+server expands either size into the same per-tick input queue, so prediction,
+reconciliation and rollback semantics are unchanged. Both servers also decode
+plain INPUT (the bots still send it by default), so a v1 client works against a
+batching-capable server. The authenticated legacy protocol requires JOIN
+`"v":3`; batching was introduced by v2 and remains part of v3.
 
 The endless route requires JOIN `"v":4`, generator capability `1` and world
 state capability `1`. It rejects a legacy or mismatched capability with

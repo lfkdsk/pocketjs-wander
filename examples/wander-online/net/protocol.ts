@@ -101,12 +101,16 @@ export const MSG = {
 /** Infinite-realm wire version. v3 remains the frozen-window legacy wire. */
 export const WORLD_PROTOCOL_VERSION = 4;
 
-/** Reference ticks packed into one INPUT_BATCH. The client predicts one
- *  tick per INPUT as before; only the transport packing changes, so the
- *  server still consumes one input per reference tick. 3 ticks at 60 Hz
- *  reference = one 20 Hz message, which keeps a client under the hosted
- *  server's per-connection message rate limit. */
+/** Legacy reference ticks per INPUT_BATCH. v3 clients and the load bots keep
+ *  their original 20 Hz wire cadence. */
 export const BATCH_SIZE = 3;
+/** Largest INPUT_BATCH the shared codec accepts. A capable v4 realm advertises
+ *  six ticks in WELCOME4; an old realm without that bit stays at BATCH_SIZE. */
+export const INPUT_BATCH_MAX = 6;
+export const V4_BATCH_SIZE = 6;
+/** WELCOME4 byte 28 also carries mover flags in bits 0..1. Bit 2 is a server
+ *  capability: this connection accepts six reference ticks per input batch. */
+export const WELCOME4_FLAG_INPUT_BATCH_6 = 0x04;
 
 /** D-pad bits, same values the kit's engine uses, plus the realm's fast
  *  bit: the single-player TRIANGLE speed (8 px per reference tick instead of
@@ -555,11 +559,14 @@ export function encodeInput(seq: number, buttons: number): ArrayBuffer {
   return b;
 }
 
-/** Pack up to BATCH_SIZE consecutive reference ticks into one message.
+/** Pack up to INPUT_BATCH_MAX consecutive reference ticks into one message.
  *  `firstSeq` is the sequence number of buttons[0]; the rest follow
  *  consecutively (the server expands them into firstSeq..firstSeq+count-1). */
 export function encodeInputBatch(firstSeq: number, buttons: number[]): ArrayBuffer {
-  const count = Math.min(buttons.length, BATCH_SIZE);
+  if (buttons.length > INPUT_BATCH_MAX) {
+    throw new RangeError(`INPUT_BATCH exceeds ${INPUT_BATCH_MAX} ticks`);
+  }
+  const count = buttons.length;
   const b = new ArrayBuffer(6 + count * 2);
   const v = new DataView(b);
   v.setUint8(0, MSG.inputBatch);
@@ -611,7 +618,7 @@ export function encodeWelcome4(welcome: Welcome4): ArrayBuffer {
   v.setUint8(25, m.dir & 0x03);
   v.setUint8(26, m.phase & 0x0f);
   v.setUint8(27, m.stepDir & 0x03);
-  v.setUint8(28, (m.moving ? 1 : 0) | (m.walking ? 2 : 0));
+  v.setUint8(28, (m.moving ? 1 : 0) | (m.walking ? 2 : 0) | WELCOME4_FLAG_INPUT_BATCH_6);
   v.setUint32(29, welcome.realmRevision >>> 0, true);
   v.setFloat64(33, welcome.serverTimeMs, true);
   v.setUint8(41, realm.byteLength);
@@ -833,7 +840,7 @@ export function decodeInputBatch(buf: ArrayBuffer | Uint8Array): DecodedInputBat
   const v = buf instanceof Uint8Array ? new DataView(buf.buffer, buf.byteOffset, buf.byteLength) : new DataView(buf);
   if (buf.byteLength < 7) return null;
   const count = v.getUint8(5);
-  if (count === 0 || count > BATCH_SIZE || buf.byteLength < 6 + count * 2) return null;
+  if (count === 0 || count > INPUT_BATCH_MAX || buf.byteLength < 6 + count * 2) return null;
   const buttons: number[] = [];
   for (let i = 0; i < count; i++) buttons.push(v.getUint16(6 + i * 2, true));
   return { firstSeq: v.getUint32(1, true), buttons };
@@ -933,10 +940,17 @@ export function decodeState4(buf: ArrayBuffer | Uint8Array): DecodedState4 | nul
   };
 }
 
-/** Decode the v4 realm greeting. Returns null on malformed UTF-8 framing or
- * any non-exact payload length so a corrupt packet cannot become a partial
- * world epoch. */
-export function decodeWelcome4(buf: ArrayBuffer | Uint8Array): Welcome4 | null {
+export interface Welcome4Capabilities {
+  welcome: Welcome4;
+  /** Missing on old servers, whose safe and backwards-compatible cadence is
+   *  the legacy three-tick batch. */
+  inputBatchSize: typeof BATCH_SIZE | typeof V4_BATCH_SIZE;
+}
+
+/** Decode the v4 greeting and its in-band capabilities. Returns null on
+ * malformed UTF-8 framing or any non-exact payload length so a corrupt packet
+ * cannot become a partial world epoch. */
+export function decodeWelcome4Capabilities(buf: ArrayBuffer | Uint8Array): Welcome4Capabilities | null {
   if (buf.byteLength < WELCOME4_FIXED_BYTES) return null;
   const v = viewOf(buf);
   if (v.getUint8(0) !== MSG.welcome4) return null;
@@ -946,7 +960,7 @@ export function decodeWelcome4(buf: ArrayBuffer | Uint8Array): Welcome4 | null {
     ? buf.subarray(WELCOME4_FIXED_BYTES, WELCOME4_FIXED_BYTES + realmLen)
     : new Uint8Array(buf, WELCOME4_FIXED_BYTES, realmLen);
   const flags = v.getUint8(28);
-  return {
+  const welcome: Welcome4 = {
     you: v.getUint32(1, true),
     seed: v.getUint32(5, true),
     generatorVersion: v.getUint16(9, true),
@@ -966,6 +980,16 @@ export function decodeWelcome4(buf: ArrayBuffer | Uint8Array): Welcome4 | null {
     serverTimeMs: v.getFloat64(33, true),
     realmId: utf8ToString(bytes),
   };
+  return {
+    welcome,
+    inputBatchSize: (flags & WELCOME4_FLAG_INPUT_BATCH_6) !== 0 ? V4_BATCH_SIZE : BATCH_SIZE,
+  };
+}
+
+/** Compatibility view for callers that only need the original WELCOME4
+ * payload. Capability-aware clients should use decodeWelcome4Capabilities. */
+export function decodeWelcome4(buf: ArrayBuffer | Uint8Array): Welcome4 | null {
+  return decodeWelcome4Capabilities(buf)?.welcome ?? null;
 }
 
 export function decodeWelcome(buf: ArrayBuffer | Uint8Array): { you: number; seed: number; x0: number; y0: number; grid: Uint8Array } {

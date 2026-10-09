@@ -307,26 +307,31 @@ describe("shared: monthly ledger", () => {
 });
 
 describe("shared: batched INPUT codec", () => {
-  test("round-trips up to BATCH_SIZE buttons", () => {
-    const b = encodeInputBatch(7, [BTN.up, BTN.down, 0]);
+  test("round-trips the six-tick codec maximum and legacy three-tick batches", () => {
+    const buttons = [BTN.up, BTN.down, 0, BTN.left, BTN.right, 0];
+    const b = encodeInputBatch(7, buttons);
     expect(new DataView(b).getUint8(0)).toBe(MSG.inputBatch);
+    expect(b.byteLength).toBe(18);
     const d = decodeInputBatch(b)!;
     expect(d.firstSeq).toBe(7);
-    expect(d.buttons).toEqual([BTN.up, BTN.down, 0]);
+    expect(d.buttons).toEqual(buttons);
+
+    const legacy = decodeInputBatch(encodeInputBatch(20, [BTN.up, BTN.down, 0]))!;
+    expect(legacy).toEqual({ firstSeq: 20, buttons: [BTN.up, BTN.down, 0] });
   });
   test("rejects truncated, empty and over-capacity batches", () => {
     expect(decodeInputBatch(new ArrayBuffer(3))).toBeNull();
     const empty = new ArrayBuffer(6);
     new DataView(empty).setUint8(5, 0);
     expect(decodeInputBatch(empty)).toBeNull();
-    // count byte above BATCH_SIZE is refused even when bytes are present.
-    const over = new ArrayBuffer(6 + 4 * 2);
+    // Seven is above the shared codec maximum, even when all bytes exist.
+    const over = new ArrayBuffer(6 + 7 * 2);
     const dv = new DataView(over);
     dv.setUint8(0, MSG.inputBatch);
-    dv.setUint8(5, 4);
+    dv.setUint8(5, 7);
     expect(decodeInputBatch(over)).toBeNull();
-    // encode caps at BATCH_SIZE.
-    expect(decodeInputBatch(encodeInputBatch(1, [1, 2, 3, 4]))!.buttons.length).toBe(3);
+    // Encoding too many inputs must never truncate them silently.
+    expect(() => encodeInputBatch(1, [1, 2, 3, 4, 5, 6, 7])).toThrow("INPUT_BATCH exceeds 6 ticks");
   });
 });
 

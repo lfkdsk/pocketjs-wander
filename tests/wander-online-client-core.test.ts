@@ -4,9 +4,14 @@ import { describe, expect, test } from "bun:test";
 import { SocketError, type PocketSocket, type SocketCloseEvent, type SocketReadyState } from "@pocketjs/framework/socket";
 import { OnlineClient, realmEndpoint, type SocketFactory } from "../examples/wander-online/net/client.ts";
 import {
+  BTN,
+  MSG,
   REGION_STATE_FLAG_INITIAL,
+  WELCOME4_FLAG_INPUT_BATCH_6,
   WORLD_PROTOCOL_VERSION,
   WORLD_STATE_VERSION,
+  decodeInputBatch,
+  decodeWelcome4Capabilities,
   encodePlayerProgress,
   encodeRegionState,
   encodeState4,
@@ -88,6 +93,46 @@ function entity(id: number): WireEntity {
   };
 }
 
+function realmWelcome(epoch = 19): ArrayBuffer {
+  return encodeWelcome4({
+    you: 7,
+    seed: 0x5eed_0001,
+    generatorVersion: 1,
+    epoch,
+    realmId: "west",
+    realmRevision: 0,
+    serverTimeMs: 1_000,
+    mover: {
+      tx: -700, ty: 800, px: 0, py: 0,
+      dir: 0, phase: 0, stepDir: 0,
+      moving: false, walking: false,
+    },
+  });
+}
+
+function readyRealm(harness: SocketHarness, welcome = realmWelcome()): void {
+  harness.message(welcome);
+  harness.message(encodeRegionState({
+    flags: REGION_STATE_FLAG_INITIAL,
+    realmRevision: 1,
+    serverTimeMs: 1_000,
+    rows: [{
+      rx: -8, ry: 8, discoveredAtMs: 0,
+      improvementLevel: 0, revision: 1, landmarkFirstName: "",
+    }],
+  }));
+}
+
+function inputBatches(sent: readonly (string | Uint8Array | ArrayBuffer)[]) {
+  return sent.flatMap((data) => {
+    if (typeof data === "string") return [];
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+    if (bytes[0] !== MSG.inputBatch) return [];
+    const decoded = decodeInputBatch(bytes);
+    return decoded ? [decoded] : [];
+  });
+}
+
 describe("wander-online client core", () => {
   test("an immediate refusal during the queued open callback cannot hide its close reason", () => {
     const harness = socketHarness();
@@ -157,6 +202,125 @@ describe("wander-online client core", () => {
     harness.message(encodeState4(1, 0, 19, [{ ...entity(7), tx: -700, ty: 800 }], { roomOnline: 2, allOnline: 5 }));
     expect(client.hud().online).toBe(2);
     expect(client.hud().allOnline).toBe(5);
+    client.stop();
+  });
+
+  test("a capable v4 welcome sends six predicted 60 Hz ticks in one 10 Hz batch", () => {
+    expect(decodeWelcome4Capabilities(realmWelcome())?.inputBatchSize).toBe(6);
+    const harness = socketHarness();
+    const client = new OnlineClient("ws://unit.test/ws", {
+      now: () => 1_000,
+      socketFactory: harness.factory,
+    });
+    harness.open();
+    readyRealm(harness);
+
+    client.onFrame(BTN.right, 60, 0);
+    expect(client.predictor?.lastSeq).toBe(1); // prediction is immediate
+    expect(client.predictor?.unacked).toBe(1);
+    expect(inputBatches(harness.sent)).toHaveLength(0);
+    for (let i = 1; i < 5; i++) client.onFrame(BTN.right, 60, 0);
+    expect(client.predictor?.lastSeq).toBe(5);
+    expect(inputBatches(harness.sent)).toHaveLength(0);
+
+    client.onFrame(BTN.right, 60, 0);
+    expect(inputBatches(harness.sent)).toEqual([{
+      firstSeq: 1,
+      buttons: [BTN.right, BTN.right, BTN.right, BTN.right, BTN.right, BTN.right],
+    }]);
+    client.stop();
+  });
+
+  test("a capable v4 welcome sends one six-tick batch every two 20 Hz frames", () => {
+    const harness = socketHarness();
+    const client = new OnlineClient("ws://unit.test/ws", {
+      now: () => 1_000,
+      socketFactory: harness.factory,
+    });
+    harness.open();
+    readyRealm(harness);
+
+    client.onFrame(BTN.down, 20, 0);
+    expect(client.predictor?.lastSeq).toBe(3);
+    expect(inputBatches(harness.sent)).toHaveLength(0);
+    client.onFrame(BTN.down, 20, 0);
+    expect(client.predictor?.lastSeq).toBe(6);
+    expect(inputBatches(harness.sent)).toEqual([{
+      firstSeq: 1,
+      buttons: [BTN.down, BTN.down, BTN.down, BTN.down, BTN.down, BTN.down],
+    }]);
+    client.stop();
+  });
+
+  test("an old v4 welcome without the capability bit falls back to three ticks", () => {
+    const oldWelcome = realmWelcome();
+    const flags = new DataView(oldWelcome).getUint8(28);
+    new DataView(oldWelcome).setUint8(28, flags & ~WELCOME4_FLAG_INPUT_BATCH_6);
+    expect(decodeWelcome4Capabilities(oldWelcome)?.inputBatchSize).toBe(3);
+
+    const harness = socketHarness();
+    const client = new OnlineClient("ws://unit.test/ws", {
+      now: () => 1_000,
+      socketFactory: harness.factory,
+    });
+    harness.open();
+    readyRealm(harness, oldWelcome);
+    client.onFrame(BTN.left, 60, 0);
+    client.onFrame(BTN.left, 60, 0);
+    expect(inputBatches(harness.sent)).toHaveLength(0);
+    client.onFrame(BTN.left, 60, 0);
+    expect(inputBatches(harness.sent)).toEqual([{
+      firstSeq: 1,
+      buttons: [BTN.left, BTN.left, BTN.left],
+    }]);
+    client.stop();
+  });
+
+  test("a fresh WELCOME4 discards a partial batch from the previous epoch", () => {
+    const harness = socketHarness();
+    const client = new OnlineClient("ws://unit.test/ws", {
+      now: () => 1_000,
+      socketFactory: harness.factory,
+    });
+    harness.open();
+    readyRealm(harness, realmWelcome(19));
+    for (let i = 0; i < 5; i++) client.onFrame(BTN.right, 60, 0);
+    expect(inputBatches(harness.sent)).toHaveLength(0);
+
+    readyRealm(harness, realmWelcome(20));
+    for (let i = 0; i < 5; i++) client.onFrame(BTN.left, 60, 0);
+    expect(inputBatches(harness.sent)).toHaveLength(0);
+    client.onFrame(BTN.left, 60, 0);
+    expect(inputBatches(harness.sent)).toEqual([{
+      firstSeq: 1,
+      buttons: [BTN.left, BTN.left, BTN.left, BTN.left, BTN.left, BTN.left],
+    }]);
+    client.stop();
+  });
+
+  test("leaveRealm discards a partial batch before the next connection", () => {
+    const first = socketHarness(), second = socketHarness();
+    const factories = [first.factory, second.factory];
+    let opened = 0;
+    const factory: SocketFactory = (url, opts) => factories[opened++]!(url, opts);
+    const client = new OnlineClient("ws://unit.test/ws", {
+      now: () => 1_000,
+      socketFactory: factory,
+    });
+    first.open();
+    readyRealm(first, realmWelcome(19));
+    for (let i = 0; i < 5; i++) client.onFrame(BTN.right, 60, 0);
+    expect(inputBatches(first.sent)).toHaveLength(0);
+
+    client.leaveRealm();
+    client.onFrame(0, 60, 0); // opens the replacement socket
+    second.open();
+    readyRealm(second, realmWelcome(20));
+    for (let i = 0; i < 6; i++) client.onFrame(BTN.left, 60, 0);
+    expect(inputBatches(second.sent)).toEqual([{
+      firstSeq: 1,
+      buttons: [BTN.left, BTN.left, BTN.left, BTN.left, BTN.left, BTN.left],
+    }]);
     client.stop();
   });
 
