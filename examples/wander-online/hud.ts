@@ -35,9 +35,48 @@ export const NAME_LABEL_W = 160;
 
 /** The bottom-left controls hint strip. */
 export function helpRect(w: number, h: number): HudRect {
-  // 350 px holds the 336 px help line of the 12 px slot plus its inset.
-  return { x0: 6, y0: h - 20, x1: Math.min(w - 6, 6 + 350), y1: h - 4 };
+  // 420 px holds the 402 px help line of the 12 px slot plus its inset.
+  return { x0: 6, y0: h - 20, x1: Math.min(w - 6, 6 + 420), y1: h - 4 };
 }
+
+/** The emote picker strip: five cells in the notice band's place (the
+ *  notice hides while the picker is open). Cells are sized from the band so
+ *  the strip fits the 480 px baseline with its margins. */
+export const EMOTE_CELLS = 5;
+export function emoteBarRect(w: number, h: number, debug: boolean): HudRect {
+  const band = noticeRect(w, h, debug);
+  const W = Math.min(w - 12, EMOTE_CELLS * 86 + 8);
+  const x0 = Math.round((w - W) / 2);
+  return { x0, y0: band.y0, x1: x0 + W, y1: band.y0 + 24 };
+}
+
+export function emoteCell(bar: HudRect, index: number): HudRect {
+  const inner = bar.x1 - bar.x0 - 8;
+  const cellW = Math.floor(inner / EMOTE_CELLS);
+  const x0 = bar.x0 + 4 + index * cellW;
+  return { x0, y0: bar.y0 + 2, x1: x0 + cellW - 2, y1: bar.y1 - 2 };
+}
+
+/** Where a far player's edge marker sits: the point where the ray from the
+ *  screen centre in the octant's direction meets an inset rectangle that
+ *  clears the status plate, the bottom bars and the side margins. */
+export const FAR_MARKER_SIZE = 8;
+export function farMarkerRect(w: number, h: number, debug: boolean): HudRect {
+  return { x0: 10, y0: statusPlate(w, h, debug).y1 + 10, x1: w - 10, y1: h - 66 };
+}
+
+export function farMarkerPoint(w: number, h: number, debug: boolean, ux: number, uy: number): { x: number; y: number } {
+  const box = farMarkerRect(w, h, debug);
+  const cx = (box.x0 + box.x1) / 2, cy = (box.y0 + box.y1) / 2;
+  const hw = (box.x1 - box.x0) / 2, hh = (box.y1 - box.y0) / 2;
+  const tx = ux === 0 ? Infinity : hw / Math.abs(ux);
+  const ty = uy === 0 ? Infinity : hh / Math.abs(uy);
+  const t = Math.min(tx, ty);
+  return { x: Math.round(cx + ux * t), y: Math.round(cy + uy * t) };
+}
+
+/** Width of a far marker's label (name plus band word), screen px. */
+export const FAR_LABEL_W = 200;
 
 /** The LOG / RUMOR bar, directly above the ERRAND bar (the single-player
  *  field's bottom strips, same placement). */
@@ -74,7 +113,7 @@ export function noticeRect(w: number, h: number, debug: boolean): HudRect {
  *  taller one, so it clears both). */
 export function menuRect(w: number, h: number): HudRect {
   const W = 240;
-  const H = 110;
+  const H = 124;
   const x0 = Math.round((w - W) / 2);
   const y0 = Math.max(Math.round((h - H) / 2), noticeRect(w, h, true).y1 + 4);
   return { x0, y0, x1: x0 + W, y1: y0 + H };

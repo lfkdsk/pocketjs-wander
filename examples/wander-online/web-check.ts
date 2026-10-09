@@ -19,7 +19,10 @@
 //     [--expect-all 3] [--expect-realm local] [--ticket value] \
 //     [--expect-first] [--expect-progress 1] [--expect-improvement 1] \
 //     [--auto-walk] [--create-name 演示网页 --create-look 40] \
-//     [--expect-name 演示网页] [--timeout-ms 60000]
+//     [--expect-name 演示网页] [--invite plaza-2.K7MQ2XJ4] [--mint-invite] \
+//     [--meet-prefix /path/to/cf-web] [--expect-reject "WORLD FULL"]
+//     [--close-page]
+//     [--timeout-ms 60000]
 //
 // --auto-walk turns the client's opt-in auto-walk driver on at boot (the
 // movement assertion then needs no remote player to move).
@@ -39,7 +42,8 @@
 // non-loopback socket.
 
 import { decodePng } from "../../vendor/pocket-rpgkit/vendor/pocketjs/framework/compiler/pak.ts";
-import { statusPlate } from "./hud.ts";
+import { FAR_LABEL_W, FAR_MARKER_SIZE, farMarkerPoint, farMarkerRect, statusPlate } from "./hud.ts";
+import { farVector } from "./net/far.ts";
 import { glyphCellVerdict, NAME_FONT_PX } from "./glyph-check.ts";
 
 interface RemotePos {
@@ -74,9 +78,17 @@ interface PublishedState {
   logCount: number;
   dialog: boolean;
   createError: string;
+  rejectText: string;
   look: number;
   roster: Record<string, { name: string; look: number }>;
   remote: RemotePos[];
+  far: { id: number; dir: number; band: number }[];
+  emotes: Record<string, number>;
+  emoteBar: boolean;
+  /** The last invite token this client minted ("" until then). */
+  invite: string;
+  /** The realm the client asks for on (re)connect. */
+  realmPin: string;
 }
 
 export interface WebCheckFlags {
@@ -103,6 +115,19 @@ export interface WebCheckFlags {
   createLook: number;
   /** The roster name this client must carry once joined. */
   expectName: string | null;
+  /** An invite token (`<realm>.<CODE>`) supplied through the real
+   *  `#invite=` page entry path: the client joins that realm with it. */
+  invite: string | null;
+  /** After joining, mint an invite with real key events (SELECT, then L)
+   *  and require the page's invite link box to show it. */
+  mintInvite: boolean;
+  /** Exercise one real preset emote and walk beyond the server AOI, writing
+   *  480x272 and 960x544 3x captures for both states under this prefix. */
+  meetPrefix: string | null;
+  /** Alternate mode: require this explicit refusal instead of joining. */
+  expectReject: string | null;
+  /** Navigate away after all assertions so hosted demos close cleanly. */
+  closePage: boolean;
 }
 
 export function parseFlags(args: readonly string[]): WebCheckFlags {
@@ -129,7 +154,28 @@ export function parseFlags(args: readonly string[]): WebCheckFlags {
     createName: get("create-name", "") || null,
     createLook: Number(get("create-look", "0")),
     expectName: get("expect-name", "") || null,
+    invite: get("invite", "") || null,
+    mintInvite: args.includes("--mint-invite"),
+    meetPrefix: get("meet-prefix", "") || null,
+    expectReject: get("expect-reject", "") || null,
+    closePage: args.includes("--close-page"),
   };
+}
+
+/** Build the same invitation URL a player receives from the in-game menu.
+ * Existing fragment parameters survive so this remains a faithful browser
+ * entry path even when another page option is present. */
+export function pageUrl(page: string, invite: string | null): string {
+  if (!invite) return page;
+  const url = new URL(page);
+  const fragment = new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
+  fragment.set("invite", invite);
+  url.hash = fragment.toString();
+  return url.toString();
+}
+
+export function inviteLinkHasToken(link: unknown, token: string): link is string {
+  return typeof link === "string" && link.endsWith(`#invite=${token}`);
 }
 
 const flags = parseFlags(process.argv.slice(2));
@@ -352,6 +398,238 @@ async function pressKey(cdp: Cdp, code: string, key: string, vk: number): Promis
   await sleep(70);
 }
 
+async function holdKey(cdp: Cdp, code: string, key: string, vk: number, ms: number): Promise<void> {
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", code, key, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
+  await sleep(ms);
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", code, key, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
+  await sleep(120);
+}
+
+/** A bounded probe used while trying walk directions. Unlike waitFor it does
+ * not consume the whole command deadline when one direction hits a wall. */
+async function waitForWithin(
+  cdp: Cdp,
+  pred: (s: PublishedState | null) => boolean,
+  timeoutMs: number,
+): Promise<PublishedState | null> {
+  const until = Math.min(deadline, Date.now() + timeoutMs);
+  while (Date.now() < until) {
+    const state = await readState(cdp);
+    if (pred(state)) return state;
+    await sleep(200);
+  }
+  return null;
+}
+
+async function setViewport(
+  cdp: Cdp,
+  width: number,
+  height: number,
+): Promise<CanvasPlacement> {
+  await cdp.send("Emulation.setDeviceMetricsOverride", {
+    width,
+    height,
+    deviceScaleFactor: 3,
+    mobile: false,
+  });
+  await sleep(500);
+  return canvasPlacement(cdp);
+}
+
+async function captureAt(
+  cdp: Cdp,
+  path: string,
+  width: number,
+  height: number,
+): Promise<CanvasPlacement> {
+  const canvas = await setViewport(cdp, width, height);
+  await screenshot(cdp, path);
+  return canvas;
+}
+
+interface LogicalRect { x0: number; y0: number; x1: number; y1: number }
+
+interface CanvasPlacement {
+  /** Device-pixel origin and device pixels per game logical pixel. */
+  x: number;
+  y: number;
+  scale: number;
+  /** Actual game viewport selected by the responsive player. */
+  width: number;
+  height: number;
+}
+
+async function exactColorInLogicalRect(
+  path: string,
+  canvas: CanvasPlacement,
+  rect: LogicalRect,
+  rgb: readonly [number, number, number],
+): Promise<number> {
+  const image = decodePng(new Uint8Array(await Bun.file(path).arrayBuffer()));
+  const x0 = Math.max(0, Math.floor(canvas.x + rect.x0 * canvas.scale));
+  const y0 = Math.max(0, Math.floor(canvas.y + rect.y0 * canvas.scale));
+  const x1 = Math.min(image.width, Math.ceil(canvas.x + rect.x1 * canvas.scale));
+  const y1 = Math.min(image.height, Math.ceil(canvas.y + rect.y1 * canvas.scale));
+  let count = 0;
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+    const i = (y * image.width + x) * 4;
+    if (image.rgba[i] === rgb[0] && image.rgba[i + 1] === rgb[1] && image.rgba[i + 2] === rgb[2]) count++;
+  }
+  return count;
+}
+
+async function checkEmotePixels(
+  path: string,
+  canvas: CanvasPlacement,
+): Promise<number> {
+  // The local walker is camera-centred; its 30x14 bubble starts 38 px above
+  // the centre. Sample the plate interior, excluding its one-pixel border.
+  const count = await exactColorInLogicalRect(path, canvas, {
+    x0: canvas.width / 2 - 14,
+    y0: canvas.height / 2 - 37,
+    x1: canvas.width / 2 + 14,
+    y1: canvas.height / 2 - 25,
+  }, [0xff, 0xf6, 0xc4]);
+  const minimum = Math.max(20, Math.floor(80 * canvas.scale * canvas.scale));
+  if (count < minimum) fail(`${path}: emote bubble has ${count} cream pixels, expected at least ${minimum}`);
+  return count;
+}
+
+async function checkRejectPixels(path: string, canvas: CanvasPlacement): Promise<number> {
+  const plate = statusPlate(canvas.width, canvas.height, false);
+  // The refusal occupies the status plate's first 12 px line. Count the
+  // exact HUD yellow there so a black, not-yet-admitted world cannot pass
+  // merely because the surrounding web page has colorful controls.
+  const count = await exactColorInLogicalRect(path, canvas, {
+    x0: plate.x0 + 4,
+    y0: plate.y0 + 2,
+    x1: plate.x1 - 4,
+    y1: plate.y0 + 14,
+  }, [0xff, 0xe9, 0x7a]);
+  const minimum = Math.max(12, Math.floor(16 * canvas.scale * canvas.scale));
+  if (count < minimum) fail(`${path}: WORLD FULL status has ${count} yellow pixels, expected at least ${minimum}`);
+  return count;
+}
+
+async function checkFarPixels(
+  path: string,
+  state: PublishedState,
+  canvas: CanvasPlacement,
+): Promise<{ marker: number; label: number }> {
+  const marker = state.far[0];
+  if (!marker) fail(`${path}: no far-player row at capture time`);
+  const box = farMarkerRect(canvas.width, canvas.height, false);
+  const unit = farVector(marker.dir);
+  const at = farMarkerPoint(canvas.width, canvas.height, false, unit.x, unit.y);
+  const mx = Math.min(box.x1 - FAR_MARKER_SIZE, Math.max(box.x0, at.x - FAR_MARKER_SIZE / 2));
+  const my = Math.min(box.y1 - FAR_MARKER_SIZE, Math.max(box.y0, at.y - FAR_MARKER_SIZE / 2));
+  const onRight = at.x > (box.x0 + box.x1) / 2;
+  const lx = onRight ? mx - 4 - FAR_LABEL_W : mx + FAR_MARKER_SIZE + 4;
+  const ly = Math.min(box.y1 - 12, Math.max(box.y0, my - 2));
+  const yellow = [0xff, 0xe9, 0x7a] as const;
+  const markerInk = await exactColorInLogicalRect(path, canvas, { x0: mx, y0: my, x1: mx + FAR_MARKER_SIZE, y1: my + FAR_MARKER_SIZE }, yellow);
+  const labelInk = await exactColorInLogicalRect(path, canvas, { x0: lx, y0: ly, x1: lx + FAR_LABEL_W, y1: ly + 12 }, yellow);
+  const markerMin = Math.max(6, Math.floor(12 * canvas.scale * canvas.scale));
+  const labelMin = Math.max(12, Math.floor(12 * canvas.scale * canvas.scale));
+  if (markerInk < markerMin || labelInk < labelMin) {
+    fail(`${path}: far marker pixels marker=${markerInk}/${markerMin} label=${labelInk}/${labelMin}`);
+  }
+  return { marker: markerInk, label: labelInk };
+}
+
+async function exerciseMeeting(cdp: Cdp, prefix: string): Promise<Record<string, unknown>> {
+  await evaluate(cdp, `document.getElementById("stage").focus()`);
+
+  // R opens the picker and A sends its first preset. The client deliberately
+  // draws nothing until the real Room echoes EMOTE back.
+  await pressKey(cdp, "KeyE", "e", 69);
+  await waitFor(cdp, (s) => s?.emoteBar === true, "the emote picker");
+  await pressKey(cdp, "Enter", "Enter", 13);
+  const echoed = await waitFor(cdp, (s) => s !== null && Object.hasOwn(s.emotes, String(s.myId)), "the server-confirmed emote bubble");
+  const emote = echoed.emotes[String(echoed.myId)]!;
+  const emote480 = `${prefix}-emote-480x272-3x.png`;
+  const emote960 = `${prefix}-emote-960x544-3x.png`;
+  const emoteCanvas480 = await captureAt(cdp, emote480, 480, 272);
+  const emoteInk480 = await checkEmotePixels(emote480, emoteCanvas480);
+  const emoteCanvas960 = await captureAt(cdp, emote960, 960, 544);
+  const emoteInk960 = await checkEmotePixels(emote960, emoteCanvas960);
+  console.log(`WEBCHECK_EMOTE ${JSON.stringify({ id: echoed.myId, emote, images: [emote480.split("/").at(-1), emote960.split("/").at(-1)], cream: [emoteInk480, emoteInk960] })}`);
+
+  await setViewport(cdp, 480, 272);
+  await waitForWithin(cdp, (s) => s !== null && Object.keys(s.emotes).length === 0, 6_000);
+  const start = (await readState(cdp))!;
+  const peer = start.remote[0];
+  if (!peer) fail("meeting exercise lost the nearby invite host before walking");
+  const dx = start.x * 16 - peer.x;
+  const dy = start.y * 16 - peer.y;
+  const away = Math.abs(dx) >= Math.abs(dy)
+    ? (dx >= 0 ? ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"] : ["ArrowLeft", "ArrowDown", "ArrowRight", "ArrowUp"])
+    : (dy >= 0 ? ["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"] : ["ArrowUp", "ArrowRight", "ArrowDown", "ArrowLeft"]);
+  const keys: Record<string, { key: string; vk: number }> = {
+    ArrowRight: { key: "ArrowRight", vk: 39 },
+    ArrowDown: { key: "ArrowDown", vk: 40 },
+    ArrowLeft: { key: "ArrowLeft", vk: 37 },
+    ArrowUp: { key: "ArrowUp", vk: 38 },
+  };
+  await pressKey(cdp, "KeyX", "x", 88); // TRIANGLE: server-confirmed fast mode.
+  const fast = await waitForWithin(cdp, (s) => s?.fast === true, 3_000);
+  if (!fast) fail("meeting exercise could not enable fast movement");
+  let far: PublishedState | null = null;
+  for (const code of away) {
+    const key = keys[code]!;
+    await holdKey(cdp, code, key.key, key.vk, 1_200);
+    far = await waitForWithin(cdp, (s) => s !== null && s.far.length > 0 && s.remote.length === 0, 2_000);
+    if (far) break;
+  }
+  if (!far) fail("meeting exercise could not walk beyond the host's AOI");
+
+  const far480 = `${prefix}-far-480x272-3x.png`;
+  const far960 = `${prefix}-far-960x544-3x.png`;
+  const farCanvas480 = await setViewport(cdp, 480, 272);
+  const farState480 = await waitFor(cdp, (s) => s !== null && s.far.length > 0 && s.remote.length === 0, "the far marker at 480x272");
+  await screenshot(cdp, far480);
+  const farInk480 = await checkFarPixels(far480, farState480, farCanvas480);
+  const farCanvas960 = await setViewport(cdp, 960, 544);
+  const farState960 = await waitFor(cdp, (s) => s !== null && s.far.length > 0 && s.remote.length === 0, "the far marker at 960x544");
+  await screenshot(cdp, far960);
+  const farInk960 = await checkFarPixels(far960, farState960, farCanvas960);
+  const row = farState960.far[0]!;
+  const name = farState960.roster[String(row.id)]?.name ?? "";
+  if (!name) fail("far marker has no roster name");
+  console.log(`WEBCHECK_FAR ${JSON.stringify({ id: row.id, name, dir: row.dir, band: row.band, from: [start.x, start.y], to: [farState960.x, farState960.y], images: [far480.split("/").at(-1), far960.split("/").at(-1)], ink: [farInk480, farInk960] })}`);
+  return { emote, far: { id: row.id, name, dir: row.dir, band: row.band } };
+}
+
+/** Mint an invite the way a browser player does: SELECT opens the menu,
+ *  L asks the server. The token must show in the game's state and the
+ *  page must offer it as a link ending in `#invite=<token>`. */
+async function mintInvite(cdp: Cdp): Promise<{ token: string; link: string }> {
+  await evaluate(cdp, `document.getElementById("stage").focus()`);
+  await pressKey(cdp, "ShiftLeft", "Shift", 16); // SELECT: the menu
+  await pressKey(cdp, "KeyQ", "q", 81); // LTRIGGER: invite a friend
+  const state = await waitFor(cdp, (s) => s !== null && typeof s.invite === "string" && s.invite.length > 0, "the invite token");
+  const token = state.invite;
+  const link = await evaluate(cdp, `(() => {
+    const box = document.getElementById("auth-invite-box");
+    const input = document.getElementById("auth-invite");
+    if (!box || box.hidden || !input) return "";
+    return input.value;
+  })()`);
+  if (!inviteLinkHasToken(link, token)) {
+    fail(`the page did not show the invite link for ${token} (got ${JSON.stringify(link)})`);
+  }
+  console.log(`WEBCHECK_INVITE ${JSON.stringify({ token, link })}`);
+  // Close through the page's real control before taking game screenshots.
+  // Leaving the share panel open makes the responsive page push most of the
+  // game canvas below a 480x272 viewport, hiding the bubble being checked.
+  const closed = await evaluate(cdp, `(() => {
+    document.getElementById("auth-invite-close")?.click();
+    return document.getElementById("auth-invite-box")?.hidden === true;
+  })()`);
+  if (closed !== true) fail("the page did not close its invite link box");
+  return { token, link };
+}
+
 async function evaluate(cdp: Cdp, expression: string): Promise<unknown> {
   const res = (await cdp.send("Runtime.evaluate", { expression, returnByValue: true })) as { result?: { value?: unknown } };
   return res.result?.value;
@@ -390,19 +668,34 @@ async function createCharacter(cdp: Cdp, name: string, look: number): Promise<vo
 
 /** The game canvas's place in a capture: device-pixel origin and device
  *  pixels per logical pixel (the page scales the canvas to fit). */
-async function canvasPlacement(cdp: Cdp, logicalWidth: number): Promise<{ x: number; y: number; scale: number }> {
-  const raw = await evaluate(cdp, `(() => { const r = document.getElementById("screen").getBoundingClientRect(); return JSON.stringify({ x: r.x, y: r.y, w: r.width, dpr: devicePixelRatio }); })()`);
-  const rect = JSON.parse(String(raw)) as { x: number; y: number; w: number; dpr: number };
-  return { x: rect.x * rect.dpr, y: rect.y * rect.dpr, scale: (rect.w * rect.dpr) / logicalWidth };
+async function canvasPlacement(cdp: Cdp): Promise<CanvasPlacement> {
+  const raw = await evaluate(cdp, `(() => {
+    const screen = document.getElementById("screen");
+    const stage = document.getElementById("stage");
+    const r = screen.getBoundingClientRect();
+    const logical = String(stage.dataset.logical || "").split("x").map(Number);
+    const density = Number(stage.dataset.density) || 1;
+    const width = Number.isFinite(logical[0]) && logical[0] > 0 ? logical[0] : screen.width / density;
+    const height = Number.isFinite(logical[1]) && logical[1] > 0 ? logical[1] : screen.height / density;
+    return JSON.stringify({ x: r.x, y: r.y, w: r.width, dpr: devicePixelRatio, width, height });
+  })()`);
+  const rect = JSON.parse(String(raw)) as { x: number; y: number; w: number; dpr: number; width: number; height: number };
+  return {
+    x: rect.x * rect.dpr,
+    y: rect.y * rect.dpr,
+    scale: (rect.w * rect.dpr) / rect.width,
+    width: rect.width,
+    height: rect.height,
+  };
 }
 
 /** The 480x272 screenshot's HUD name line, cell by cell: every code point
  *  of the created name must be drawn as a real glyph (ink inside the cell,
  *  not the hollow replacement box a missing glyph leaves and not blank).
  *  The screenshot is 3x; the plate geometry comes from hud.ts. */
-async function checkNameLine(path: string, name: string, state: PublishedState, canvas: { x: number; y: number; scale: number }): Promise<void> {
+async function checkNameLine(path: string, name: string, state: PublishedState, canvas: CanvasPlacement): Promise<void> {
   const image = decodePng(new Uint8Array(await Bun.file(path).arrayBuffer()));
-  const plate = statusPlate(480, 272, false);
+  const plate = statusPlate(canvas.width, canvas.height, false);
   const cells = Array.from(name);
   const verdicts = cells.map((ch, i) => ({
     ch,
@@ -417,6 +710,12 @@ async function screenshot(cdp: Cdp, path: string): Promise<void> {
   const res = (await cdp.send("Page.captureScreenshot", { format: "png" })) as { data?: string };
   if (!res.data) fail("screenshot returned no data");
   await Bun.write(path, Buffer.from(res.data, "base64"));
+}
+
+async function closePage(cdp: Cdp): Promise<void> {
+  await cdp.send("Page.navigate", { url: "about:blank" });
+  // Give Chrome a turn to run page teardown and send the WebSocket FIN.
+  await sleep(1_000);
 }
 
 async function main(): Promise<void> {
@@ -446,17 +745,38 @@ async function main(): Promise<void> {
     deviceScaleFactor: 3,
     mobile: false,
   });
-  await cdp.send("Page.navigate", { url: flags.page });
+  await cdp.send("Page.navigate", { url: pageUrl(flags.page, flags.invite) });
+
+  if (flags.expectReject) {
+    const rejected = await waitFor(
+      cdp,
+      (s) => s !== null && (s.status === "retrying" || s.status === "rejected") && s.rejectText === flags.expectReject,
+      `explicit ${flags.expectReject} refusal`,
+    );
+    const rejectCanvas = await captureAt(cdp, flags.out, 480, 272);
+    const rejectInk = [await checkRejectPixels(flags.out, rejectCanvas)];
+    if (flags.wideOut) {
+      const wideCanvas = await captureAt(cdp, flags.wideOut, 960, 544);
+      rejectInk.push(await checkRejectPixels(flags.wideOut, wideCanvas));
+    }
+    if (browserErrors.length > 0) fail(`browser emitted ${browserErrors.join(" | ")}`);
+    console.log(`WEBCHECK_REJECT ${JSON.stringify({ status: rejected.status, rejectText: rejected.rejectText, realmPin: rejected.realmPin, invited: flags.invite !== null, images: [flags.out.split("/").at(-1), flags.wideOut?.split("/").at(-1) ?? null], rejectInk, consoleErrors: browserErrors.length })}`);
+    if (flags.closePage) await closePage(cdp);
+    process.exit(0);
+  }
 
   if (flags.createName) await createCharacter(cdp, flags.createName, flags.createLook);
 
-  // 1. join + 2. see the other clients + 3. movement.
+  // 1. join + 2. see the other clients + 3. movement. The meeting exercise
+  // supplies its own real d-pad movement and must begin while the invited
+  // peer is still beside its host, so do not wait for unrelated movement
+  // before that interaction.
   const joined = await waitFor(
     cdp,
     joinedExpected,
     `join with online === ${flags.expect}, allOnline === ${flags.expectAll}, and ${flags.expect - 1} remotes`,
   );
-  await waitForMovement(cdp, joined);
+  if (!flags.meetPrefix) await waitForMovement(cdp, joined);
   console.log(`WEBCHECK_PHASE ${JSON.stringify({
     phase: "joined",
     epoch: joined.epoch,
@@ -466,6 +786,11 @@ async function main(): Promise<void> {
     progressCount: joined.progressCount,
     improvementLevel: joined.improvementLevel,
   })}`);
+
+  let minted: { token: string; link: string } | null = null;
+  if (flags.mintInvite) minted = await mintInvite(cdp);
+  let meeting: Record<string, unknown> | null = null;
+  if (flags.meetPrefix) meeting = await exerciseMeeting(cdp, flags.meetPrefix);
 
   let restart: { dropped: string; rejoined: PublishedState } | null = null;
   if (flags.watch) {
@@ -481,18 +806,8 @@ async function main(): Promise<void> {
     restart = { dropped: dropped.status, rejoined };
   }
 
-  const canvas = await canvasPlacement(cdp, 480);
-  await screenshot(cdp, flags.out);
-  if (flags.wideOut) {
-    await cdp.send("Emulation.setDeviceMetricsOverride", {
-      width: 960,
-      height: 544,
-      deviceScaleFactor: 3,
-      mobile: false,
-    });
-    await sleep(500);
-    await screenshot(cdp, flags.wideOut);
-  }
+  const canvas = await captureAt(cdp, flags.out, 480, 272);
+  if (flags.wideOut) await captureAt(cdp, flags.wideOut, 960, 544);
   const final = (await readState(cdp))!;
   if (browserErrors.length > 0) fail(`browser emitted ${browserErrors.join(" | ")}`);
   if (flags.expectName) await checkNameLine(flags.out, flags.expectName, final, canvas);
@@ -515,12 +830,16 @@ async function main(): Promise<void> {
       name: final.roster[String(final.myId)]?.name ?? "",
       look: final.roster[String(final.myId)]?.look ?? -1,
       created: flags.createName !== null,
+      invited: flags.invite !== null,
+      minted,
+      meeting,
       consoleErrors: browserErrors.length,
       restarted: restart
         ? { droppedStatus: restart.dropped, myId: restart.rejoined.myId, oldEpoch: joined.epoch, newEpoch: restart.rejoined.epoch }
         : null,
     })}`,
   );
+  if (flags.closePage) await closePage(cdp);
   process.exit(0);
 }
 

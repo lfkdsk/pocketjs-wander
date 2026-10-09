@@ -9,6 +9,10 @@
 //                                              # wander-online pak config
 //   bun tools/desktop.ts wander-online --guest demo
 //                                              # local --allow-guests server only
+//   bun tools/desktop.ts wander-online --realm plaza-2 --auto-invite
+//                                              # pin a realm, mint an invite after joining
+//   bun tools/desktop.ts wander-online --invite plaza-2.K7MQ2XJ4
+//                                              # join through an invite token
 //
 // The plan -> bundle -> host pipeline lives in tools/lib/desktop.ts.
 
@@ -49,8 +53,26 @@ if (guestIdx >= 0) {
   if (!guestName || guestName.length > 16) throw new Error("desktop: --guest requires a 1–16 character name");
 }
 
+// wander-online only: a realm pin, an invite token (`<realm>.<CODE>`) and
+// an automatic invite request after joining (demos): the same hooks the
+// web page and the sim tests use, prepended to the bundle like the URL.
+const takeFlag = (flag: string): string => {
+  const i = rest.indexOf(flag);
+  if (i < 0) return "";
+  if (name !== "wander-online") throw new Error(`desktop: ${flag} only applies to wander-online`);
+  return rest.splice(i, 2)[1] ?? "";
+};
+const pinnedRealm = takeFlag("--realm");
+const inviteToken = takeFlag("--invite");
+const autoInviteIdx = rest.indexOf("--auto-invite");
+const autoInvite = autoInviteIdx >= 0;
+if (autoInvite) {
+  if (name !== "wander-online") throw new Error("desktop: --auto-invite only applies to wander-online");
+  rest.splice(autoInviteIdx, 1);
+}
+
 const build = await buildForDesktop(join(root, "examples", name, "pocket.json"));
-if (bakedUrl || guestName) {
+if (bakedUrl || guestName || pinnedRealm || inviteToken || autoInvite) {
   // The desktop host evals the bundle as one script; leading assignments
   // run before the app. Guest auth is accepted only by the loopback
   // development server's explicit --allow-guests mode.
@@ -59,10 +81,16 @@ if (bakedUrl || guestName) {
   const bootstrap = [
     bakedUrl ? `globalThis.__onlineUrl=${JSON.stringify(bakedUrl)};` : "",
     guestName ? `globalThis.__onlineAuth=${JSON.stringify({ kind: "guest", name: guestName, color: 0 })};` : "",
+    pinnedRealm ? `globalThis.__onlineRealm=${JSON.stringify(pinnedRealm)};` : "",
+    inviteToken ? `globalThis.__onlineInvite=${JSON.stringify(inviteToken)};` : "",
+    autoInvite ? "globalThis.__onlineAutoInvite=true;" : "",
   ].join("");
   writeFileSync(jsPath, `${bootstrap}\n${prev}`);
   if (bakedUrl) console.log(`desktop: baked server URL ${bakedUrl} into ${jsPath}`);
   if (guestName) console.log(`desktop: baked local guest ${JSON.stringify(guestName)} into ${jsPath}`);
+  if (pinnedRealm) console.log(`desktop: baked realm pin ${JSON.stringify(pinnedRealm)} into ${jsPath}`);
+  if (inviteToken) console.log(`desktop: baked invite token into ${jsPath}`);
+  if (autoInvite) console.log(`desktop: baked automatic invite request into ${jsPath}`);
 }
 if (buildOnly) {
   console.log(`desktop: built ${build.plan.app.output} for ${DESKTOP_TARGET} + release host (${build.bin})`);

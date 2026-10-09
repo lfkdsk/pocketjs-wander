@@ -10,6 +10,10 @@ import { file, write, fsHost } from "@pocketjs/framework/fs";
 
 const WEB_KEY = "pocket-rpgkit:wander-online:ticket";
 const FS_PATH = "wander-online-ticket.json";
+/** The realm the player was last admitted to: the reconnect pin. Stored
+ *  beside the ticket so a reload or a restart returns to the same world. */
+const WEB_REALM_KEY = "pocket-rpgkit:wander-online:realm";
+const FS_REALM_PATH = "wander-online-realm.json";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -79,6 +83,53 @@ export function clearTicket(): void {
     const store = webStore();
     if (!store) return;
     store.removeItem(WEB_KEY);
+  } catch {
+    // already gone
+  }
+}
+
+export function loadRealm(): string | null {
+  try {
+    if (hasFs()) {
+      const f = file(FS_REALM_PATH);
+      if (!f.exists()) return null;
+      const parsed = JSON.parse(f.text()) as { realm?: unknown };
+      return typeof parsed.realm === "string" && parsed.realm.length > 0 ? parsed.realm : null;
+    }
+    const store = webStore();
+    if (!store) return null;
+    const v = store.getItem(WEB_REALM_KEY);
+    if (!v) return null;
+    const realm = (JSON.parse(v) as { realm?: unknown }).realm;
+    return typeof realm === "string" && realm.length > 0 ? realm : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveRealm(realm: string): void {
+  try {
+    if (hasFs()) {
+      write(FS_REALM_PATH, JSON.stringify({ realm }));
+      return;
+    }
+    const store = webStore();
+    if (!store) return;
+    store.setItem(WEB_REALM_KEY, JSON.stringify({ realm }));
+  } catch {
+    // the pin simply does not persist
+  }
+}
+
+export function clearRealm(): void {
+  try {
+    if (hasFs()) {
+      write(FS_REALM_PATH, JSON.stringify({ realm: null }));
+      return;
+    }
+    const store = webStore();
+    if (!store) return;
+    store.removeItem(WEB_REALM_KEY);
   } catch {
     // already gone
   }

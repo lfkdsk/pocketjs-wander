@@ -26,11 +26,15 @@ import { residentDistance, ticksSinceDiscovery, townResidentsAt } from "../net/n
 import { BTN, COMMAND, PLAYER_PROGRESS_MAX, type CommandMessage, type PlayerJourneyMessage, type PlayerProgressMessage } from "../net/protocol.ts";
 import {
   MultiFocusWorld,
+  realmStart,
   startRealmState,
   stepRealmMovement,
   type RealmFocus,
   type RealmState,
 } from "../net/realm-world.ts";
+import { EMOTE_MIN_INTERVAL_MS, isEmoteId } from "../net/emote.ts";
+import { farRowsFor, type FarRow } from "../net/far.ts";
+import { pickSpawn, spawnHash, type SpawnPick } from "../net/spawn.ts";
 import {
   REALM_DISCOVERY_HALF_H,
   REALM_DISCOVERY_HALF_W,
@@ -79,6 +83,16 @@ export interface RealmPlayer {
   /** Tile of the last landmark scan; the scan only reruns on a tile change. */
   scanX: number | null;
   scanY: number | null;
+  /** Arena clock of the last accepted emote (rate limit floor). */
+  lastEmoteAt: number;
+  /** Where admission put the player relative to its anchor (diagnostics). */
+  spawn: SpawnPick;
+}
+
+/** A pending emote the host broadcasts to the sender's AOI. */
+export interface PendingEmote {
+  from: RealmPlayer;
+  emote: number;
 }
 
 /** Private state a host restores from storage when a player is admitted. */
@@ -147,6 +161,8 @@ export class RealmArena {
   private readonly townPlans = new Map<string, RegionPlan>();
   /** Shared rows a journey changed since the host last drained them. */
   private changedRows: RealmRegionState[] = [];
+  /** Accepted emotes since the host last drained them. */
+  private pendingEmotes: PendingEmote[] = [];
 
   constructor(cfg: RealmArenaConfig) {
     this.seed = cfg.seed >>> 0;
@@ -223,36 +239,77 @@ export class RealmArena {
     return { flags, realmRevision: this.realmRevision, serverTimeMs: this.now(), rows };
   }
 
-  /** Refuse before allocating an id, inserting a player or changing focus. */
+  /** A tile no admitted player stands on. Mid-step movers count as being on
+   *  their origin tile, like the AOI index. */
+  private occupied(tx: number, ty: number, except?: RealmPlayer): boolean {
+    for (const p of this.players.values()) {
+      if (p === except) continue;
+      if (p.state.move.tx === tx && p.state.move.ty === ty) return true;
+    }
+    return false;
+  }
+
+  /** The first free tile of the ring walk around `anchor` (net/spawn.ts):
+   *  streamed collision at the current growth phase plus player occupancy.
+   *  The anchor's chunk neighbourhood must already be primed. */
+  private safeSlot(anchor: { tx: number; ty: number }, hash: number, except?: RealmPlayer): SpawnPick | null {
+    return pickSpawn(anchor, hash, (tx, ty) => {
+      const collision = this.world.collisionAt(tx, ty);
+      return collision.ready && !collision.blocked && !this.occupied(tx, ty, except);
+    });
+  }
+
+  /** Refuse before allocating an id, inserting a player or changing focus.
+   *  `at` is the anchor (a stored checkpoint); without it the starter town
+   *  hub is. The player lands on the first safe tile of the ring walk around
+   *  the anchor, started at `spawnKey`'s stable hash (the account id on the
+   *  hosted server); a checkpoint whose surroundings are all blocked falls
+   *  back to the starter town. */
   tryAdd(
     name: string,
     color: number,
     look = 0,
     at?: { tx: number; ty: number; facing?: number },
     restore?: RealmPlayerRestore,
+    spawnKey = name,
   ): RealmPlayer | null {
     if (this.players.size >= this.maxPlayers) return null;
     if (at?.facing !== undefined && (!Number.isInteger(at.facing) || at.facing < 0 || at.facing > 3)) {
       throw new RangeError("realm spawn facing must be an integer in 0..3");
     }
     const id = this.nextId++;
-    let state = startRealmState(this.seed);
-    if (at) {
-      state = {
-        ...state,
-        move: {
-          ...state.move,
-          tx: at.tx,
-          ty: at.ty,
-          px: at.tx * 16,
-          py: at.ty * 16,
-          facing: at.facing === undefined ? state.move.facing : at.facing as Dir4,
-          phase: 0,
-          moving: false,
-          walking: false,
-        },
-      };
+    const anchor = at ?? realmStart(this.seed);
+    // Collision at the anchor needs its chunks and the growth phase of its
+    // regions; the admission clock is advanced before either is read.
+    const nowMs = this.now();
+    this.world.setWorldTime(nowMs);
+    this.world.prime([...this.focuses(), { x: anchor.tx, y: anchor.ty }], this.refTicks);
+    const hash = spawnHash(spawnKey);
+    let slot = this.safeSlot(anchor, hash);
+    if (!slot && at) {
+      const start = realmStart(this.seed);
+      this.world.prime([...this.focuses(), { x: start.tx, y: start.ty }], this.refTicks);
+      slot = this.safeSlot(start, hash);
     }
+    // Every ring tile blocked and occupied: stand on the anchor rather than
+    // refuse (a full 13x13 box of solid or occupied tiles is not a realm
+    // this generator produces; the fallback only keeps admission total).
+    const spawn: SpawnPick = slot ?? { tx: anchor.tx, ty: anchor.ty, ring: -1 };
+    let state = startRealmState(this.seed);
+    state = {
+      ...state,
+      move: {
+        ...state.move,
+        tx: spawn.tx,
+        ty: spawn.ty,
+        px: spawn.tx * 16,
+        py: spawn.ty * 16,
+        facing: at?.facing === undefined ? state.move.facing : at.facing as Dir4,
+        phase: 0,
+        moving: false,
+        walking: false,
+      },
+    };
     const player: RealmPlayer = {
       id,
       name,
@@ -273,9 +330,10 @@ export class RealmArena {
       progressDirty: false,
       scanX: null,
       scanY: null,
+      lastEmoteAt: -Infinity,
+      spawn,
     };
     this.players.set(id, player);
-    const nowMs = this.now();
     this.discoverRegions(nowMs);
     // Admission is rare and must leave the spawn's full authoritative ring
     // ready before WELCOME; steady movement stays on the per-frame budget.
@@ -284,8 +342,8 @@ export class RealmArena {
     return player;
   }
 
-  add(name: string, color: number, look = 0, at?: { tx: number; ty: number; facing?: number }, restore?: RealmPlayerRestore): RealmPlayer {
-    const player = this.tryAdd(name, color, look, at, restore);
+  add(name: string, color: number, look = 0, at?: { tx: number; ty: number; facing?: number }, restore?: RealmPlayerRestore, spawnKey = name): RealmPlayer {
+    const player = this.tryAdd(name, color, look, at, restore, spawnKey);
     if (!player) throw new RangeError(`realm is full (${this.maxPlayers} players)`);
     return player;
   }
@@ -356,10 +414,16 @@ export class RealmArena {
   }
 
   /** Validate and apply a client command against the authoritative mover
-   *  and clock. Returns the confirmed event kind, or null when refused. */
+   *  and clock. Returns the confirmed event kind, or null when refused. An
+   *  accepted emote is not a journey event: it is queued for the host
+   *  (drainEmotes) and the call returns null like a refusal. */
   applyCommand(p: RealmPlayer, cmd: CommandMessage, nowMs = this.now()): JourneyEventKind | null {
     const here = this.playerRegion(p);
     if (cmd.rx !== here.rx || cmd.ry !== here.ry) return null;
+    if (cmd.kind === COMMAND.emote) {
+      this.applyEmote(p, cmd.extra, nowMs);
+      return null;
+    }
     const plan = this.townPlan(here.rx, here.ry);
     if (cmd.kind === COMMAND.acceptErrand) {
       if (!this.onPlaza(p, plan)) return null;
@@ -386,6 +450,47 @@ export class RealmArena {
       return this.confirm(p, JOURNEY_EVENT.talked, here.rx, here.ry);
     }
     return null;
+  }
+
+  // -- emotes and far players ---------------------------------------------------------
+
+  /** Accept one preset emote: a known id and at least EMOTE_MIN_INTERVAL_MS
+   *  since the player's last accepted one. Anything else is dropped. */
+  applyEmote(p: RealmPlayer, emote: number, nowMs = this.now()): boolean {
+    if (!isEmoteId(emote)) return false;
+    if (nowMs - p.lastEmoteAt < EMOTE_MIN_INTERVAL_MS) return false;
+    p.lastEmoteAt = nowMs;
+    this.pendingEmotes.push({ from: p, emote });
+    return true;
+  }
+
+  /** Emotes accepted since the last drain, for the host to broadcast. */
+  drainEmotes(): PendingEmote[] {
+    const out = this.pendingEmotes;
+    this.pendingEmotes = [];
+    return out;
+  }
+
+  /** Who sees an emote: every player whose Chebyshev AOI holds the sender,
+   *  the sender included (it sees its own bubble only once confirmed). */
+  emoteRecipients(from: RealmPlayer, aoi: number): RealmPlayer[] {
+    const { tx, ty } = from.state.move;
+    const out: RealmPlayer[] = [];
+    for (const p of this.players.values()) {
+      const m = p.state.move;
+      if (Math.max(Math.abs(m.tx - tx), Math.abs(m.ty - ty)) <= aoi) out.push(p);
+    }
+    return out;
+  }
+
+  /** Coarse rows for a recipient: players strictly outside its AOI. */
+  farRowsFor(recipient: RealmPlayer, aoi: number): FarRow[] {
+    const { tx, ty } = recipient.state.move;
+    return farRowsFor(tx, ty, recipient.id, this.farCandidates(), aoi);
+  }
+
+  private *farCandidates(): Iterable<{ id: number; tx: number; ty: number }> {
+    for (const p of this.players.values()) yield { id: p.id, tx: p.state.move.tx, ty: p.state.move.ty };
   }
 
   private complete(p: RealmPlayer, errand: Errand, kind: JourneyEventKind, nowMs: number): JourneyEventKind {

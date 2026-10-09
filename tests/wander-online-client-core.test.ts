@@ -1,7 +1,7 @@
 // tests/wander-online-client-core.test.ts — deterministic unit coverage for
 // client-only protocol behavior that does not need the loopback Bun server.
 import { describe, expect, test } from "bun:test";
-import type { PocketSocket, SocketCloseEvent, SocketReadyState } from "@pocketjs/framework/socket";
+import { SocketError, type PocketSocket, type SocketCloseEvent, type SocketReadyState } from "@pocketjs/framework/socket";
 import { OnlineClient, realmEndpoint, type SocketFactory } from "../examples/wander-online/net/client.ts";
 import {
   REGION_STATE_FLAG_INITIAL,
@@ -21,11 +21,14 @@ interface SocketHarness {
   factory: SocketFactory;
   sent: (string | Uint8Array | ArrayBuffer)[];
   open: () => void;
+  refusedOpen: () => void;
+  refusedSendOpen: () => void;
   message: (data: string | ArrayBuffer) => void;
 }
 
 function socketHarness(): SocketHarness {
   let state: SocketReadyState = "connecting";
+  let refuseSend = false;
   const sent: (string | Uint8Array | ArrayBuffer)[] = [];
   const socket: PocketSocket = {
     url: "ws://unit.test/ws",
@@ -34,6 +37,7 @@ function socketHarness(): SocketHarness {
       return state;
     },
     send(data): boolean {
+      if (state !== "open" || refuseSend) throw new SocketError("closed", "socket: socket is not open");
       sent.push(data);
       return true;
     },
@@ -49,6 +53,19 @@ function socketHarness(): SocketHarness {
     sent,
     open: () => {
       state = "open";
+      socket.onOpen?.();
+    },
+    refusedOpen: () => {
+      // Web hosts can dequeue open after the peer has already closed with a
+      // policy refusal in the same pump turn.
+      state = "closed";
+      socket.onOpen?.();
+    },
+    refusedSendOpen: () => {
+      // The SDK has dispatched open, but the native transport has already
+      // closed and refuses send before its queued close event is dispatched.
+      state = "open";
+      refuseSend = true;
       socket.onOpen?.();
     },
     message: (data) => socket.onMessage?.(typeof data === "string" ? data : new Uint8Array(data)),
@@ -72,6 +89,18 @@ function entity(id: number): WireEntity {
 }
 
 describe("wander-online client core", () => {
+  test("an immediate refusal during the queued open callback cannot hide its close reason", () => {
+    const harness = socketHarness();
+    const client = new OnlineClient("ws://unit.test/ws", {
+      auth: { kind: "ticket", ticket: "realm-ticket" },
+      socketFactory: harness.factory,
+    });
+    expect(() => harness.refusedOpen()).not.toThrow();
+    expect(() => harness.refusedSendOpen()).not.toThrow();
+    expect(harness.sent).toEqual([]);
+    client.stop();
+  });
+
   test("v4 route, JOIN capability and epoch-aware state are explicit", () => {
     expect(realmEndpoint("wss://example.test/ws")).toBe("wss://example.test/ws/v4");
     expect(realmEndpoint("wss://example.test/ws?ticket=x")).toBe("wss://example.test/ws/v4?ticket=x");

@@ -44,7 +44,8 @@ the same words.
 | CIRCLE | talk to the resident in front (the server records the conversation), read the notice board in front, page/close the open dialog |
 | CROSS | near a town hub: accept the town's errand, or deliver the one it targets; elsewhere: page the travel log |
 | TRIANGLE | request fast mode; the HUD says `FAST` once a snapshot confirms it |
-| SELECT | the menu: link a device, delete the profile, TRIANGLE toggles debug, START toggles auto-walk |
+| R | the emote picker: LEFT/RIGHT choose one of five presets, CIRCLE sends it, CROSS or R closes |
+| SELECT | the menu: link a device, delete the profile, TRIANGLE toggles debug, START toggles auto-walk, L mints an invite to this world, R leaves for any world |
 
 Residents of the nearby towns walk their routes on the realm clock (a pure
 function of the plan, the region's discovery time and the server time, so
@@ -58,6 +59,53 @@ Auto-walk is opt-in online: it starts only with the menu's START toggle or
 when the page sets `globalThis.__onlineAutoWalk = true` before boot
 (`web-check.ts --auto-walk` does that), and nothing resumes it after a
 d-pad press.
+
+### Meeting others: spawn slots, invites, far markers and emotes
+
+Admission never stacks players. The server anchors a newcomer at the
+starter town hub (or a returning player at its stored checkpoint) and walks
+a ring of up to six tiles around it, starting at an offset derived from a
+stable per-account hash, until it finds a tile that is neither blocked at
+the realm's current growth phase nor under another player
+(`net/spawn.ts`, `RealmArena.tryAdd`). Thirty-two players admitted together
+therefore stand on thirty-two distinct open tiles beside the plaza, and a
+checkpoint that is taken or has grown over moves the player one ring out
+rather than into a wall.
+
+A client that was admitted to a realm remembers it beside its ticket and
+asks for the same realm on every reconnect (`?realm=` on the v4 endpoint).
+The menu's L mints an **invite**: the server answers with a short code
+(`{"type":"invite","code","realm","expiresIn"}`, nothing about the account)
+and the client shows the shareable token `<realm>.<CODE>` as a notice; on
+the web the player page turns it into a link ending in `#invite=<token>`
+with a Copy button, and a page opened through such a link hands the token
+to the game (`__pocketInvite`), which joins with `?realm=<realm>&invite=
+<CODE>`. The server admits into exactly that realm, or closes with a plain
+reason: `1008 full` when the pinned world is at its cap (the HUD says
+`WORLD FULL` and retries slowly; the menu's R, "any world", drops the pin),
+`1008 invite` for an unknown, malformed or expired code, `1008 realm` for a
+world the service does not run. Codes live for an hour, at most 64 per
+realm, three per player per minute, and are never consumed: one link can
+bring several friends. `shared/invite.ts` holds the rule; the local server
+keeps codes in memory, the hosted one in the realm's SQLite.
+
+Players of the same realm outside the AOI appear once a second as a
+**far marker**: a square at the screen edge in their compass octant with
+the name and a band word (`near` within 64 tiles, `far` within 256,
+`distant` within 1024, `remote` beyond). The `FAR_PLAYERS` row is six
+bytes, an id, an octant and a band; no coordinate field exists, and a
+player inside the AOI is in the exact snapshot and never in the band. A
+marker that is not refreshed for three seconds disappears.
+
+**Emotes** are five presets (`o/` wave, `\o/` cheer, `->` point, `?` what,
+`!!` gather, `net/emote.ts`). R opens the picker; the choice goes out as a
+`COMMAND` whose one-byte `extra` is the preset id, the server accepts at
+most one per player per second and echoes an `EMOTE` frame to everyone
+whose AOI holds the sender (sender included), and each client draws the
+glyph above that walker's name tag for five seconds. Nothing is stored:
+a player who arrives later never sees it. There is no free-text message
+of any kind; the only things a player can send are inputs, these
+one-byte commands and the fixed auth/invite requests.
 
 ### Names and the name font
 
@@ -179,6 +227,9 @@ Little-endian, single source in [`net/protocol.ts`](net/protocol.ts):
 | STATE4 | 14 + 18n [+ 4] | `0x21` frame u32, ackSeq u32, epoch u32, n u8, signed-coordinate entities, optional population |
 | REGION_STATE | variable | `0x22` flags, realm revision, server time, signed region rows with discovery time, improvement, row revision and first-discoverer display name |
 | PLAYER_PROGRESS | variable | `0x23` private revision and signed landmark-region pairs; sent only to its account's socket |
+| COMMAND | 11 | `0x04` kind u8 (accept/deliver/talk/emote), rx i32, ry i32, extra u8 (resident index or emote id) |
+| FAR_PLAYERS | 2 + 6n | `0x25` n u8, rows of id u32, octant u8, band u8; once a second, only players outside the AOI |
+| EMOTE | 6 | `0x26` id u32, emote u8; to every AOI that holds the sender, never stored |
 | PONG | 9 | `0x30` id u32, t u32 |
 | BYE | 5 | `0x40` id u32 |
 
@@ -217,6 +268,10 @@ migrate or reinterpret a legacy room.
 | [`net/realm-state.ts`](net/realm-state.ts) | sparse shared-region projection, monotonic revisions and wall-clock phase |
 | [`net/realm-predict.ts`](net/realm-predict.ts) | v4 epoch-aware prediction + rollback-and-replay |
 | [`net/interpolate.ts`](net/interpolate.ts) | remote entity interpolation |
+| [`net/spawn.ts`](net/spawn.ts) | the hashed ring walk that picks a free, unblocked spawn tile |
+| [`net/far.ts`](net/far.ts) | octant and distance band of far players, the only thing the band leaks |
+| [`net/emote.ts`](net/emote.ts) | the five preset emotes and their limits |
+| [`shared/invite.ts`](shared/invite.ts) | invite tokens, lifetimes and the realm pin query |
 | [`net/client.ts`](net/client.ts) | the PocketJS net client (socket, reconnect, freeze, rejection policy) |
 | [`server/area.ts`](server/area.ts) | the authoritative arena (input queues, AOI) |
 | [`server/realm-area.ts`](server/realm-area.ts) | v4 authoritative realm (streaming budget, sparse AOI) |
@@ -253,6 +308,15 @@ migrate or reinterpret a legacy room.
   rejoin. A restart is pinned to a different epoch and must rebuild both
   clients' predictor rings and clear interpolation, so two sessions' state
   can never mix.
+- `tests/wander-online-meet.test.ts` — safe spawn slots (32 players at
+  once on 32 open tiles), invites and realm pins against the loopback
+  server (same realm, explicit `full`/`invite`/`realm` refusals, expiry,
+  no account data in the reply, no free-text message), the far-player band
+  (octant + band, never a coordinate, never alongside the exact snapshot)
+  and emotes (AOI-only, once a second, never replayed).
+- `tests/wander-online-meet-view.test.ts` — the same features on screen:
+  far markers with a CJK name at both viewport sizes, the emote picker and
+  bubbles, the invite notice and page events, the realm pin at boot.
 - `tests/wander-online-shared.test.ts` — the shared hosted-server logic
   under a fake clock: Origin whitelist, sliding-window rate limit, room
   picker, IP counter, idle tracker, billing conversion, month ledger +

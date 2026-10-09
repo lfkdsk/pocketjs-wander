@@ -19,6 +19,7 @@ import {
   REGION_STATE_FLAG_INITIAL,
   type CommandMessage,
   type PlayerJourneyMessage,
+  type WireEntity,
 } from "../../examples/wander-online/net/protocol.ts";
 import type { RealmRegionState } from "../../examples/wander-online/net/realm-state.ts";
 
@@ -80,6 +81,12 @@ export interface FakeOnlineOpts {
   /** v4: answer every INPUT_BATCH with an empty STATE4 so long sim runs
    *  never trip the client's 2 s snapshot freeze. */
   heartbeat?: boolean;
+  /** v4: remote entities every heartbeat STATE4 carries (default none). */
+  heartbeatEntities?: () => WireEntity[];
+  /** v4: scripted reply to a {"type":"inviteq"} (default: no reply). */
+  inviteReply?: Record<string, unknown>;
+  /** Every URL the factory was asked to open, in order. */
+  urls?: string[];
   /** Observe each socket as it opens (tests push extra frames through it). */
   onSocket?: (sock: PocketSocket) => void;
   /** Scripted reply to a {"type":"delete"} message. Defaults to a
@@ -98,7 +105,8 @@ export interface FakeOnlineOpts {
 /** A socket factory that returns a scripted fake socket. */
 export function fakeOnlineSocketFactory(opts: FakeOnlineOpts): (url: string) => PocketSocket {
   const linkReplies = [...(opts.linkReplies ?? [])];
-  return () => {
+  return (url: string) => {
+    opts.urls?.push(url);
     let opened = false;
     let created = false;
     let heartbeatFrame = 0;
@@ -213,7 +221,7 @@ export function fakeOnlineSocketFactory(opts: FakeOnlineOpts): (url: string) => 
               if (batch) for (const mask of batch.buttons) opts.sentInputs.push(mask);
             }
             if (opts.heartbeat && realmMode) {
-              const frame = new Uint8Array(encodeState4(++heartbeatFrame, 0, opts.realm?.epoch ?? 7, [], opts.population));
+              const frame = new Uint8Array(encodeState4(++heartbeatFrame, 0, opts.realm?.epoch ?? 7, opts.heartbeatEntities?.() ?? [], opts.population));
               queueMicrotask(() => sock.onMessage?.(frame));
             }
           }
@@ -243,6 +251,8 @@ export function fakeOnlineSocketFactory(opts: FakeOnlineOpts): (url: string) => 
           } else if (msg.type === "linkr") {
             const reply = linkReplies.shift();
             if (reply) sock.onMessage?.(JSON.stringify(reply));
+          } else if (msg.type === "inviteq") {
+            if (opts.inviteReply) sock.onMessage?.(JSON.stringify(opts.inviteReply));
           }
         });
         return true;

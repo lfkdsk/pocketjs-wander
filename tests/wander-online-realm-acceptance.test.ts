@@ -156,8 +156,8 @@ class MinHeap {
 }
 
 /** Tile A* inside the bounding box of a known connected region route. */
-function tileRoute(regions: readonly RegionCoord[]): { masks: number[]; goal: RegionCoord } {
-  const start = regionHub(SEED, 0, 0);
+function tileRoute(regions: readonly RegionCoord[], from?: { x: number; y: number }): { masks: number[]; goal: RegionCoord } {
+  const start = from ?? regionHub(SEED, 0, 0);
   const goal = regionHub(SEED, regions.at(-1)!.x, regions.at(-1)!.y);
   const minRx = Math.min(...regions.map((r) => r.x));
   const maxRx = Math.max(...regions.map((r) => r.x));
@@ -268,8 +268,6 @@ describe("wander-online realm acceptance", () => {
   test("two predicted clients walk more than 500 tiles in opposite directions with no boundary correction increase", () => {
     const positiveRegions = regionRoute(1, 6);
     const negativeRegions = regionRoute(-1, 6);
-    const positive = tileRoute(positiveRegions);
-    const negative = tileRoute(negativeRegions);
     const nowMs = 1_000_000;
     const arena = new RealmArena({
       seed: SEED, hz: 60, realmId: "acceptance", epoch: EPOCH, now: () => nowMs,
@@ -295,6 +293,11 @@ describe("wander-online realm acceptance", () => {
     });
     const a = arena.add("positive", 1);
     const b = arena.add("negative", 2);
+    // Admission gives the two players distinct safe tiles beside the hub;
+    // each route starts from its own spawn.
+    expect(`${a.state.move.tx},${a.state.move.ty}`).not.toBe(`${b.state.move.tx},${b.state.move.ty}`);
+    const positive = tileRoute(positiveRegions, { x: a.state.move.tx, y: a.state.move.ty });
+    const negative = tileRoute(negativeRegions, { x: b.state.move.tx, y: b.state.move.ty });
     const ax0 = a.state.move.tx, bx0 = b.state.move.tx;
     const predictors = [predictorFor(arena, a), predictorFor(arena, b)];
     const players = [a, b];

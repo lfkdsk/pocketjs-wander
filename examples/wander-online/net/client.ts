@@ -24,7 +24,7 @@
 //     interpolation buffer all reset (a previous session's snapshots can
 //     never mix with the new one's).
 
-import { openSocket, type PocketSocket } from "@pocketjs/framework/socket";
+import { openSocket, SocketError, type PocketSocket } from "@pocketjs/framework/socket";
 import {
   BTN,
   BATCH_SIZE,
@@ -32,6 +32,8 @@ import {
   REGION_STATE_FLAG_INITIAL,
   WORLD_PROTOCOL_VERSION,
   WORLD_STATE_VERSION,
+  decodeEmote,
+  decodeFarPlayers,
   decodePlayerJourney,
   decodePlayerProgress,
   decodeRegionState,
@@ -43,11 +45,15 @@ import {
   encodeCommand,
   encodeInputBatch,
   encodePing,
+  COMMAND,
   type CommandMessage,
   type PlayerJourneyMessage,
   type RosterEntry,
 } from "./protocol.ts";
 import { emptyJourney, type JourneyEvent, type PlayerJourney } from "./journey.ts";
+import { EMOTE_MIN_INTERVAL_MS, EMOTE_SHOW_MS, isEmoteId } from "./emote.ts";
+import { FAR_TTL_MS } from "./far.ts";
+import { formatInviteToken, realmJoinUrl } from "../shared/invite.ts";
 import { Predictor, type AuthoritativeMover } from "./predict.ts";
 import { RealmPredictor } from "./realm-predict.ts";
 import { GENERATOR_VERSION } from "./realm-world.ts";
@@ -83,7 +89,14 @@ export const REJECT_TEXT: Record<string, string> = {
   ghauth: "GITHUB SIGN-IN FAILED",
   ticket: "SIGN-IN EXPIRED",
   taken: "SIGNED IN ELSEWHERE",
+  invite: "INVITE INVALID OR EXPIRED",
+  realm: "WORLD UNAVAILABLE",
 };
+
+/** "full" while a realm is pinned (a reconnect or an invite): the player
+ *  asked for one specific world and it is at its cap. Said plainly, and the
+ *  menu's "any world" is the way out; nothing moves them silently. */
+export const WORLD_FULL_TEXT = "WORLD FULL";
 
 /** Reconnect policy per close token. Unknown tokens use the normal path. */
 function policyFor(reason: string): "slow" | "never" | "normal" {
@@ -97,7 +110,9 @@ function policyFor(reason: string): "slow" | "never" | "normal" {
     reason === "auth" ||
     reason === "ghauth" ||
     reason === "ticket" ||
-    reason === "taken"
+    reason === "taken" ||
+    reason === "invite" ||
+    reason === "realm"
   ) {
     return "never";
   }
@@ -149,6 +164,29 @@ export interface OnlineClientOpts {
   onRoster?: (entries: RosterEntry[]) => void;
   /** Any other server text message (linkCode, linked, deleted, errors). */
   onText?: (msg: Record<string, unknown>) => void;
+  /** The realm to return to (a reconnect pin) or the one an invite names.
+   *  Sent as `?realm=`; the server admits into exactly that realm, says
+   *  "full" when it is at its cap, or "realm" when it does not exist. */
+  realm?: string | null;
+  /** An invite code for `realm`, sent once as `?invite=` and dropped after
+   *  the first admission (later reconnects pin the realm alone). */
+  invite?: string | null;
+  /** The realm this client was admitted to (persist it as the pin). */
+  onRealm?: (realmId: string) => void;
+}
+
+/** A far player's coarse marker, as last reported. */
+export interface FarMarker {
+  dir: number;
+  band: number;
+  /** Local clock of the last report; expires after FAR_TTL_MS. */
+  at: number;
+}
+
+/** An emote bubble to draw above a walker until `until`. */
+export interface EmoteBubble {
+  emote: number;
+  until: number;
 }
 
 export interface OnlineHud {
@@ -230,6 +268,18 @@ export class OnlineClient {
   rejectReason: string | null = null;
   /** id -> name/look from the last ROSTER. */
   roster: Map<number, RosterEntry> = new Map();
+  /** The realm this client asks for (null: any realm the service picks). */
+  realmPin: string | null;
+  /** The invite code presented with the next connection, if any. */
+  invite: string | null;
+  /** The last invite token this client minted (`realm.CODE`), for display. */
+  inviteToken: string | null = null;
+  /** Coarse markers for same-realm players outside the AOI, by id. */
+  readonly far = new Map<number, FarMarker>();
+  /** Live emote bubbles by player id (the local player included). */
+  readonly emotes = new Map<number, EmoteBubble>();
+  private lastEmoteSentAt = -Infinity;
+  private inviteWaiters: ((reply: Record<string, unknown>) => void)[] = [];
 
   private socket: PocketSocket | null = null;
   private seq = 0;
@@ -253,16 +303,20 @@ export class OnlineClient {
   private readonly onTicket?: OnlineClientOpts["onTicket"];
   private readonly onRoster?: OnlineClientOpts["onRoster"];
   private readonly onText?: OnlineClientOpts["onText"];
+  private readonly onRealm?: OnlineClientOpts["onRealm"];
 
   constructor(url: string, opts: OnlineClientOpts = {}) {
     this.url = realmEndpoint(url);
     this.name = opts.name ?? "guest";
     this.color = (opts.color ?? 0) & 0x0f;
     this.auth = opts.auth ?? { kind: "guest" };
+    this.realmPin = opts.realm ?? null;
+    this.invite = opts.invite ?? null;
     this.onNeedCreate = opts.onNeedCreate;
     this.onTicket = opts.onTicket;
     this.onRoster = opts.onRoster;
     this.onText = opts.onText;
+    this.onRealm = opts.onRealm;
     this.now = opts.now ?? (() => (globalThis.performance ? globalThis.performance.now() : Date.now()));
     this.socketFactory = opts.socketFactory ?? ((u, o) => openSocket(u, o));
     this.connect();
@@ -274,11 +328,43 @@ export class OnlineClient {
     this.auth = { kind: "ticket", ticket };
   }
 
+  /** The endpoint with the realm pin and invite as query parameters. */
+  connectUrl(): string {
+    return realmJoinUrl(this.url, this.realmPin, this.invite);
+  }
+
+  /** "Any world": drop the realm pin and invite and connect again at once.
+   *  The way out of a pinned realm that is full, gone or whose invite was
+   *  refused; the next WELCOME4 pins whatever realm admitted us. */
+  leaveRealm(): void {
+    this.realmPin = null;
+    this.invite = null;
+    this.rejectReason = null;
+    this.slowBackoffMs = SLOW_BACKOFF_START_MS;
+    const old = this.socket;
+    if (old) {
+      // Detach first: the old socket's close must not clobber the state of
+      // the connection started below.
+      old.onClose = undefined;
+      old.onMessage = undefined;
+      old.onError = undefined;
+      this.socket = null;
+      this.predictor = null;
+      this.interp.reset();
+      this.far.clear();
+      this.emotes.clear();
+      old.close(1000, "leave realm");
+    }
+    this.stopped = false;
+    this.status = "reconnecting";
+    this.reconnectAt = this.now();
+  }
+
   private connect(): void {
     this.status = this.myId === 0 ? "connecting" : "reconnecting";
     let sock: PocketSocket;
     try {
-      sock = this.socketFactory(this.url, { timeoutMs: 5000 });
+      sock = this.socketFactory(this.connectUrl(), { timeoutMs: 5000 });
     } catch {
       // openSocket throws (e.g. unavailable): retry after backoff.
       this.scheduleReconnect();
@@ -286,12 +372,25 @@ export class OnlineClient {
     }
     this.socket = sock;
     sock.onOpen = () => {
+      // A hosted refusal can open and close within one service-pump turn.
+      // PocketJS still delivers the queued open callback, but readyState is
+      // already closed; do not turn the intentional 1008 close into a
+      // fatal send-on-closed-socket error before onClose can expose it.
+      if (this.socket !== sock || sock.readyState !== "open") return;
       this.backoffMs = 1000;
-      if (this.auth.kind === "link") {
-        // Desktop device-link: redeem the code, then JOIN with the ticket.
-        sock.send(JSON.stringify({ type: "linkr", v: AUTH_PROTOCOL_VERSION, code: this.auth.code }));
-      } else {
-        sock.send(JSON.stringify(this.joinMessage()));
+      try {
+        if (this.auth.kind === "link") {
+          // Desktop device-link: redeem the code, then JOIN with the ticket.
+          sock.send(JSON.stringify({ type: "linkr", v: AUTH_PROTOCOL_VERSION, code: this.auth.code }));
+        } else {
+          sock.send(JSON.stringify(this.joinMessage()));
+        }
+      } catch (error) {
+        // The native close can precede its queued close event. Keep that
+        // event authoritative (including its 1008 reason); all other send
+        // errors remain programming/transport failures and surface normally.
+        if (error instanceof SocketError && error.code === "closed") return;
+        throw error;
       }
     };
     sock.onMessage = (data) => this.onMessage(data);
@@ -319,6 +418,9 @@ export class OnlineClient {
       this.serverClockMs = 0;
       this.serverClockLocalMs = 0;
       this.pending.length = 0;
+      this.far.clear();
+      this.emotes.clear();
+      this.inviteWaiters.length = 0;
       // Drop the previous epoch's remote entities so they cannot render
       // (or interpolate against the next epoch's snapshots) while away.
       this.interp.reset();
@@ -411,6 +513,17 @@ export class OnlineClient {
         // Now JOIN with the redeemed ticket.
         this.socket?.send(JSON.stringify(this.joinMessage()));
       }
+      if (msg.type === "invite" && typeof msg.code === "string" && typeof msg.realm === "string") {
+        this.inviteToken = formatInviteToken(msg.realm, msg.code);
+        for (const w of this.inviteWaiters.splice(0)) w(msg);
+        this.onText?.(msg);
+        return;
+      }
+      if (msg.type === "inviteError") {
+        for (const w of this.inviteWaiters.splice(0)) w(msg);
+        this.onText?.(msg);
+        return;
+      }
       if (msg.type === "linkError") {
         this.onText?.(msg);
         // A bad/expired code: stop reconnecting (the user re-enters).
@@ -461,6 +574,11 @@ export class OnlineClient {
       this.grid = null;
       this.predictor = new RealmPredictor(welcome);
       this.realmId = welcome.realmId;
+      // Admitted: pin this realm for every later reconnect and drop the
+      // invite (a pin alone brings us back; the code is for the first door).
+      this.realmPin = welcome.realmId;
+      this.invite = null;
+      this.onRealm?.(welcome.realmId);
       this.generatorVersion = welcome.generatorVersion;
       this.epoch = welcome.epoch;
       this.realmRevision = welcome.realmRevision;
@@ -516,6 +634,21 @@ export class OnlineClient {
         for (const e of entries) this.roster.set(e.id, e);
         this.onRoster?.(entries);
       }
+      return;
+    }
+    if (kind === MSG.farPlayers) {
+      const rows = decodeFarPlayers(data);
+      if (!rows) return;
+      const at = this.now();
+      // A full report replaces the set: a row missing now is gone now.
+      this.far.clear();
+      for (const row of rows) this.far.set(row.id, { dir: row.dir, band: row.band, at });
+      return;
+    }
+    if (kind === MSG.emote) {
+      const message = decodeEmote(data);
+      if (!message) return;
+      this.emotes.set(message.id, { emote: message.emote, until: this.now() + EMOTE_SHOW_MS });
       return;
     }
     if (kind === MSG.state) {
@@ -582,6 +715,11 @@ export class OnlineClient {
       this.online = st.roomOnline === null ? visibleOnline : Math.max(visibleOnline, st.roomOnline);
       this.allOnline = st.allOnline === null ? this.online : Math.max(this.online, st.allOnline);
       this.interp.push(remote, at);
+      // Anyone in the exact snapshot is no longer "far"; stale rows expire.
+      if (this.far.size > 0) {
+        for (const e of remote) this.far.delete(e.id);
+        for (const [id, marker] of this.far) if (at - marker.at > FAR_TTL_MS) this.far.delete(id);
+      }
       return;
     }
     if (kind === MSG.pong) {
@@ -652,6 +790,34 @@ export class OnlineClient {
   sendCommand(cmd: CommandMessage): void {
     if (!(this.predictor instanceof RealmPredictor) || !this.worldStateReady) return;
     this.send(encodeCommand(cmd));
+  }
+
+  /** Request one preset emote. The bubble appears only once the server
+   *  echoes it to the AOI (the sender included); a second request inside
+   *  the server's floor is not even sent. Returns whether it was sent. */
+  sendEmote(emote: number): boolean {
+    const predictor = this.predictor;
+    if (!isEmoteId(emote) || !(predictor instanceof RealmPredictor) || !this.worldStateReady) return false;
+    const now = this.now();
+    if (now - this.lastEmoteSentAt < EMOTE_MIN_INTERVAL_MS) return false;
+    this.lastEmoteSentAt = now;
+    const move = predictor.current.move;
+    this.sendCommand({ kind: COMMAND.emote, rx: regionOf(move.tx), ry: regionOf(move.ty), extra: emote });
+    return true;
+  }
+
+  /** Drop bubbles past their time (the view calls this each frame). */
+  expireEmotes(now = this.now()): void {
+    for (const [id, bubble] of this.emotes) if (now >= bubble.until) this.emotes.delete(id);
+  }
+
+  /** Ask the server for an invite to the current realm. The reply (or the
+   *  error) reaches `done` and `onText`; `inviteToken` keeps the token. */
+  requestInvite(done?: (reply: Record<string, unknown>) => void): boolean {
+    if (!(this.predictor instanceof RealmPredictor) || this.socket?.readyState !== "open") return false;
+    if (done) this.inviteWaiters.push(done);
+    this.socket.send(JSON.stringify({ type: "inviteq", v: WORLD_PROTOCOL_VERSION }));
+    return true;
   }
 
   private applyJourney(message: PlayerJourneyMessage): void {
@@ -739,7 +905,9 @@ export class OnlineClient {
       fast: this.fastConfirmed,
       helpedCount: this.journey.helpedCount,
       rejectReason: this.rejectReason,
-      rejectText: this.rejectReason ? (REJECT_TEXT[this.rejectReason] ?? this.rejectReason) : null,
+      rejectText: this.rejectReason
+        ? (this.rejectReason === "full" && this.realmPin ? WORLD_FULL_TEXT : REJECT_TEXT[this.rejectReason] ?? this.rejectReason)
+        : null,
       retryIn,
     };
   }

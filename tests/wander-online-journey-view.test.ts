@@ -590,7 +590,7 @@ simDescribe("wander-online journey view: text fits", () => {
       expect(count(fb, W, (r, g, b) => r === 0xff && g === 0xb3 && b === 0x7a, errandBar.x0, errandBar.x1, errandBar.y0, errandBar.y1), "errand line ink").toBeGreaterThan(40);
 
       // The help line fits its strip.
-      const help = "D-PAD MOVE · O TALK · X ACT/LOG · TRI FAST · SEL MENU";
+      const help = "D-PAD MOVE · O TALK · X ACT/LOG · TRI FAST · R EMOTE · SEL MENU";
       expect(treeHasText(w.getTree(), help)).toBe(true);
       expect(12 + measure(help)).toBeLessThanOrEqual(helpRect(W, H).x1);
       unmount(w);

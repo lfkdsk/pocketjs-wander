@@ -49,6 +49,15 @@
 //                    rows: rx i32 ry i32
 //     PONG    0x30 id u32 t u32
 //     BYE     0x40 id u32
+//     FAR_PLAYERS 0x25 n u8 ( n x: id u32 dir u8 band u8 )
+//             Same-realm players outside the recipient's AOI, once a
+//             second: a compass octant and a distance band only, never a
+//             coordinate (net/far.ts). Players inside the AOI are in STATE4
+//             and have no row here.
+//     EMOTE   0x26 id u32 emote u8
+//             One preset emote (net/emote.ts) from player `id`, sent to
+//             every player whose AOI holds it, including the sender; not
+//             persisted, rate-limited by the server.
 //     ROSTER  0x50 n u8
 //                    ( n x: id u32 nameLen u8 name[nameLen] u8 look u8 )
 //             Who is who: id -> chosen name and W-CHAR look id. Sent on join
@@ -65,7 +74,10 @@ import { WINDOW } from "../../wander/window.ts";
 import type { WindowBuild } from "../../wander/window.ts";
 import { stringToUtf8, utf8ToString } from "../shared/utf8.ts";
 import type { RealmRegionSnapshot, RealmRegionState } from "./realm-state.ts";
+import { FAR_BAND_COUNT, type FarRow } from "./far.ts";
+import { isEmoteId } from "./emote.ts";
 export { WORLD_STATE_VERSION } from "./realm-state.ts";
+export type { FarRow } from "./far.ts";
 
 export const MSG = {
   input: 0x01,
@@ -79,6 +91,8 @@ export const MSG = {
   regionState: 0x22,
   playerProgress: 0x23,
   playerJourney: 0x24,
+  farPlayers: 0x25,
+  emote: 0x26,
   pong: 0x30,
   bye: 0x40,
   roster: 0x50,
@@ -143,7 +157,11 @@ export const PLAYER_PROGRESS_MAX = 1024;
 export const COMMAND_BYTES = 11;
 /** Client -> server realm commands; the server validates every one against
  *  its authoritative mover and clock. */
-export const COMMAND = { acceptErrand: 1, deliverErrand: 2, talk: 3 } as const;
+export const COMMAND = { acceptErrand: 1, deliverErrand: 2, talk: 3, emote: 4 } as const;
+export const FAR_PLAYERS_HEADER_BYTES = 2;
+export const FAR_PLAYERS_ROW_BYTES = 6;
+export const FAR_PLAYERS_MAX = 255;
+export const EMOTE_BYTES = 6;
 export const PLAYER_JOURNEY_FIXED_BYTES = 159;
 export const PLAYER_JOURNEY_PAIR_BYTES = 8;
 export const PLAYER_JOURNEY_HELPED_MAX = 32;
@@ -456,6 +474,76 @@ export function decodePlayerJourney(buf: ArrayBuffer | Uint8Array): PlayerJourne
     helped,
     talked,
   };
+}
+
+/** Coarse far-player rows (octant + band per id). Strict on both sides: a
+ *  row is exactly six bytes and carries no coordinate field at all. */
+export function encodeFarPlayers(rows: readonly FarRow[]): ArrayBuffer {
+  if (rows.length > FAR_PLAYERS_MAX) throw new RangeError("FAR_PLAYERS exceeds 255 rows");
+  const out = new ArrayBuffer(FAR_PLAYERS_HEADER_BYTES + rows.length * FAR_PLAYERS_ROW_BYTES);
+  const v = new DataView(out);
+  v.setUint8(0, MSG.farPlayers);
+  v.setUint8(1, rows.length);
+  const seen = new Set<number>();
+  let o = FAR_PLAYERS_HEADER_BYTES;
+  for (const row of rows) {
+    uint32(row.id, "far id");
+    if (!Number.isInteger(row.dir) || row.dir < 0 || row.dir > 7) throw new RangeError(`invalid far dir ${row.dir}`);
+    if (!Number.isInteger(row.band) || row.band < 0 || row.band >= FAR_BAND_COUNT) throw new RangeError(`invalid far band ${row.band}`);
+    if (seen.has(row.id)) throw new RangeError(`duplicate far row ${row.id}`);
+    seen.add(row.id);
+    v.setUint32(o, row.id >>> 0, true);
+    v.setUint8(o + 4, row.dir);
+    v.setUint8(o + 5, row.band);
+    o += FAR_PLAYERS_ROW_BYTES;
+  }
+  return out;
+}
+
+export function decodeFarPlayers(buf: ArrayBuffer | Uint8Array): FarRow[] | null {
+  if (buf.byteLength < FAR_PLAYERS_HEADER_BYTES) return null;
+  const v = viewOf(buf);
+  if (v.getUint8(0) !== MSG.farPlayers) return null;
+  const n = v.getUint8(1);
+  if (buf.byteLength !== FAR_PLAYERS_HEADER_BYTES + n * FAR_PLAYERS_ROW_BYTES) return null;
+  const rows: FarRow[] = [];
+  const seen = new Set<number>();
+  let o = FAR_PLAYERS_HEADER_BYTES;
+  for (let i = 0; i < n; i++) {
+    const id = v.getUint32(o, true);
+    const dir = v.getUint8(o + 4);
+    const band = v.getUint8(o + 5);
+    if (dir > 7 || band >= FAR_BAND_COUNT || seen.has(id)) return null;
+    seen.add(id);
+    rows.push({ id, dir, band });
+    o += FAR_PLAYERS_ROW_BYTES;
+  }
+  return rows;
+}
+
+export interface EmoteMessage {
+  id: number;
+  emote: number;
+}
+
+export function encodeEmote(message: EmoteMessage): ArrayBuffer {
+  if (!isEmoteId(message.emote)) throw new RangeError(`invalid emote ${message.emote}`);
+  const out = new ArrayBuffer(EMOTE_BYTES);
+  const v = new DataView(out);
+  v.setUint8(0, MSG.emote);
+  v.setUint32(1, uint32(message.id, "emote player id"), true);
+  v.setUint8(5, message.emote);
+  return out;
+}
+
+/** Strict-exact EMOTE decoder: six bytes, a known preset id, nothing else. */
+export function decodeEmote(buf: ArrayBuffer | Uint8Array): EmoteMessage | null {
+  if (buf.byteLength !== EMOTE_BYTES) return null;
+  const v = viewOf(buf);
+  if (v.getUint8(0) !== MSG.emote) return null;
+  const emote = v.getUint8(5);
+  if (!isEmoteId(emote)) return null;
+  return { id: v.getUint32(1, true), emote };
 }
 
 export function encodeInput(seq: number, buttons: number): ArrayBuffer {

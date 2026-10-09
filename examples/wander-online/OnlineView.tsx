@@ -23,7 +23,7 @@
 
 import { batch, createSignal, Show } from "solid-js";
 import { Text, View, type NodeMirror } from "@pocketjs/framework/components";
-import { createElement, insertNode, setProp } from "@pocketjs/framework/renderer";
+import { createElement, insertNode, replaceText, setProp } from "@pocketjs/framework/renderer";
 import { jump } from "@pocketjs/framework/animation";
 import { onFrame } from "@pocketjs/framework/lifecycle";
 import { after, simulationHz } from "@pocketjs/framework/clock";
@@ -52,8 +52,15 @@ import { CreateCharScene, type CreateFocus } from "./CreateCharScene.tsx";
 import {
   DIALOG_ROWS,
   DIALOG_ROW_H,
+  EMOTE_CELLS,
+  FAR_LABEL_W,
+  FAR_MARKER_SIZE,
   dialogRect,
+  emoteBarRect,
+  emoteCell,
   errandBarRect,
+  farMarkerPoint,
+  farMarkerRect,
   gateRect,
   helpRect,
   linkGateRect,
@@ -72,7 +79,10 @@ import { OnlineClient, type AuthCredential, type SocketFactory } from "./net/cli
 import { COMMAND, type RosterEntry } from "./net/protocol.ts";
 import { JOURNEY_EVENT, PLAZA_RADIUS, errandHudText, journeyEventText, journeyIsHelped, resolveErrand } from "./net/journey.ts";
 import { frontTile, plaqueOf, talkTarget, ticksSinceDiscovery, townResidentsAt, type NpcPose } from "./net/npc.ts";
-import { loadTicket, saveTicket, clearTicket } from "./auth-store.ts";
+import { loadTicket, saveTicket, clearTicket, loadRealm, saveRealm, clearRealm } from "./auth-store.ts";
+import { EMOTE_TABLE, emoteGlyph } from "./net/emote.ts";
+import { FAR_BAND_WORDS, farVector } from "./net/far.ts";
+import { INVITE_TTL_SEC, parseInviteToken } from "./shared/invite.ts";
 import { AUTH_PROTOCOL_VERSION, NAME_MAX, validateName } from "./shared/auth.ts";
 import { nameGridCharset } from "./shared/name-charset.ts";
 import { describeCreateError } from "./create-text.ts";
@@ -105,7 +115,14 @@ export type PageAuthEvent =
   | { type: "login"; login: string }
   | { type: "logout" }
   | { type: "nameInput"; title: string; maxLength: number; value: string; error: string }
-  | { type: "nameInputEnd" };
+  | { type: "nameInputEnd" }
+  /** The player minted a realm invite: show a shareable link built from
+   *  the token (`<realm>.<CODE>`), valid for `expiresIn` seconds. */
+  | { type: "invite"; token: string; expiresIn: number }
+  | { type: "inviteEnd" }
+  /** The invite the page handed over (`__pocketInvite`) admitted us: the
+   *  page may forget it. */
+  | { type: "inviteConsumed" };
 
 declare global {
   // eslint-disable-next-line no-var
@@ -162,10 +179,25 @@ declare global {
    *  while the creation screen is open, a text box for the name. */
   // eslint-disable-next-line no-var
   var __pocketAuthEvent: ((ev: PageAuthEvent) => void) | undefined;
-  /** The page calls this to sign out ("signout") or to submit the name
-   *  typed into its text box ("name", text). */
+  /** The page calls this to sign out ("signout"), to submit the name
+   *  typed into its text box ("name", text) or to close the invite link
+   *  box ("inviteEnd"). */
   // eslint-disable-next-line no-var
-  var __pocketAuthCommand: ((cmd: "signout" | "name", value?: string) => void) | undefined;
+  var __pocketAuthCommand: ((cmd: "signout" | "name" | "inviteEnd", value?: string) => void) | undefined;
+  /** An invite token (`<realm>.<CODE>`) the web page took from its URL
+   *  fragment: the client joins that realm with that code. */
+  // eslint-disable-next-line no-var
+  var __pocketInvite: string | undefined;
+  /** Test/demo hook: the same token for hosts without a page. */
+  // eslint-disable-next-line no-var
+  var __onlineInvite: string | undefined;
+  /** Test/demo hook: a realm pin for hosts without stored state. */
+  // eslint-disable-next-line no-var
+  var __onlineRealm: string | undefined;
+  /** Demo hook: request one invite as soon as the realm admits us (the
+   *  token then shows in the published state and the ONLINE log line). */
+  // eslint-disable-next-line no-var
+  var __onlineAutoInvite: boolean | undefined;
 }
 
 export interface OnlinePublished {
@@ -208,6 +240,8 @@ export interface OnlinePublished {
   /** The rejection text from the last createError, "" when creation is not
    *  in a rejected state. */
   createError: string;
+  /** The connection refusal shown in the HUD (for hosted acceptance). */
+  rejectText: string;
   notice: string;
   look: number;
   linkCode: string;
@@ -215,6 +249,16 @@ export interface OnlinePublished {
   villagers: number;
   roster: Record<number, { name: string; look: number }>;
   remote: { id: number; x: number; y: number }[];
+  /** Same-realm players outside the AOI: octant and band only. */
+  far: { id: number; dir: number; band: number }[];
+  /** Live emote bubbles by player id. */
+  emotes: Record<number, number>;
+  /** The emote picker is open. */
+  emoteBar: boolean;
+  /** The last invite token this client minted ("" until then). */
+  invite: string;
+  /** The realm this client asks for on (re)connect ("" = any). */
+  realmPin: string;
 }
 
 const DEFAULT_URL = "ws://127.0.0.1:8080/ws";
@@ -300,10 +344,20 @@ export function OnlineView() {
     __onlineSocketFactory?: OnlineClientOptsSocketFactory;
     __onlineAuth?: AuthCredential;
     __onlineAutoWalk?: boolean;
+    __onlineInvite?: string;
+    __onlineRealm?: string;
+    __onlineAutoInvite?: boolean;
     __pocketAuth?: { token?: string };
+    __pocketInvite?: string;
     __pocketWeb?: boolean;
   };
   const url = resolveUrl(g.__onlineUrl);
+  // The realm to ask for: an invite token (from the page's URL fragment or
+  // a host hook) names the realm and brings the code; otherwise the pin of
+  // the last admission, persisted beside the ticket. Nothing: any realm.
+  const inviteFrom = parseInviteToken(g.__pocketInvite ?? g.__onlineInvite ?? "");
+  let inviteActive = inviteFrom !== null;
+  const initialRealm = inviteFrom?.realm ?? g.__onlineRealm ?? loadRealm();
 
   // -- viewport (follows the host, like the single-player wander view) ------
   const initialVp = hostViewport(getOps());
@@ -348,9 +402,14 @@ export function OnlineView() {
    *  DIALOG_ROWS) or none. */
   const [dialogRows, setDialogRows] = createSignal<readonly string[]>([]);
   const [dialogOpen, setDialogOpen] = createSignal(false);
+  /** The emote picker (R opens it; LEFT/RIGHT pick, CIRCLE sends). */
+  const [emoteOpen, setEmoteOpen] = createSignal(false);
+  const [emoteSel, setEmoteSel] = createSignal(0);
 
   let client: OnlineClient | null = null;
   let noticeUntil = 0;
+  /** The demo hook's one invite request, sent once the world is ready. */
+  let autoInvitePending = false;
   let createFocus: CreateFocus = "name";
   const roster = new Map<number, RosterEntry>();
   const publishedRoster: Record<number, { name: string; look: number }> = {};
@@ -384,6 +443,7 @@ export function OnlineView() {
 
   const signOut = () => {
     clearTicket();
+    clearRealm();
     if (screen() === "creating") pageNameInputEnd();
     try {
       globalThis.__pocketAuthEvent?.({ type: "logout" });
@@ -402,6 +462,7 @@ export function OnlineView() {
     globalThis.__pocketAuthCommand = (cmd, value) => {
       if (cmd === "signout") signOut();
       else if (cmd === "name") submitPageName(typeof value === "string" ? value : "");
+      else if (cmd === "inviteEnd") setNotice("");
     };
   } catch {
     // desktop
@@ -431,7 +492,19 @@ export function OnlineView() {
       name: auth.kind === "guest" ? auth.name : undefined,
       color: auth.kind === "guest" ? auth.color : undefined,
       socketFactory: g.__onlineSocketFactory,
+      realm: initialRealm,
+      invite: inviteFrom?.code ?? null,
       onTicket: (ticket) => saveTicket(ticket),
+      onRealm: (realmId) => {
+        // Admitted: this is the realm to come back to. An invite that got
+        // us in has done its job; the page may forget it.
+        saveRealm(realmId);
+        if (inviteActive) {
+          inviteActive = false;
+          pageEvent({ type: "inviteConsumed" });
+        }
+        if (g.__onlineAutoInvite === true) autoInvitePending = true;
+      },
       onNeedCreate: (loginName, ticket) => {
         publishLogin(loginName);
         ns = makeNameState(loginName);
@@ -482,6 +555,15 @@ export function OnlineView() {
           rejectCreate(msg.reason);
         } else if (msg.type === "linkCode") {
           showNotice(`Link code: ${msg.code} (5 min)`, 30000);
+        } else if (msg.type === "invite" && typeof msg.code === "string" && typeof msg.realm === "string") {
+          // The token is the shareable thing: the realm name and the code,
+          // nothing about this account. The page turns it into a link.
+          const token = `${msg.realm}.${msg.code}`;
+          const minutes = Math.max(1, Math.round(Number(msg.expiresIn ?? INVITE_TTL_SEC) / 60));
+          showNotice(`INVITE ${token} · ${minutes} min`, 30000);
+          pageEvent({ type: "invite", token, expiresIn: Number(msg.expiresIn ?? INVITE_TTL_SEC) });
+        } else if (msg.type === "inviteError") {
+          showNotice(msg.reason === "invite-rate" ? "Invite: wait a minute" : "Invite unavailable");
         } else if (msg.type === "linkError") {
           codeState = { code: "", cursor: 0 };
           setCodeDisplay("");
@@ -535,6 +617,14 @@ export function OnlineView() {
   const pageNameInputEnd = () => {
     try {
       globalThis.__pocketAuthEvent?.({ type: "nameInputEnd" });
+    } catch {
+      // no page
+    }
+  };
+  /** Any other page event (invites); no page on desktop. */
+  const pageEvent = (ev: PageAuthEvent) => {
+    try {
+      globalThis.__pocketAuthEvent?.(ev);
     } catch {
       // no page
     }
@@ -640,14 +730,47 @@ export function OnlineView() {
   const LOOK_POSE_KEY = ["idle", "walkL", "walkR"] as const;
   let local: NodeMirror | null = null;
   let localName: NodeMirror | null = null;
+  let localBubble: Bubble | null = null;
   let localRec: SpriteRec = { tileRef: null, tileIdx: -1 };
+  /** An emote bubble: a small plate with the preset's glyph, above the
+   *  name tag; parked off-screen when the player has no live emote. */
+  interface Bubble {
+    box: NodeMirror;
+    text: NodeMirror;
+    shown: number;
+  }
   interface RemoteRec extends SpriteRec {
     node: NodeMirror;
     label: NodeMirror;
+    bubble: Bubble;
     live: boolean;
     worldX: number;
     worldY: number;
   }
+  /** A far player's edge marker: a square at the screen edge in the
+   *  octant's direction and a label (name and band word) beside it. */
+  interface FarRec {
+    box: NodeMirror;
+    label: NodeMirror;
+    text: string;
+    live: boolean;
+  }
+  const farPool: FarRec[] = [];
+  const farUsed = new Map<number, FarRec>();
+  /** Screen-space layer for far markers: inside the field, inserted after
+   *  the ring root so it draws above the camera-translated world, and below
+   *  the HUD plates (JSX siblings after the field). */
+  let farOverlay: NodeMirror | null = null;
+  const ensureFarOverlay = (): NodeMirror => {
+    if (farOverlay) return farOverlay;
+    farOverlay = createElement("view");
+    setProp(farOverlay, "style", { posType: 1, insetL: 0, insetT: 0, width: 0, height: 0 });
+    setProp(farOverlay, "debugName", "online-far-overlay");
+    insertNode(fieldRoot, farOverlay);
+    return farOverlay;
+  };
+  const BUBBLE_W = 30;
+  const BUBBLE_H = 14;
   const remotePool: RemoteRec[] = [];
   const remoteUsed = new Map<number, RemoteRec>();
   const villagerPool: VillagerRec[] = [];
@@ -710,6 +833,38 @@ export function OnlineView() {
     }
   };
 
+  const makeBubble = (parent: NodeMirror, name: string): Bubble => {
+    const box = createElement("view");
+    setProp(box, "style", { posType: 1, insetL: 0, insetT: 0, width: BUBBLE_W, height: BUBBLE_H, bgColor: "#fff6c4", borderWidth: 1, borderColor: "#6b5a1e" });
+    setProp(box, "debugName", name);
+    insertNode(parent, box);
+    const text = createElement("text");
+    setProp(text, "style", { posType: 1, insetL: 0, insetT: 1, width: BUBBLE_W, height: 12, textColor: "#2a2000", lineHeight: 12, textAlign: 1 });
+    setProp(text, "debugName", `${name}-text`);
+    insertNode(box, text);
+    jump(box, "translateX", -10000);
+    return { box, text, shown: 0 };
+  };
+
+  /** Show the glyph of `emote` above a walker whose sprite sits at (x, y)
+   *  in ring space, or park the bubble when there is none. */
+  const placeBubble = (b: Bubble, emote: number, x: number, y: number) => {
+    if (emote === 0) {
+      if (b.shown !== 0) {
+        b.shown = 0;
+        replaceText(b.text, "");
+        jump(b.box, "translateX", -10000);
+      }
+      return;
+    }
+    if (b.shown !== emote) {
+      b.shown = emote;
+      replaceText(b.text, emoteGlyph(emote));
+    }
+    jump(b.box, "translateX", x + TILE / 2 - BUBBLE_W / 2);
+    jump(b.box, "translateY", y - 14 - BUBBLE_H - 2);
+  };
+
   const makeRemote = (spriteParent: NodeMirror, labelParent: NodeMirror): RemoteRec => {
     const node = createElement("image");
     setProp(node, "style", { posType: 1, insetL: 0, insetT: 0, width: TILE, height: TILE });
@@ -719,7 +874,67 @@ export function OnlineView() {
     setProp(label, "style", { posType: 1, insetL: 0, insetT: 0, width: NAME_LABEL_W, height: 12, textColor: "#ffe97a", lineHeight: 12, textAlign: 1 });
     setProp(label, "debugName", "online-remote-name");
     insertNode(labelParent, label);
-    return { node, label, tileRef: null, tileIdx: -1, live: false, worldX: 0, worldY: 0 };
+    const bubble = makeBubble(labelParent, "online-remote-emote");
+    return { node, label, bubble, tileRef: null, tileIdx: -1, live: false, worldX: 0, worldY: 0 };
+  };
+
+  const makeFar = (): FarRec => {
+    const box = createElement("view");
+    setProp(box, "style", { posType: 1, insetL: 0, insetT: 0, width: FAR_MARKER_SIZE, height: FAR_MARKER_SIZE, bgColor: "#ffe97a", borderWidth: 1, borderColor: "#0b1626" });
+    setProp(box, "debugName", "online-far-marker");
+    const overlay = ensureFarOverlay();
+    insertNode(overlay, box);
+    const label = createElement("text");
+    setProp(label, "style", { posType: 1, insetL: 0, insetT: 0, width: FAR_LABEL_W, height: 12, textColor: "#ffe97a", lineHeight: 12, textAlign: 0 });
+    setProp(label, "debugName", "online-far-name");
+    insertNode(overlay, label);
+    return { box, label, text: "", live: false };
+  };
+
+  /** Far markers: one per same-realm player outside the AOI, at the screen
+   *  edge in its octant, labelled with the name and the band word. A player
+   *  the snapshot carries exactly is never drawn here as well. */
+  const syncFar = (c: OnlineClient) => {
+    for (const rec of farUsed.values()) rec.live = false;
+    const debug = debugOn();
+    const box = farMarkerRect(vp.w, vp.h, debug);
+    for (const [id, marker] of c.far) {
+      if (remoteUsed.has(id)) continue;
+      let rec = farUsed.get(id);
+      if (!rec) {
+        rec = farPool.pop() ?? makeFar();
+        farUsed.set(id, rec);
+      }
+      rec.live = true;
+      const u = farVector(marker.dir);
+      const at = farMarkerPoint(vp.w, vp.h, debug, u.x, u.y);
+      const mx = Math.min(box.x1 - FAR_MARKER_SIZE, Math.max(box.x0, at.x - FAR_MARKER_SIZE / 2));
+      const my = Math.min(box.y1 - FAR_MARKER_SIZE, Math.max(box.y0, at.y - FAR_MARKER_SIZE / 2));
+      jump(rec.box, "translateX", mx);
+      jump(rec.box, "translateY", my);
+      const name = roster.get(id)?.name ?? "?";
+      const text = `${name} · ${FAR_BAND_WORDS[marker.band] ?? ""}`;
+      if (rec.text !== text) {
+        rec.text = text;
+        replaceText(rec.label, text);
+      }
+      // The label sits on the inner side of the marker and stays in the box.
+      const onRight = at.x > (box.x0 + box.x1) / 2;
+      setProp(rec.label, "style", { textAlign: onRight ? 2 : 0 });
+      const lx = onRight ? mx - 4 - FAR_LABEL_W : mx + FAR_MARKER_SIZE + 4;
+      const ly = Math.min(box.y1 - 12, Math.max(box.y0, my - 2));
+      jump(rec.label, "translateX", lx);
+      jump(rec.label, "translateY", ly);
+    }
+    for (const [id, rec] of farUsed) {
+      if (rec.live) continue;
+      farUsed.delete(id);
+      rec.text = "";
+      replaceText(rec.label, "");
+      jump(rec.box, "translateX", -10000);
+      jump(rec.label, "translateX", -10000);
+      farPool.push(rec);
+    }
   };
 
   const makeVillager = (parent: NodeMirror): VillagerRec => {
@@ -756,7 +971,9 @@ export function OnlineView() {
       insertNode(nameOverlay!, label);
       local = node;
       localName = label;
+      localBubble = makeBubble(nameOverlay!, "online-local-emote");
     }
+    c.expireEmotes(now);
     const myNode = local;
     const myLabel = localName;
     const myLook = roster.get(c.myId)?.look ?? lookSel();
@@ -770,6 +987,7 @@ export function OnlineView() {
     getOps().setText(myLabel.id, roster.get(c.myId)?.name ?? login());
     jump(myLabel, "translateX", lx + TILE / 2 - NAME_LABEL_W / 2);
     jump(myLabel, "translateY", ly - 14);
+    placeBubble(localBubble!, c.emotes.get(c.myId)?.emote ?? 0, lx, ly);
 
     // Frozen-world residents follow the same reducer event state and
     // deterministic W-CHAR look mapping as the single-player wander view.
@@ -862,6 +1080,7 @@ export function OnlineView() {
       getOps().setText(rec.label.id, entry?.name ?? "");
       jump(rec.label, "translateX", sx + TILE / 2 - NAME_LABEL_W / 2);
       jump(rec.label, "translateY", sy - 14);
+      placeBubble(rec.bubble, c.emotes.get(id)?.emote ?? 0, sx, sy);
     });
     for (const [id, rec] of remoteUsed) {
       if (rec.live) continue;
@@ -869,9 +1088,11 @@ export function OnlineView() {
       releaseSprite(rec, rec.node);
       jump(rec.node, "translateX", -10000);
       jump(rec.label, "translateX", -10000);
+      placeBubble(rec.bubble, 0, 0, 0);
       remotePool.push(rec);
       nodeChurn++;
     }
+    syncFar(c);
   };
 
   // -- realm gameplay: residents, talk, boards, plaza, log ---------------------
@@ -1087,6 +1308,8 @@ export function OnlineView() {
   let logTimer = 0;
   let menuHeld = false;
   const publishedRemote: { id: number; x: number; y: number }[] = [];
+  const publishedFar: { id: number; dir: number; band: number }[] = [];
+  const publishedEmotes: Record<number, number> = {};
 
   const refreshHud = () => {
     const c = client;
@@ -1159,12 +1382,33 @@ export function OnlineView() {
     out.dialog = dialogOpen();
     out.login = login();
     out.createError = createError();
+    out.rejectText = h?.rejectText ?? "";
     out.notice = notice();
     out.look = lookSel();
     out.linkCode = codeDisplay();
     out.linkCursor = linkCursor();
     out.villagers = villagers.size;
     out.roster = publishedRoster;
+    let farCount = 0;
+    for (const [id, marker] of c?.far ?? []) {
+      let item = publishedFar[farCount];
+      if (!item) {
+        item = { id, dir: 0, band: 0 };
+        publishedFar[farCount] = item;
+      }
+      item.id = id;
+      item.dir = marker.dir;
+      item.band = marker.band;
+      farCount++;
+    }
+    publishedFar.length = farCount;
+    out.far = publishedFar;
+    for (const id in publishedEmotes) delete publishedEmotes[id];
+    for (const [id, bubble] of c?.emotes ?? []) publishedEmotes[id] = bubble.emote;
+    out.emotes = publishedEmotes;
+    out.emoteBar = emoteOpen();
+    out.invite = c?.inviteToken ?? "";
+    out.realmPin = c?.realmPin ?? "";
     let remoteCount = 0;
     for (const [id, rec] of remoteUsed) {
       let item = publishedRemote[remoteCount];
@@ -1320,7 +1564,8 @@ export function OnlineView() {
     // A dialog owns the frame: no movement (zero buttons reach the
     // client, so the lockstep stream carries only the fast bit), no
     // auto-walk, and CIRCLE pages it.
-    const dialog = dialogOpen();
+    // The emote picker owns the d-pad like a dialog does.
+    const dialog = dialogOpen() || emoteOpen();
     const dpad = buttons & DPAD;
     if (dpad && !dialog) {
       if (autoMode) auto.reset();
@@ -1332,6 +1577,7 @@ export function OnlineView() {
       auto.home = { x: c.predictor.current.move.tx, y: c.predictor.current.move.ty };
     }
     c.onFrame(dialog ? 0 : buttons, hz, autoMask);
+    if (autoInvitePending && c.requestInvite()) autoInvitePending = false;
     syncWorld(now);
     const seed = c.predictor?.world.seed ?? 0;
     pollJourney(c, seed);
@@ -1359,6 +1605,21 @@ export function OnlineView() {
         setMenuOpen(false);
         setDeleteArmed(false);
       }
+      if (edge(buttons, BTN.LTRIGGER)) {
+        // An invite to this realm: the server answers with the token; the
+        // notice shows it and the web page offers it as a link.
+        if (!c.requestInvite()) showNotice("Invite: not in a world yet");
+        setMenuOpen(false);
+        setDeleteArmed(false);
+      }
+      if (edge(buttons, BTN.RTRIGGER)) {
+        // "Any world": drop the realm pin (and any invite) and reconnect
+        // wherever the service has room. The way out of a full world.
+        c.leaveRealm();
+        showNotice("Joining any world…");
+        setMenuOpen(false);
+        setDeleteArmed(false);
+      }
       if (edge(buttons, BTN.SQUARE)) {
         const now = Date.now();
         if (deleteArmed() && now - deleteArmedAt < 5000) {
@@ -1372,14 +1633,41 @@ export function OnlineView() {
           setDeleteArmed(true);
         }
       }
-    } else if (dialog) {
+    } else if (dialogOpen()) {
       if (edge(buttons, BTN.CIRCLE)) advanceDialog();
+    } else if (emoteOpen()) {
+      // The picker: LEFT/RIGHT choose, CIRCLE sends and closes, CROSS or R
+      // closes. A tap on a cell sends that one.
+      if (edge(buttons, BTN.LEFT)) setEmoteSel((emoteSel() + EMOTE_CELLS - 1) % EMOTE_CELLS);
+      if (edge(buttons, BTN.RIGHT)) setEmoteSel((emoteSel() + 1) % EMOTE_CELLS);
+      if (edge(buttons, BTN.CIRCLE)) {
+        c.sendEmote(EMOTE_TABLE[emoteSel()]!.id);
+        setEmoteOpen(false);
+      }
+      if (edge(buttons, BTN.CROSS) || edge(buttons, BTN.RTRIGGER)) setEmoteOpen(false);
+      const ts = touches();
+      for (const t of ts) {
+        if (prevTouchIds.has(t.id)) continue;
+        const bar = emoteBarRect(vp.w, vp.h, debugOn());
+        for (let i = 0; i < EMOTE_CELLS; i++) {
+          const cell = emoteCell(bar, i);
+          if (t.x >= cell.x0 && t.x < cell.x1 && t.y >= cell.y0 && t.y < cell.y1) {
+            setEmoteSel(i);
+            c.sendEmote(EMOTE_TABLE[i]!.id);
+            setEmoteOpen(false);
+            break;
+          }
+        }
+      }
+      prevTouchIds = new Set(ts.map((t) => t.id));
     } else {
       // TRIANGLE requests fast mode; the HUD says FAST once the server's
-      // snapshot confirms it. CIRCLE talks, CROSS acts or pages the log.
+      // snapshot confirms it. CIRCLE talks, CROSS acts or pages the log,
+      // R opens the emote picker.
       if (edge(buttons, BTN.TRIANGLE)) c.fastRequested = !c.fastRequested;
       if (edge(buttons, BTN.CIRCLE)) pressTalk(c);
       if (edge(buttons, BTN.CROSS)) pressAction(c);
+      if (edge(buttons, BTN.RTRIGGER) && c.predictor instanceof RealmPredictor) setEmoteOpen(true);
     }
     if (notice() && Date.now() > noticeUntil) setNotice("");
     publish();
@@ -1397,6 +1685,7 @@ export function OnlineView() {
   const logBar = () => logBarRect(viewport().w, viewport().h);
   const errandBar = () => errandBarRect(viewport().w, viewport().h);
   const dialogBox = () => dialogRect(viewport().w, viewport().h);
+  const emoteBar = () => emoteBarRect(viewport().w, viewport().h, debugOn());
 
   return (
     <View class="w-full h-full overflow-hidden bg-black">
@@ -1425,7 +1714,7 @@ export function OnlineView() {
           </Show>
           <View class="absolute" style={{ posType: 1, ...rect(helpRect(viewport().w, viewport().h)), bgColor: "#0b1626", opacity: 0.84 }} debugName="online-help" />
           <Text class="text-xs" style={{ posType: 1, insetT: helpRect(viewport().w, viewport().h).y0 + 2, insetL: 12, textColor: "#c8d6ea", lineHeight: 12, height: 12 }}>
-            D-PAD MOVE · O TALK · X ACT/LOG · TRI FAST · SEL MENU
+            D-PAD MOVE · O TALK · X ACT/LOG · TRI FAST · R EMOTE · SEL MENU
           </Text>
         </Show>
         <Show when={dialogOpen()}>
@@ -1437,7 +1726,22 @@ export function OnlineView() {
           ))}
           <Text class="text-xs" style={{ posType: 1, insetT: dialogBox().y1 - 14, insetL: dialogBox().x1 - 56, width: 50, textColor: "#8ad0ff", lineHeight: 12, height: 12 }}>O next</Text>
         </Show>
-        <Show when={notice() !== ""}>
+        <Show when={emoteOpen()}>
+          <View class="absolute" style={{ posType: 1, ...rect(emoteBar()), bgColor: "#0b1626", borderWidth: 1, borderColor: "#3a4a6a" }} debugName="online-emote-bar" />
+          {EMOTE_TABLE.map((e, index) => {
+            const cell = () => emoteCell(emoteBar(), index);
+            return (
+              <View
+                class="absolute items-center justify-center"
+                style={{ posType: 1, ...rect(cell()), bgColor: emoteSel() === index ? "#ffe17a" : "#1b2944" }}
+                debugName={`online-emote-cell-${index}`}
+              >
+                <Text class="text-xs" style={{ textColor: emoteSel() === index ? "#0b1626" : "#e7edf8", lineHeight: 12, height: 12 }}>{`${e.glyph} ${e.word}`}</Text>
+              </View>
+            );
+          })}
+        </Show>
+        <Show when={notice() !== "" && !emoteOpen()}>
           <View class="absolute flex-row justify-center" style={{ posType: 1, insetT: noticeRect(viewport().w, viewport().h, debugOn()).y0, insetL: 0, insetR: 0 }} debugName="online-notice">
             <View style={{ bgColor: "#0b1626", paddingL: 10, paddingR: 10, paddingT: 2, paddingB: 2 }}>
               <Text class="text-sm" style={{ textColor: "#8ad0ff", lineHeight: 18, height: 18 }}>{notice()}</Text>
@@ -1457,7 +1761,8 @@ export function OnlineView() {
           <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 68, insetL: menu().x0 + 10, textColor: "#c8d6ea", lineHeight: 14, height: 14 }}>
             {menuAuto() ? "START: auto-walk off" : "START: auto-walk on"}
           </Text>
-          <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 82, insetL: menu().x0 + 10, textColor: "#c8d6ea", lineHeight: 14, height: 14 }}>CROSS: close</Text>
+          <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 82, insetL: menu().x0 + 10, textColor: "#c8d6ea", lineHeight: 14, height: 14 }}>L: invite a friend</Text>
+          <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 96, insetL: menu().x0 + 10, textColor: "#c8d6ea", lineHeight: 14, height: 14 }}>R: any world · CROSS: close</Text>
         </Show>
       </Show>
       <Show when={screen() === "gate"}>

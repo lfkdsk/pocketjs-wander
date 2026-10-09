@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BTN } from "../examples/wander-online/net/protocol.ts";
+import { SPAWN_RING_RADIUS } from "../examples/wander-online/net/spawn.ts";
 import { RealmPredictor } from "../examples/wander-online/net/realm-predict.ts";
 import {
   GENERATOR_VERSION,
@@ -146,12 +147,17 @@ describe("wander-online v4 realm arena and prediction", () => {
     const me = arena.add("me", 1, 0, { tx: -70_001, ty: 80_003 });
     const near = arena.add("near", 2, 0, { tx: -70_000, ty: 80_004 });
     arena.add("far", 3, 0, { tx: 900_000, ty: -900_000 });
+    // Admission lands each player on a safe tile within the spawn ring of
+    // its signed anchor; the snapshot carries that exact signed tile.
+    expect(Math.abs(me.state.move.tx + 70_001)).toBeLessThanOrEqual(SPAWN_RING_RADIUS);
+    expect(Math.abs(me.state.move.ty - 80_003)).toBeLessThanOrEqual(SPAWN_RING_RADIUS);
     arena.indexPlayers();
-    const decoded = decodeState4(snapshotForRealm(arena, me, 4, 3, 9));
+    const decoded = decodeState4(snapshotForRealm(arena, me, 4 + 2 * SPAWN_RING_RADIUS, 3, 9));
     expect(decoded?.epoch).toBe(EPOCH);
     expect(decoded?.entities.map((e) => e.id)).toEqual([me.id, near.id]);
-    expect(decoded?.entities[0]?.tx).toBe(-70_001);
-    expect(decoded?.entities[0]?.ty).toBe(80_003);
+    expect(decoded?.entities[0]?.tx).toBe(me.state.move.tx);
+    expect(decoded?.entities[0]?.ty).toBe(me.state.move.ty);
+    expect(decoded?.entities[0]?.tx).toBeLessThan(0);
     expect(decoded?.roomOnline).toBe(3);
     expect(decoded?.allOnline).toBe(9);
 

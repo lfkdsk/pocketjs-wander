@@ -36,6 +36,8 @@ import {
   decodeInput,
   decodeInputBatch,
   encodeBye,
+  encodeEmote,
+  encodeFarPlayers,
   encodePong,
   encodePlayerJourney,
   encodePlayerProgress,
@@ -46,6 +48,15 @@ import {
   gridFromWindow,
 } from "../net/protocol.ts";
 import { AUTH_PROTOCOL_VERSION } from "../shared/auth.ts";
+import { SlidingWindow } from "../shared/limits.ts";
+import { FAR_INTERVAL_SEC } from "../net/far.ts";
+import {
+  INVITE_ISSUE_PER_MIN,
+  INVITE_TTL_SEC,
+  InviteTable,
+  REALM_CLOSE_REASON,
+  inviteCodeWellFormed,
+} from "../shared/invite.ts";
 export interface ServerOpts {
   port: number;
   seed: number;
@@ -79,11 +90,16 @@ interface Conn {
   bytesIn: number;
   bytesOut: number;
   drops: number;
+  /** Invites this connection minted (per-player issue limit). */
+  inviteWindow: SlidingWindow | null;
 }
 
 interface ConnData {
   conn: Conn | null;
   realm: boolean;
+  /** A pinned-realm admission decided at upgrade time (unknown realm,
+   *  bad invite): the socket is closed with this 1008 token on open. */
+  reject: string | null;
 }
 
 export interface ServerHandle {
@@ -111,6 +127,9 @@ export function startServer(opts: ServerOpts): ServerHandle {
   const conns = new Map<number, Conn>();
   const realmConns = new Map<number, Conn>();
   const frameMod = Math.max(1, Math.round(opts.hz / opts.broadcastHz));
+  const farMod = Math.max(1, Math.round(opts.hz * FAR_INTERVAL_SEC));
+  // Realm invites: codes only, in memory (the loopback server is ephemeral).
+  const invites = new InviteTable(() => Date.now(), Math.random);
 
   const stats = {
     ticks: 0,
@@ -149,6 +168,7 @@ export function startServer(opts: ServerOpts): ServerHandle {
     }
     realmArena.indexPlayers();
     const realmOnline = realmArena.players.size;
+    const far = realmArena.frame % farMod === 0;
     for (const p of realmArena.players.values()) {
       const conn = realmConns.get(p.id);
       if (!conn) continue;
@@ -158,6 +178,24 @@ export function startServer(opts: ServerOpts): ServerHandle {
       emit(conn, encodeRegionState(realmArena.regionSnapshotFor(p, 0)));
       flushPrivate(p, conn);
       emit(conn, snapshotForRealm(realmArena, p, opts.aoi, realmOnline, realmOnline));
+      // Once a second: the coarse direction band for everyone out of AOI.
+      // Nothing is sent when nobody is far; the client expires stale rows.
+      if (far) {
+        const rows = realmArena.farRowsFor(p, opts.aoi);
+        if (rows.length > 0) emit(conn, encodeFarPlayers(rows));
+      }
+    }
+  }
+
+  /** Accepted emotes go to every player whose AOI holds the sender, the
+   *  sender included, at once (an emote is an event, not a snapshot). */
+  function flushEmotes(): void {
+    for (const pending of realmArena.drainEmotes()) {
+      const message = encodeEmote({ id: pending.from.id, emote: pending.emote });
+      for (const p of realmArena.emoteRecipients(pending.from, opts.aoi)) {
+        const conn = realmConns.get(p.id);
+        if (conn) emit(conn, message);
+      }
     }
   }
 
@@ -238,6 +276,7 @@ export function startServer(opts: ServerOpts): ServerHandle {
         realmArena.applyCommand(p, cmd);
         flushChangedRows();
         flushPrivate(p, conn);
+        flushEmotes();
       }
     } else if (kind === MSG.ping) {
       emit(conn, encodePong(v.getUint32(1, true), v.getUint32(5, true)));
@@ -270,6 +309,21 @@ export function startServer(opts: ServerOpts): ServerHandle {
           if (joined) return;
           await handleLinkRedeem(ws, m, ip);
           return;
+        case "inviteq": {
+          // A joined realm player mints an invite to its own realm. The
+          // reply carries the code, the realm name and the lifetime: no
+          // account, name or position.
+          const conn = ws.data.conn;
+          if (!conn || !conn.realm) return;
+          conn.inviteWindow ??= new SlidingWindow(INVITE_ISSUE_PER_MIN, 60_000, () => Date.now());
+          if (!conn.inviteWindow.hit()) {
+            ws.send(JSON.stringify({ type: "inviteError", reason: "invite-rate" }));
+            return;
+          }
+          const issued = invites.issue();
+          ws.send(JSON.stringify({ type: "invite", code: issued.code, realm: realmArena.realmId, expiresIn: INVITE_TTL_SEC }));
+          return;
+        }
         case "linkq": {
           if (!joined) return;
           const a = await authReady;
@@ -307,6 +361,7 @@ export function startServer(opts: ServerOpts): ServerHandle {
   }
 
   async function handleJoin(ws: ServerWebSocket<ConnData>, m: Record<string, unknown>, ip: string): Promise<void> {
+    if (ws.data.reject) return;
     const expected = ws.data.realm ? WORLD_PROTOCOL_VERSION : AUTH_PROTOCOL_VERSION;
     const generatorOk = Array.isArray(m.supportedGeneratorVersions)
       && m.supportedGeneratorVersions.includes(1);
@@ -370,15 +425,17 @@ export function startServer(opts: ServerOpts): ServerHandle {
   function admit(ws: ServerWebSocket<ConnData>, name: string, color: number, look: number, githubId: number, sid: string): void {
     const activeArena = ws.data.realm ? realmArena : arena;
     const activeConns = ws.data.realm ? realmConns : conns;
+    // Guests have no account: the spawn-slot hash takes the connection's
+    // sid, so two guests with one name still spread over the ring.
     const p = ws.data.realm
-      ? realmArena.tryAdd(name, color, look)
+      ? realmArena.tryAdd(name, color, look, undefined, undefined, githubId > 0 ? String(githubId) : `${name}:${sid}`)
       : arena.add(name, color, look);
     if (!p) {
       if (githubId > 0 && auth) auth.sessionRelease(githubId, "v4:local", sid);
       ws.close(1008, "full");
       return;
     }
-    const conn: Conn = { ws, realm: ws.data.realm, playerId: p.id, githubId, sid, bytesIn: 0, bytesOut: 0, drops: 0 };
+    const conn: Conn = { ws, realm: ws.data.realm, playerId: p.id, githubId, sid, bytesIn: 0, bytesOut: 0, drops: 0, inviteWindow: null };
     ws.data.conn = conn;
     activeConns.set(p.id, conn);
     if (ws.data.realm) {
@@ -428,7 +485,20 @@ export function startServer(opts: ServerOpts): ServerHandle {
     fetch(req: Request, srv) {
       const url = new URL(req.url);
       if (url.pathname === "/ws" || url.pathname === "/ws/v4") {
-        const ok = srv.upgrade(req, { data: { conn: null, realm: url.pathname === "/ws/v4" } satisfies ConnData });
+        const realm = url.pathname === "/ws/v4";
+        // A pinned realm (`?realm=`, a reconnect or an invite) must be this
+        // server's one realm; an invite code must be live. Either failure
+        // is an explicit 1008 token on open, never a silent fallback.
+        let reject: string | null = null;
+        if (realm) {
+          const pin = url.searchParams.get("realm");
+          const invite = url.searchParams.get("invite");
+          if (pin !== null && pin !== realmArena.realmId) reject = REALM_CLOSE_REASON.realm;
+          else if (invite !== null && !(inviteCodeWellFormed(invite.toUpperCase()) && invites.valid(invite.toUpperCase()))) {
+            reject = REALM_CLOSE_REASON.invite;
+          }
+        }
+        const ok = srv.upgrade(req, { data: { conn: null, realm, reject } satisfies ConnData });
         if (ok) return undefined as never;
         return new Response("upgrade failed", { status: 400 });
       }
@@ -442,8 +512,9 @@ export function startServer(opts: ServerOpts): ServerHandle {
       return file.size > 0 ? new Response(file) : new Response("not found", { status: 404 });
     },
     websocket: {
-      open() {
-        // Nothing until JOIN.
+      open(ws: ServerWebSocket<ConnData>) {
+        // Nothing until JOIN, unless the upgrade already refused the pin.
+        if (ws.data.reject) ws.close(1008, ws.data.reject);
       },
       message(ws: ServerWebSocket<ConnData>, msg: string | Buffer<ArrayBuffer>) {
         if (opts.simLatency > 0) {

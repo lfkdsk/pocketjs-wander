@@ -22,6 +22,7 @@
     "shots:f2": "bun tools/wander-f2-shots.ts",
     "shots:char": "bun tools/wander-char-shots.ts",
     "shots:online": "bun tools/wander-online-shots.ts",
+    "shots:meet": "bun tools/wander-online-meet-shots.ts",
     "bench:online": "bun tools/wander-online-quickjs-bench.ts",
     "online:demo": "bash examples/wander-online/demo.sh"
   },
