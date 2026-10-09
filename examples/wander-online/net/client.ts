@@ -866,7 +866,17 @@ export class OnlineClient {
   }
 
   private send(buf: ArrayBuffer): void {
-    if (this.socket?.readyState === "open") this.socket.send(buf);
+    const socket = this.socket;
+    if (socket?.readyState !== "open") return;
+    try {
+      socket.send(buf);
+    } catch (error) {
+      // The native WebSocket can close before PocketSocket dispatches its
+      // queued close event and updates readyState. A frame sent in that
+      // window must wait for onClose, which owns the reason and retry policy.
+      if (error instanceof SocketError && error.code === "closed") return;
+      throw error;
+    }
   }
 
   private observeServerClock(serverTimeMs: number): void {

@@ -28,12 +28,14 @@ interface SocketHarness {
   open: () => void;
   refusedOpen: () => void;
   refusedSendOpen: () => void;
+  refuseSend: (error?: SocketError) => void;
+  close: (code: number, reason: string) => void;
   message: (data: string | ArrayBuffer) => void;
 }
 
 function socketHarness(): SocketHarness {
   let state: SocketReadyState = "connecting";
-  let refuseSend = false;
+  let sendError: SocketError | null = null;
   const sent: (string | Uint8Array | ArrayBuffer)[] = [];
   const socket: PocketSocket = {
     url: "ws://unit.test/ws",
@@ -42,7 +44,8 @@ function socketHarness(): SocketHarness {
       return state;
     },
     send(data): boolean {
-      if (state !== "open" || refuseSend) throw new SocketError("closed", "socket: socket is not open");
+      if (state !== "open") throw new SocketError("closed", "socket: socket is not open");
+      if (sendError) throw sendError;
       sent.push(data);
       return true;
     },
@@ -70,9 +73,13 @@ function socketHarness(): SocketHarness {
       // The SDK has dispatched open, but the native transport has already
       // closed and refuses send before its queued close event is dispatched.
       state = "open";
-      refuseSend = true;
+      sendError = new SocketError("closed", "socket: socket is not open");
       socket.onOpen?.();
     },
+    refuseSend: (error = new SocketError("closed", "socket: socket is not open")) => {
+      sendError = error;
+    },
+    close: (code, reason) => socket.close(code, reason),
     message: (data) => socket.onMessage?.(typeof data === "string" ? data : new Uint8Array(data)),
   };
 }
@@ -143,6 +150,62 @@ describe("wander-online client core", () => {
     expect(() => harness.refusedOpen()).not.toThrow();
     expect(() => harness.refusedSendOpen()).not.toThrow();
     expect(harness.sent).toEqual([]);
+    client.stop();
+  });
+
+  test("a native close before its callback cannot crash a joined client's frame", () => {
+    const first = socketHarness(), second = socketHarness();
+    const factories = [first.factory, second.factory];
+    let opened = 0;
+    let now = 1_000;
+    const client = new OnlineClient("ws://unit.test/ws", {
+      now: () => now,
+      socketFactory: (url, opts) => factories[opened++]!(url, opts),
+    });
+    first.open();
+    readyRealm(first);
+
+    // Leave five of the negotiated six ticks pending. The native transport
+    // then closes, while PocketSocket still reports "open" until its queued
+    // close callback runs in the next service-pump turn.
+    for (let i = 0; i < 5; i++) client.onFrame(BTN.right, 60, 0);
+    first.refuseSend();
+    expect(() => client.onFrame(BTN.right, 60, 0)).not.toThrow();
+
+    first.close(1008, "rest");
+    expect(client.hud()).toMatchObject({
+      status: "retrying",
+      rejectReason: "rest",
+      rejectText: "CLOSED FOR THE MONTH",
+      retryIn: 15_000,
+    });
+
+    // The slow retry can hit the same native-close window during JOIN. It
+    // stays harmless and the authoritative second close doubles backoff.
+    now += 15_000;
+    client.onFrame(0, 60, 0);
+    expect(() => second.refusedSendOpen()).not.toThrow();
+    second.close(1008, "rest");
+    expect(client.hud()).toMatchObject({
+      status: "retrying",
+      rejectReason: "rest",
+      rejectText: "CLOSED FOR THE MONTH",
+      retryIn: 30_000,
+    });
+    client.stop();
+  });
+
+  test("gameplay sends still surface non-closed socket failures", () => {
+    const harness = socketHarness();
+    const client = new OnlineClient("ws://unit.test/ws", {
+      now: () => 1_000,
+      socketFactory: harness.factory,
+    });
+    harness.open();
+    readyRealm(harness);
+    for (let i = 0; i < 5; i++) client.onFrame(BTN.left, 60, 0);
+    harness.refuseSend(new SocketError("protocol", "socket: malformed test frame"));
+    expect(() => client.onFrame(BTN.left, 60, 0)).toThrow("socket: malformed test frame");
     client.stop();
   });
 
