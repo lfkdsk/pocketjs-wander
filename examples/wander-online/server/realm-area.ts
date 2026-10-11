@@ -775,6 +775,8 @@ export class RealmArena {
       if (this.players.get(p.id) !== p) return null;
       const errand = this.cooperativeDelivery(p);
       if (!errand || errand.trx !== here.rx || errand.try !== here.ry || !this.onPlaza(p, plan)) return null;
+      const existing = this.savedCoopReady(p, nowMs);
+      if (existing && this.presentForCoop(p, existing, nowMs)) return null;
       const before = this.captureCoopStatus(nowMs);
       p.coopTransition = null;
       const expiresAtMs = Math.min(Number.MAX_SAFE_INTEGER, nowMs + COOP_READY_TTL_MS);

@@ -1726,13 +1726,13 @@ export function OnlineView() {
       pageLog(c, seed);
       return;
     }
-    const currentCoop = coopErrand();
-    if (realmFeatures()?.coopPartnerFinding === true && currentCoop?.cooperative === true && currentCoop.savedReady > 0) {
-      c.sendCommand({ kind: COMMAND.cancelCoopErrand, rx: 0, ry: 0, extra: 0 });
-      return;
-    }
     const move = predictor.current.move;
     const rx = regionOf(move.tx), ry = regionOf(move.ty);
+    const currentCoop = coopErrand();
+    if (realmFeatures()?.coopPartnerFinding === true && currentCoop?.cooperative === true && currentCoop.savedReady > 0) {
+      c.sendCommand({ kind: COMMAND.cancelCoopErrand, rx, ry, extra: 0 });
+      return;
+    }
     const plan = predictor.world.plans.get(realmRegionKey(rx, ry));
     const nearPlaza = plan !== undefined && plan.hub.town
       && Math.abs(move.tx - plan.hub.x) + Math.abs(move.ty - plan.hub.y) <= PLAZA_RADIUS;

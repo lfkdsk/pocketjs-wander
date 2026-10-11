@@ -737,6 +737,11 @@ describe("authoritative arena rules", () => {
     teleport(p, errand.tx, errand.ty);
     expect(arena.applyCommand(p, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now))
       .toBe(JOURNEY_EVENT.coopWaiting);
+    const firstDeadline = p.coopReady!.expiresAtMs;
+    clock.now += 1_000;
+    expect(arena.applyCommand(p, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now))
+      .toBeNull();
+    expect(p.coopReady!.expiresAtMs, "replay cannot extend READY or send another friend hint").toBe(firstDeadline);
     const other = arena.add("Cancel 2", 2, 0, { tx: hub.x, ty: hub.y }, { coopIdentity: "cancel-account" });
     expect(arena.applyCommand(other, { kind: COMMAND.acceptCoopErrand, ...origin, extra: 0 }, clock.now))
       .toBe(JOURNEY_EVENT.accepted);
