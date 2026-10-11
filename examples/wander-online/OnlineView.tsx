@@ -49,6 +49,16 @@ import { nearestLandmark } from "../wander/landmarks.ts";
 import { purePlacedLandmark, townErrand, townFacts, townPlaque, townTalk, type TownLookups } from "../wander/towns.ts";
 import { NAME_INPUT_ACTION_OK, nameInputRules, type NameInputState } from "../../vendor/pocket-rpgkit/src/engine/name-input.ts";
 import { CreateCharScene, type CreateFocus } from "./CreateCharScene.tsx";
+import { SocialPanel } from "./SocialPanel.tsx";
+import {
+  createSocialMenuState,
+  normalizeSocialMenuState,
+  reduceSocialMenu,
+  type SocialAction,
+  type SocialInput,
+  type SocialMenuData,
+  type SocialMenuState,
+} from "./social-model.ts";
 import {
   DIALOG_ROWS,
   DIALOG_ROW_H,
@@ -84,6 +94,15 @@ import { EMOTE_TABLE, emoteGlyph } from "./net/emote.ts";
 import { FAR_BAND_WORDS, farVector } from "./net/far.ts";
 import { INVITE_TTL_SEC, parseInviteToken } from "./shared/invite.ts";
 import { AUTH_PROTOCOL_VERSION, NAME_MAX, validateName } from "./shared/auth.ts";
+import {
+  SOCIAL_PROTOCOL_VERSION,
+  parseRealmChoices,
+  parseSelfData,
+  parseSocialSnapshot,
+  type RealmChoice,
+  type SelfDataSummary,
+  type SocialSnapshot,
+} from "./shared/social.ts";
 import { nameGridCharset } from "./shared/name-charset.ts";
 import { describeCreateError } from "./create-text.ts";
 import { LINK_PAD_KEYS, stepLinkCode, type LinkCodeState } from "./link-code.ts";
@@ -255,6 +274,9 @@ export interface OnlinePublished {
   emotes: Record<number, number>;
   /** The emote picker is open. */
   emoteBar: boolean;
+  /** The controller-friendly friends/worlds/self-data panel is open. */
+  social: boolean;
+  socialScreen: string;
   /** The last invite token this client minted ("" until then). */
   invite: string;
   /** The realm this client asks for on (re)connect ("" = any). */
@@ -384,6 +406,12 @@ export function OnlineView() {
   const [codeDisplay, setCodeDisplay] = createSignal("");
   const [linkCursor, setLinkCursor] = createSignal(0);
   const [menuOpen, setMenuOpen] = createSignal(false);
+  const [socialOpen, setSocialOpen] = createSignal(false);
+  const [socialState, setSocialState] = createSignal<SocialMenuState>(createSocialMenuState());
+  const [socialSnapshot, setSocialSnapshot] = createSignal<SocialSnapshot | null>(null);
+  const [realmChoices, setRealmChoices] = createSignal<RealmChoice[]>([]);
+  const [selfData, setSelfData] = createSignal<SelfDataSummary | null>(null);
+  const [rosterRevision, setRosterRevision] = createSignal(0);
   /** Delete-profile confirmation: the first SQUARE arms it, the second
    *  (within the window) sends the delete. Destructive, so never one press. */
   const [deleteArmed, setDeleteArmed] = createSignal(false);
@@ -427,6 +455,12 @@ export function OnlineView() {
         return "Delete failed: sign in again";
       case "delete-unavailable":
         return "Delete unavailable: try again later";
+      case "delete-incomplete":
+        return "Delete incomplete: retry to finish";
+      case "delete-too-many-realms":
+        return "Delete blocked: realm history needs support";
+      case "social-rate":
+        return "Delete paused: wait a minute";
       default:
         return "Delete failed";
     }
@@ -453,8 +487,14 @@ export function OnlineView() {
     client?.stop();
     client = null;
     roster.clear();
+    setRosterRevision((value) => value + 1);
     for (const id in publishedRoster) delete publishedRoster[id];
     setMenuOpen(false);
+    setSocialOpen(false);
+    setSocialState(createSocialMenuState());
+    setSocialSnapshot(null);
+    setRealmChoices([]);
+    setSelfData(null);
     setScreen("gate");
     setGateText("Signed out. Sign in again to play.");
   };
@@ -485,6 +525,155 @@ export function OnlineView() {
   const [nameState, setNameState] = createSignal<NameInputState>(ns);
   let creating = false;
 
+  const socialMenuData = (): SocialMenuData => {
+    rosterRevision();
+    return {
+      social: socialSnapshot(),
+      realms: realmChoices(),
+      self: selfData(),
+      currentRealm: client?.realmId || client?.realmPin || null,
+      nearby: [...roster.values()]
+        .filter((entry) => entry.id !== client?.myId)
+        .map((entry) => ({ playerId: entry.id, name: entry.name })),
+    };
+  };
+
+  const sendSocial = (message: Record<string, unknown>): void => {
+    client?.sendText(JSON.stringify({ ...message, v: SOCIAL_PROTOCOL_VERSION }));
+  };
+
+  const refreshSocialData = (): void => {
+    sendSocial({ type: "socialGet" });
+    sendSocial({ type: "worldsGet" });
+    sendSocial({ type: "selfGet" });
+  };
+
+  const openSocialPanel = (): void => {
+    setMenuOpen(false);
+    setDeleteArmed(false);
+    setSocialState(createSocialMenuState());
+    setSocialOpen(true);
+    refreshSocialData();
+  };
+
+  const requestCompleteDeletion = (): void => {
+    sendSocial({ type: "deleteAll" });
+    setMenuOpen(false);
+    setSocialOpen(false);
+    setDeleteArmed(false);
+    showNotice("Deleting all account data…", 30000);
+  };
+
+  const applySocialAction = (action: SocialAction): void => {
+    switch (action.type) {
+      case "close":
+        setSocialOpen(false);
+        return;
+      case "request-friend":
+        sendSocial({ type: "friendRequest", playerId: action.playerId });
+        showNotice("Friend request sent");
+        return;
+      case "accept-friend":
+        sendSocial({ type: "friendAccept", githubId: action.githubId });
+        return;
+      case "decline-friend":
+      case "cancel-friend-request":
+      case "remove-friend":
+        sendSocial({ type: "friendRemove", githubId: action.githubId });
+        return;
+      case "join-realm":
+        if (!client?.switchRealm(action.realm)) {
+          showNotice("World unavailable");
+          return;
+        }
+        roster.clear();
+        for (const id in publishedRoster) delete publishedRoster[id];
+        setSocialOpen(false);
+        showNotice(`Joining ${action.realm}…`);
+        return;
+      case "set-visibility":
+        sendSocial({ type: "privacySet", visible: action.visible });
+        return;
+      case "delete-profile":
+        requestCompleteDeletion();
+        return;
+    }
+  };
+
+  const stepSocial = (input: SocialInput): void => {
+    const transition = reduceSocialMenu(socialState(), input, socialMenuData());
+    setSocialState(transition.state);
+    if (transition.action) applySocialAction(transition.action);
+  };
+
+  /** Strictly versioned social responses never replace valid cached data
+   * with a malformed or future-version payload. */
+  const handleSocialMessage = (msg: Record<string, unknown>): boolean => {
+    const type = String(msg.type ?? "");
+    const socialType = type === "socialSnapshot" || type === "worlds" || type === "selfData"
+      || type === "friendResult" || type === "privacyResult" || type === "socialError"
+      || type === "deletedAll" || type === "deleteAllError";
+    if (!socialType) return false;
+    if (msg.v !== SOCIAL_PROTOCOL_VERSION) return true;
+    if (type === "socialSnapshot") {
+      const parsed = parseSocialSnapshot(msg);
+      if (parsed) {
+        setSocialSnapshot(parsed);
+        setSocialState((state) => normalizeSocialMenuState(state, socialMenuData()));
+      }
+      return true;
+    }
+    if (type === "worlds") {
+      const parsed = parseRealmChoices(msg.worlds);
+      if (parsed) {
+        setRealmChoices(parsed);
+        setSocialState((state) => normalizeSocialMenuState(state, socialMenuData()));
+      }
+      return true;
+    }
+    if (type === "selfData") {
+      const parsed = parseSelfData(msg.data);
+      if (parsed) {
+        setSelfData(parsed);
+        setSocialState((state) => normalizeSocialMenuState(state, socialMenuData()));
+      }
+      return true;
+    }
+    if (type === "friendResult") {
+      if (msg.ok === true) {
+        const state = typeof msg.state === "string" ? msg.state : "updated";
+        showNotice(state === "friends" ? "Friend added" : state === "removed" ? "Friend removed" : "Friend request pending");
+        refreshSocialData();
+      } else {
+        showNotice(msg.reason === "friend-limit" ? "Friend list is full" : "Friend action failed");
+      }
+      return true;
+    }
+    if (type === "privacyResult") {
+      if (msg.ok === true && typeof msg.visible === "boolean") {
+        const visible = msg.visible;
+        setSocialSnapshot((value) => value ? { ...value, visible } : value);
+        setSelfData((value) => value ? { ...value, visible } : value);
+        showNotice(visible ? "Presence visible to friends" : "Presence hidden");
+        refreshSocialData();
+      } else {
+        showNotice("Privacy update failed");
+      }
+      return true;
+    }
+    if (type === "deletedAll") {
+      showNotice("All account data deleted");
+      after(1.5, signOut);
+      return true;
+    }
+    if (type === "deleteAllError") {
+      showNotice(deleteErrorText(String(msg.reason ?? "")));
+      return true;
+    }
+    showNotice(msg.reason === "social-rate" ? "Social menu: wait a minute" : "Social data unavailable");
+    return true;
+  };
+
   const startClient = (auth: AuthCredential) => {
     client?.stop();
     client = new OnlineClient(url, {
@@ -499,6 +688,9 @@ export function OnlineView() {
         // Admitted: this is the realm to come back to. An invite that got
         // us in has done its job; the page may forget it.
         saveRealm(realmId);
+        roster.clear();
+        for (const id in publishedRoster) delete publishedRoster[id];
+        setRosterRevision((value) => value + 1);
         if (inviteActive) {
           inviteActive = false;
           pageEvent({ type: "inviteConsumed" });
@@ -525,12 +717,14 @@ export function OnlineView() {
         }
         for (const id in publishedRoster) delete publishedRoster[id];
         for (const [id, e] of roster) publishedRoster[id] = { name: e.name, look: e.look };
+        setRosterRevision((value) => value + 1);
         if (client?.myId) {
           if (screen() === "creating") pageNameInputEnd();
           setScreen("world");
         }
       },
       onText: (msg) => {
+        if (handleSocialMessage(msg)) return;
         if (msg.type === "linked" && typeof msg.login === "string") publishLogin(msg.login);
         if (msg.type === "deleted") {
           showNotice("Profile deleted");
@@ -1436,6 +1630,8 @@ export function OnlineView() {
     for (const [id, bubble] of c?.emotes ?? []) publishedEmotes[id] = bubble.emote;
     out.emotes = publishedEmotes;
     out.emoteBar = emoteOpen();
+    out.social = socialOpen();
+    out.socialScreen = socialState().screen;
     out.invite = c?.inviteToken ?? "";
     out.realmPin = c?.realmPin ?? "";
     let remoteCount = 0;
@@ -1590,22 +1786,35 @@ export function OnlineView() {
       prevButtons = buttons;
       return;
     }
-    // A dialog owns the frame: no movement (zero buttons reach the
-    // client, so the lockstep stream carries only the fast bit), no
-    // auto-walk, and CIRCLE pages it.
-    // The emote picker owns the d-pad like a dialog does.
-    const dialog = dialogOpen() || emoteOpen();
+    // Resolve every modal before the gameplay client sees this frame. Both
+    // edges of SELECT are captured, as are menu/social navigation buttons,
+    // so UI input can never leak into the lockstep movement batch.
+    const wasDialogOpen = dialogOpen();
+    const wasEmoteOpen = emoteOpen();
+    const wasSocialOpen = socialOpen();
+    const wasMenuOpen = menuOpen();
+    const selectDown = (buttons & BTN.SELECT) !== 0;
+    const selectEdge = selectDown && !menuHeld;
+    if (selectEdge && !wasDialogOpen && !wasEmoteOpen && !wasSocialOpen) {
+      setMenuOpen(!wasMenuOpen);
+      if (wasMenuOpen) setDeleteArmed(false);
+    }
+    menuHeld = selectDown;
+    const inputCaptured = wasDialogOpen || wasEmoteOpen || wasSocialOpen || wasMenuOpen
+      || dialogOpen() || emoteOpen() || socialOpen() || menuOpen() || selectDown;
     const dpad = buttons & DPAD;
-    if (dpad && !dialog) {
+    if (dpad && !inputCaptured) {
       if (autoMode) auto.reset();
       autoMode = false;
     }
-    const autoMask = autoMode && !dialog ? auto.mask(c.predictor?.current.move.tx ?? 0, c.predictor?.current.move.ty ?? 0) : 0;
+    const autoMask = autoMode && !inputCaptured
+      ? auto.mask(c.predictor?.current.move.tx ?? 0, c.predictor?.current.move.ty ?? 0)
+      : 0;
     if (!autoHome && c.predictor) {
       autoHome = true;
       auto.home = { x: c.predictor.current.move.tx, y: c.predictor.current.move.ty };
     }
-    c.onFrame(dialog ? 0 : buttons, hz, autoMask);
+    c.onFrame(inputCaptured ? 0 : buttons, hz, autoMask);
     if (autoInvitePending && c.requestInvite()) autoInvitePending = false;
     syncWorld(now);
     const seed = c.predictor?.world.seed ?? 0;
@@ -1614,57 +1823,9 @@ export function OnlineView() {
       hudTimer = 0;
       refreshHud();
     }
-    const menuBtn = (buttons & BTN.SELECT) !== 0;
-    if (menuBtn && !menuHeld && !dialog) setMenuOpen(!menuOpen());
-    menuHeld = menuBtn;
-    if (menuOpen()) {
-      if (edge(buttons, BTN.CROSS)) {
-        setMenuOpen(false);
-        setDeleteArmed(false);
-      }
-      if (edge(buttons, BTN.TRIANGLE)) setDebugOn(!debugOn());
-      if (edge(buttons, BTN.START)) {
-        autoMode = !autoMode;
-        if (autoMode) auto.reset();
-        setMenuAuto(autoMode);
-      }
-      if (edge(buttons, BTN.CIRCLE)) {
-        const ticket = c.auth.kind === "ticket" ? c.auth.ticket : loadTicket() ?? "";
-        c.sendText(JSON.stringify({ type: "linkq", v: AUTH_PROTOCOL_VERSION, ticket }));
-        setMenuOpen(false);
-        setDeleteArmed(false);
-      }
-      if (edge(buttons, BTN.LTRIGGER)) {
-        // An invite to this realm: the server answers with the token; the
-        // notice shows it and the web page offers it as a link.
-        if (!c.requestInvite()) showNotice("Invite: not in a world yet");
-        setMenuOpen(false);
-        setDeleteArmed(false);
-      }
-      if (edge(buttons, BTN.RTRIGGER)) {
-        // "Any world": drop the realm pin (and any invite) and reconnect
-        // wherever the service has room. The way out of a full world.
-        c.leaveRealm();
-        showNotice("Joining any world…");
-        setMenuOpen(false);
-        setDeleteArmed(false);
-      }
-      if (edge(buttons, BTN.SQUARE)) {
-        const now = Date.now();
-        if (deleteArmed() && now - deleteArmedAt < 5000) {
-          setDeleteArmed(false);
-          setMenuOpen(false);
-          const ticket = c.auth.kind === "ticket" ? c.auth.ticket : loadTicket() ?? "";
-          c.sendText(JSON.stringify({ type: "delete", v: AUTH_PROTOCOL_VERSION, ticket }));
-          showNotice("Deleting profile…");
-        } else {
-          deleteArmedAt = now;
-          setDeleteArmed(true);
-        }
-      }
-    } else if (dialogOpen()) {
+    if (wasDialogOpen) {
       if (edge(buttons, BTN.CIRCLE)) advanceDialog();
-    } else if (emoteOpen()) {
+    } else if (wasEmoteOpen) {
       // The picker: LEFT/RIGHT choose, CIRCLE sends and closes, CROSS or R
       // closes. A tap on a cell sends that one.
       if (edge(buttons, BTN.LEFT)) setEmoteSel((emoteSel() + EMOTE_CELLS - 1) % EMOTE_CELLS);
@@ -1689,6 +1850,58 @@ export function OnlineView() {
         }
       }
       prevTouchIds = new Set(ts.map((t) => t.id));
+    } else if (wasSocialOpen) {
+      let socialInput: SocialInput | null = null;
+      if (edge(buttons, BTN.UP)) socialInput = "up";
+      else if (edge(buttons, BTN.DOWN)) socialInput = "down";
+      else if (edge(buttons, BTN.CIRCLE)) socialInput = "confirm";
+      else if (edge(buttons, BTN.CROSS)) socialInput = "back";
+      else if (edge(buttons, BTN.SQUARE)) socialInput = "delete";
+      else if (edge(buttons, BTN.TRIANGLE)) socialInput = "privacy";
+      if (socialInput) stepSocial(socialInput);
+    } else if (wasMenuOpen || menuOpen()) {
+      if (edge(buttons, BTN.CROSS)) {
+        setMenuOpen(false);
+        setDeleteArmed(false);
+      }
+      if (edge(buttons, BTN.DOWN)) {
+        openSocialPanel();
+      } else if (edge(buttons, BTN.TRIANGLE)) setDebugOn(!debugOn());
+      else if (edge(buttons, BTN.START)) {
+        autoMode = !autoMode;
+        if (autoMode) auto.reset();
+        setMenuAuto(autoMode);
+      }
+      else if (edge(buttons, BTN.CIRCLE)) {
+        const ticket = c.auth.kind === "ticket" ? c.auth.ticket : loadTicket() ?? "";
+        c.sendText(JSON.stringify({ type: "linkq", v: AUTH_PROTOCOL_VERSION, ticket }));
+        setMenuOpen(false);
+        setDeleteArmed(false);
+      }
+      else if (edge(buttons, BTN.LTRIGGER)) {
+        // An invite to this realm: the server answers with the token; the
+        // notice shows it and the web page offers it as a link.
+        if (!c.requestInvite()) showNotice("Invite: not in a world yet");
+        setMenuOpen(false);
+        setDeleteArmed(false);
+      }
+      else if (edge(buttons, BTN.RTRIGGER)) {
+        // "Any world": drop the realm pin (and any invite) and reconnect
+        // wherever the service has room. The way out of a full world.
+        c.leaveRealm();
+        showNotice("Joining any world…");
+        setMenuOpen(false);
+        setDeleteArmed(false);
+      }
+      else if (edge(buttons, BTN.SQUARE)) {
+        const now = Date.now();
+        if (deleteArmed() && now - deleteArmedAt < 5000) {
+          requestCompleteDeletion();
+        } else {
+          deleteArmedAt = now;
+          setDeleteArmed(true);
+        }
+      }
     } else {
       // TRIANGLE requests fast mode; the HUD says FAST once the server's
       // snapshot confirms it. CIRCLE talks, CROSS acts or pages the log,
@@ -1782,7 +1995,7 @@ export function OnlineView() {
           <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 8, insetL: menu().x0 + 10, textColor: "#ffe97a", lineHeight: 14, height: 14 }}>MENU</Text>
           <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 26, insetL: menu().x0 + 10, textColor: "#c8d6ea", lineHeight: 14, height: 14 }}>CIRCLE: link device</Text>
           <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 40, insetL: menu().x0 + 10, textColor: deleteArmed() ? "#ffe97a" : "#c8d6ea", lineHeight: 14, height: 14 }}>
-            {deleteArmed() ? "SQUARE: confirm delete" : "SQUARE: delete profile"}
+            {deleteArmed() ? "SQUARE: confirm delete all" : "SQUARE: delete all data"}
           </Text>
           <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 54, insetL: menu().x0 + 10, textColor: "#c8d6ea", lineHeight: 14, height: 14 }}>
             {debugOn() ? "TRIANGLE: debug off" : "TRIANGLE: debug on"}
@@ -1792,6 +2005,15 @@ export function OnlineView() {
           </Text>
           <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 82, insetL: menu().x0 + 10, textColor: "#c8d6ea", lineHeight: 14, height: 14 }}>L: invite a friend</Text>
           <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 96, insetL: menu().x0 + 10, textColor: "#c8d6ea", lineHeight: 14, height: 14 }}>R: any world · CROSS: close</Text>
+          <Text class="text-xs" style={{ posType: 1, insetT: menu().y0 + 110, insetL: menu().x0 + 10, textColor: "#9fd0ff", lineHeight: 14, height: 14 }}>DOWN: friends · worlds · my data</Text>
+        </Show>
+        <Show when={socialOpen()}>
+          <SocialPanel
+            state={socialState()}
+            data={socialMenuData()}
+            width={viewport().w}
+            height={viewport().h}
+          />
         </Show>
       </Show>
       <Show when={screen() === "gate"}>

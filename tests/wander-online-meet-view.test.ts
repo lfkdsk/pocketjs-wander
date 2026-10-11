@@ -145,6 +145,9 @@ function press(w: World, btn: number): void {
 }
 
 const push = (f: Fixture, buf: ArrayBuffer): void => { f.socket().onMessage?.(new Uint8Array(buf)); };
+const pushText = (f: Fixture, message: Record<string, unknown>): void => {
+  f.socket().onMessage?.(JSON.stringify(message));
+};
 const unmount = (w: World): void => { w.frame(0); };
 
 function count(fb: Uint8Array, stride: number, pred: (r: number, g: number, b: number) => boolean, x0: number, x1: number, y0: number, y1: number): number {
@@ -348,6 +351,103 @@ simDescribe("wander-online meet view: invites and the realm pin", () => {
     expect(f.urls[1]).toBe("ws://fake/ws/v4");
     await waitFor(w, () => state()!.status === "joined", "rejoined");
     expect(state()!.realmPin).toBe("realm-test");
+    unmount(w);
+  }, 30_000);
+});
+
+simDescribe("wander-online social panel wiring", () => {
+  test("menu and social input are captured; stable ids and temporary player ids stay distinct on the wire", async () => {
+    const sentInputs: number[] = [];
+    const f = fixture({ sentInputs });
+    const w = await boot(f.opts, 480, 272, { __onlineAutoWalk: true });
+    await enterWorld(w);
+    push(f, encodeRoster([{ id: 2, name: "Nearby Walker", look: 5 }]));
+    pump(w, 3);
+
+    press(w, BTN.SELECT);
+    expect(treeHasText(w.getTree(), "DOWN: friends · worlds · my data")).toBe(true);
+    pump(w, 4);
+    sentInputs.length = 0;
+    pump(w, 10, BTN.RIGHT);
+    pump(w, 2, 0);
+    expect(state()!.auto).toBe(true);
+    expect(sentInputs.length).toBeGreaterThan(0);
+    expect(sentInputs.every((mask) => mask === 0), JSON.stringify(sentInputs)).toBe(true);
+
+    press(w, BTN.DOWN);
+    expect(state()!.social).toBe(true);
+    expect(state()!.socialScreen).toBe("home");
+    expect(f.text.filter((message) => ["socialGet", "worldsGet", "selfGet"].includes(String(message.type))))
+      .toEqual([
+        { type: "socialGet", v: 1 },
+        { type: "worldsGet", v: 1 },
+        { type: "selfGet", v: 1 },
+      ]);
+
+    // Wrong-version and malformed replies cannot replace the last good
+    // snapshot. The valid snapshot uses githubId; the nearby roster does not.
+    pushText(f, {
+      type: "socialSnapshot", v: 2, visible: true,
+      friends: [], incoming: [{ githubId: 999, name: "Wrong Version" }], outgoing: [],
+    });
+    pushText(f, {
+      type: "socialSnapshot", v: 1, visible: false,
+      friends: [], incoming: [{ githubId: 202, name: "Stable Friend" }], outgoing: [],
+    });
+    pushText(f, {
+      type: "selfData", v: 1,
+      data: {
+        profile: { login: "octo", name: "Octo", look: 3 },
+        friends: 0, incoming: 1, outgoing: 0, visible: false, realms: [],
+      },
+    });
+    pushText(f, { type: "socialSnapshot", v: 1, visible: true, friends: "bad", incoming: [], outgoing: [] });
+    pump(w, 2);
+    press(w, BTN.CIRCLE);
+    expect(state()!.socialScreen).toBe("friends");
+    expect(treeHasText(w.getTree(), "Stable Friend")).toBe(true);
+    expect(treeHasText(w.getTree(), "Wrong Version")).toBe(false);
+    expect(treeHasText(w.getTree(), "Nearby Walker")).toBe(true);
+
+    press(w, BTN.CIRCLE);
+    press(w, BTN.DOWN);
+    press(w, BTN.CIRCLE);
+    expect(f.text.find((message) => message.type === "friendAccept")).toEqual({
+      type: "friendAccept", githubId: 202, v: 1,
+    });
+    expect(f.text.find((message) => message.type === "friendRequest")).toEqual({
+      type: "friendRequest", playerId: 2, v: 1,
+    });
+
+    press(w, BTN.CROSS); // friends -> home
+    press(w, BTN.DOWN);
+    press(w, BTN.DOWN);
+    press(w, BTN.CIRCLE); // my data
+    press(w, BTN.TRIANGLE);
+    expect(f.text.find((message) => message.type === "privacySet")).toEqual({
+      type: "privacySet", visible: true, v: 1,
+    });
+    unmount(w);
+  }, 30_000);
+
+  test("a world row reconnects to that exact realm instead of the fill strategy", async () => {
+    const f = fixture();
+    const w = await boot(f.opts);
+    await enterWorld(w);
+    press(w, BTN.SELECT);
+    press(w, BTN.DOWN);
+    pushText(f, {
+      type: "worlds", v: 1,
+      worlds: [{ realm: "chosen-realm", band: "quiet", joinable: true }],
+    });
+    pump(w, 2);
+    press(w, BTN.DOWN); // home: Worlds
+    press(w, BTN.CIRCLE);
+    expect(state()!.socialScreen).toBe("worlds");
+    expect(treeHasText(w.getTree(), "chosen-realm")).toBe(true);
+    press(w, BTN.CIRCLE);
+    await waitFor(w, () => f.urls.length >= 2, "exact realm reconnect");
+    expect(f.urls[1]).toBe("ws://fake/ws/v4?realm=chosen-realm");
     unmount(w);
   }, 30_000);
 });

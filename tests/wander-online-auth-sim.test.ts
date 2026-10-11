@@ -673,11 +673,11 @@ simDescribe("wander-online auth: the web page's name text box", () => {
 });
 
 simDescribe("wander-online auth: profile delete", () => {
-  /** Open the world menu, arm delete, confirm: SELECT, SQUARE, SQUARE. */
+  /** Open the world menu, arm complete delete, confirm: SELECT, SQUARE, SQUARE. */
   async function deleteProfile(w: World): Promise<void> {
     press(w, BTN.SELECT);
     press(w, BTN.SQUARE); // arm
-    press(w, BTN.SQUARE); // confirm -> sends {"type":"delete"}
+    press(w, BTN.SQUARE); // confirm -> sends {"type":"deleteAll"}
     pump(w, 10);
   }
 
@@ -687,7 +687,7 @@ simDescribe("wander-online auth: profile delete", () => {
       name: "Returner",
       look: 3,
       ticket: "dev-ticket",
-      deleteReply: { type: "deleteError", reason: "delete-unavailable" },
+      deleteReply: { type: "deleteAllError", v: 1, reason: "delete-unavailable" },
     });
     const w = await boot({ kind: "ticket", ticket: "dev-ticket" }, fake);
     pump(w, 30);
@@ -708,7 +708,7 @@ simDescribe("wander-online auth: profile delete", () => {
       name: "Returner",
       look: 3,
       ticket: "dev-ticket",
-      deleteReply: { type: "deleted" },
+      deleteReply: { type: "deletedAll", v: 1, realms: ["realm-test"] },
     });
     const w = await boot(
       { kind: "ticket", ticket: "dev-ticket" },

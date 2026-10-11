@@ -89,10 +89,11 @@ export interface FakeOnlineOpts {
   urls?: string[];
   /** Observe each socket as it opens (tests push extra frames through it). */
   onSocket?: (sock: PocketSocket) => void;
-  /** Scripted reply to a {"type":"delete"} message. Defaults to a
-   *  deleteError so the deleteError path is exercised unless a test asks
-   *  for the confirmed-delete path. */
-  deleteReply?: { type: "deleted" } | { type: "deleteError"; reason: string };
+  /** Scripted reply to complete self-service deletion. Defaults to an error
+   * so tests never silently treat an unconfigured destructive path as done. */
+  deleteReply?:
+    | { type: "deletedAll"; v: 1; realms?: string[] }
+    | { type: "deleteAllError"; v: 1; reason: string };
   /** Replies consumed in order for desktop {"type":"linkr"} attempts. */
   linkReplies?: readonly (
     | { type: "linked"; ticket: string; login?: string }
@@ -245,8 +246,8 @@ export function fakeOnlineSocketFactory(opts: FakeOnlineOpts): (url: string) => 
           } else if (msg.type === "create") {
             created = true;
             sock.onMessage?.(JSON.stringify({ type: "createOk" }));
-          } else if (msg.type === "delete") {
-            const reply = opts.deleteReply ?? { type: "deleteError", reason: "delete-unavailable" };
+          } else if (msg.type === "deleteAll") {
+            const reply = opts.deleteReply ?? { type: "deleteAllError", v: 1, reason: "delete-unavailable" };
             sock.onMessage?.(JSON.stringify(reply));
           } else if (msg.type === "linkr") {
             const reply = linkReplies.shift();

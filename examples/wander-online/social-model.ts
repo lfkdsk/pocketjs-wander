@@ -33,6 +33,9 @@ export interface SocialMenuData {
   social: SocialSnapshot | null;
   realms: readonly RealmChoice[];
   self: SelfDataSummary | null;
+  /** Temporary ids from the current realm roster. They are never durable
+   * GitHub ids; the server resolves them inside the joined Room. */
+  nearby?: readonly { playerId: number; name: string }[];
   currentRealm?: string | null;
 }
 
@@ -57,6 +60,7 @@ export interface SocialPanelLayout {
 
 export type SocialAction =
   | { type: "close" }
+  | { type: "request-friend"; playerId: number }
   | { type: "accept-friend"; githubId: number }
   | { type: "decline-friend"; githubId: number }
   | { type: "cancel-friend-request"; githubId: number }
@@ -70,6 +74,7 @@ export type SocialRowKind =
   | "incoming"
   | "outgoing"
   | "friend"
+  | "nearby"
   | "realm"
   | "summary"
   | "warning"
@@ -84,6 +89,7 @@ export interface SocialMenuRow {
   detail: string;
   tone: SocialRowTone;
   githubId?: number;
+  playerId?: number;
   presence?: FriendPresence;
   realm?: string;
   joinable?: boolean;
@@ -213,7 +219,7 @@ function row(
   };
 }
 
-function friendRows(snapshot: SocialSnapshot | null): SocialMenuRow[] {
+function friendRows(snapshot: SocialSnapshot | null, nearby: SocialMenuData["nearby"]): SocialMenuRow[] {
   if (!snapshot) return [row("friends-loading", "empty", "SOCIAL DATA UNAVAILABLE", "", "muted")];
   const rows: SocialMenuRow[] = [];
   for (const friend of snapshot.incoming.slice(0, SOCIAL_MAX_PENDING)) {
@@ -253,6 +259,17 @@ function friendRows(snapshot: SocialSnapshot | null): SocialMenuRow[] {
       "OUTGOING",
       "muted",
       { githubId: friend.githubId },
+    ));
+  }
+  for (const player of nearby?.slice(0, 32) ?? []) {
+    if (!Number.isSafeInteger(player.playerId) || player.playerId <= 0) continue;
+    rows.push(row(
+      `nearby-${player.playerId}`,
+      "nearby",
+      player.name,
+      "ADD NEARBY",
+      "normal",
+      { playerId: player.playerId },
     ));
   }
   return rows.length > 0 ? rows : [row("friends-empty", "empty", "NO FRIENDS YET", "", "muted")];
@@ -326,7 +343,7 @@ function deleteRows(): SocialMenuRow[] {
 export function socialMenuRows(state: SocialMenuState, data: SocialMenuData): SocialMenuRow[] {
   switch (state.screen) {
     case "home": return [...HOME_ROWS];
-    case "friends": return friendRows(data.social);
+    case "friends": return friendRows(data.social, data.nearby);
     case "worlds": return worldRows(data);
     case "my-data": return selfRows(data.self);
     case "delete-confirm": return deleteRows();
@@ -409,6 +426,9 @@ export function reduceSocialMenu(
     if (selected?.kind === "friend" && selected.presence === "online" && selected.realm) {
       return { state: current, action: { type: "join-realm", realm: selected.realm } };
     }
+    if (selected?.kind === "nearby" && selected.playerId !== undefined) {
+      return { state: current, action: { type: "request-friend", playerId: selected.playerId } };
+    }
   }
   if (current.screen === "worlds" && selected?.kind === "realm" && selected.joinable && selected.realm) {
     return { state: current, action: { type: "join-realm", realm: selected.realm } };
@@ -424,7 +444,7 @@ export function socialMenuView(state: SocialMenuState, data: SocialMenuData): So
   const footer = normalized.screen === "home"
     ? "CIRCLE OPEN · CROSS CLOSE"
     : normalized.screen === "friends"
-      ? "CIRCLE ACCEPT/JOIN · SQUARE REMOVE · CROSS BACK"
+      ? "CIRCLE ACCEPT/JOIN/ADD · SQUARE REMOVE · CROSS BACK"
       : normalized.screen === "worlds"
         ? "CIRCLE JOIN · CROSS BACK"
         : normalized.screen === "my-data"

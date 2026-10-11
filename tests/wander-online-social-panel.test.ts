@@ -19,6 +19,7 @@ import {
 function fixture(): SocialMenuData {
   return {
     currentRealm: "plaza-2",
+    nearby: [{ playerId: 77, name: "Nearby" }],
     social: {
       visible: false,
       incoming: [{ githubId: 10, name: "Incoming" }],
@@ -80,6 +81,7 @@ describe("wander-online social menu model", () => {
       ["friend", "Hidden", "HIDDEN"],
       ["friend", "Offline", "OFFLINE"],
       ["outgoing", "Outgoing", "OUTGOING"],
+      ["nearby", "Nearby", "ADD NEARBY"],
     ]);
     expect(reduceSocialMenu(screen("friends", 0), "confirm", data).action)
       .toEqual({ type: "accept-friend", githubId: 10 });
@@ -91,6 +93,8 @@ describe("wander-online social menu model", () => {
       .toEqual({ type: "remove-friend", githubId: 1 });
     expect(reduceSocialMenu(screen("friends", 4), "delete", data).action)
       .toEqual({ type: "cancel-friend-request", githubId: 11 });
+    expect(reduceSocialMenu(screen("friends", 5), "confirm", data).action)
+      .toEqual({ type: "request-friend", playerId: 77 });
     expect(reduceSocialMenu(screen("friends", 2), "confirm", data).action).toBeNull();
   });
 
@@ -131,7 +135,7 @@ describe("wander-online social menu model", () => {
     data.social!.friends = [];
     data.social!.outgoing = [];
     data.realms = Array.from({ length: 30 }, (_, i) => ({ realm: `realm-${i}`, band: "quiet", joinable: true }));
-    expect(socialMenuRows(screen("friends"), data)).toHaveLength(64);
+    expect(socialMenuRows(screen("friends"), data)).toHaveLength(65);
     expect(socialMenuRows(screen("worlds"), data)).toHaveLength(16);
 
     data.self!.realms = Array.from({ length: 30 }, (_, i) => ({
