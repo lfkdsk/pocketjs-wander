@@ -5,9 +5,9 @@ import { Text, View } from "@pocketjs/framework/components";
 import { createMemo, For } from "solid-js";
 import {
   SOCIAL_DETAIL_CELLS,
-  SOCIAL_LABEL_CELLS,
   SOCIAL_PAGE_ROWS,
   fitSocialText,
+  socialPanelLabelCells,
   socialPanelLayout,
   socialPanelRowRect,
   socialMenuView,
@@ -140,7 +140,7 @@ export function SocialPanel(props: SocialPanelProps) {
                     textColor: textColour(item.tone),
                   }}
                 >
-                  {fitSocialText(item.label, SOCIAL_LABEL_CELLS)}
+                  {fitSocialText(item.label, socialPanelLabelCells(layout()))}
                 </Text>
                 <Text
                   class="absolute text-xs"

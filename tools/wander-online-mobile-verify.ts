@@ -9,9 +9,9 @@
 // orientation signs a fresh account in through the real OAuth callback,
 // creates its character through the page text box, opens the social panel and
 // emote picker, mints/copies/closes an invite, and signs out. Landscape additionally uses
-// immersive play and proves the floating controls clear the game's status,
-// log, errand and help HUD rectangles. PNGs and report.json are retained for
-// human inspection.
+// immersive play and proves the floating game controls clear the game's status,
+// log, errand and help HUD rectangles plus the open social panel. PNGs and
+// report.json are retained for human inspection.
 
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
@@ -23,6 +23,7 @@ import {
   statusPlate,
   type HudRect,
 } from "../examples/wander-online/hud.ts";
+import { socialPanelLayout } from "../examples/wander-online/social-model.ts";
 import { Cdp, launchChrome } from "../vendor/pocket-rpgkit/tools/lib/cdp.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -81,6 +82,8 @@ interface LayoutReport {
   critical: Array<{ name: string; rect: Rect }>;
   overlaps: string[];
   centreOverlaps: string[];
+  socialPanel: Rect | null;
+  socialOverlaps: string[];
 }
 
 const failures: Failure[] = [];
@@ -267,7 +270,7 @@ async function main(): Promise<void> {
     width: (logical.x1 - logical.x0) * screen.width / width,
     height: (logical.y1 - logical.y0) * screen.height / height,
   });
-  const layoutReport = async (): Promise<LayoutReport> => {
+  const layoutReport = async (includeSocialPanel = false): Promise<LayoutReport> => {
     const browser = await evaluate<{
       viewport: { width: number; height: number; dpr: number };
       logical: { width: number; height: number };
@@ -306,13 +309,35 @@ async function main(): Promise<void> {
       height: browser.screen.height * 0.6,
     };
     const centreOverlaps = browser.controls.filter((control) => intersects(control.rect, centre)).map((control) => control.label);
+    const logicalSocial = includeSocialPanel
+      ? socialPanelLayout(browser.logical.width, browser.logical.height).panel
+      : null;
+    const socialPanel = logicalSocial
+      ? project({
+          x0: logicalSocial.x,
+          y0: logicalSocial.y,
+          x1: logicalSocial.x + logicalSocial.w,
+          y1: logicalSocial.y + logicalSocial.h,
+        }, browser.screen, browser.logical.width, browser.logical.height)
+      : null;
+    // The regression is the floating game pad (not the separate fullscreen
+    // toolbar, which owns its own top-right page region).
+    const socialOverlaps = socialPanel
+      ? browser.controls
+          .filter((control) => control.selector.startsWith('[data-button="') && intersects(control.rect, socialPanel))
+          .map((control) => control.label)
+      : [];
     check(`${phase}: controls clear critical HUD`, overlaps.length === 0, overlaps.length ? overlaps.join(", ") : "status/log/errand/help clear");
     check(`${phase}: controls leave the central playfield clear`, centreOverlaps.length === 0, centreOverlaps.length ? centreOverlaps.join(", ") : "central 50% clear");
+    if (socialPanel) {
+      check(`${phase}: controls clear the open social panel`, socialOverlaps.length === 0,
+        socialOverlaps.length ? socialOverlaps.join(", ") : "all visible game controls clear");
+    }
     for (const control of browser.controls) {
       check(`${phase}: ${control.label} touch size`, control.rect.width + 0.01 >= 44 && control.rect.height + 0.01 >= 44,
         `${control.rect.width.toFixed(1)}x${control.rect.height.toFixed(1)} CSS px`);
     }
-    return { ...browser, critical, overlaps, centreOverlaps };
+    return { ...browser, critical, overlaps, centreOverlaps, socialPanel, socialOverlaps };
   };
 
   const runPhone = async (
@@ -384,6 +409,7 @@ async function main(): Promise<void> {
     await waitFor<boolean>("social panel", "globalThis.__onlineState?.social === true", Boolean);
     const socialScreen = await evaluate<string>('globalThis.__onlineState?.socialScreen || ""');
     check(`${phase}: social panel opens at home`, socialScreen === "home", socialScreen);
+    const socialLayout = await layoutReport(true);
     const socialShot = await screenshot(`${label}-${width}x${height}-social`);
     await touch('[data-button="CROSS"]', 140);
     await waitFor<boolean>("social panel closed", "globalThis.__onlineState?.social === false", Boolean);
@@ -435,6 +461,8 @@ async function main(): Promise<void> {
       inviteTargets,
       invite,
       controls,
+      socialPanel: socialLayout.socialPanel,
+      socialOverlaps: socialLayout.socialOverlaps,
       screenshots: [nameShot, socialShot, emoteShot, inviteShot, signedOutShot].map((path) => path.split("/").at(-1)),
     };
   };

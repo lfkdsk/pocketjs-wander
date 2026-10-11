@@ -18,6 +18,10 @@ export const SOCIAL_WORLD_LIMIT = SOCIAL_MAX_WORLD_CHOICES;
 /** Conservative text-cell budgets for the 480 px layout. */
 export const SOCIAL_LABEL_CELLS = 34;
 export const SOCIAL_DETAIL_CELLS = 14;
+/** The hosted landscape phone uses a wide 1x logical viewport while its touch
+ * clusters float over both screen edges. Keep the panel inside their central
+ * lane; wider/2x hosts have no persistent overlay and retain the full panel. */
+export const SOCIAL_WIDE_PHONE_PANEL_W = 360;
 
 export type SocialScreen = "home" | "friends" | "worlds" | "my-data" | "delete-confirm";
 export type SocialInput = "up" | "down" | "confirm" | "back" | "delete" | "privacy";
@@ -165,7 +169,9 @@ export function socialPanelLayout(width: number, height: number): SocialPanelLay
   const viewportH = Math.max(0, Math.floor(height));
   const scale = Math.max(1, Math.min(Math.floor(viewportW / 480), Math.floor(viewportH / 272)));
   const margin = 8 * scale;
-  const panelW = Math.max(0, Math.min(464 * scale, viewportW - Math.min(viewportW, margin * 2)));
+  const widePhoneLandscape = scale === 1 && viewportW >= 600 && viewportW > viewportH;
+  const panelLimit = widePhoneLandscape ? SOCIAL_WIDE_PHONE_PANEL_W : 464 * scale;
+  const panelW = Math.max(0, Math.min(panelLimit, viewportW - Math.min(viewportW, margin * 2)));
   const panelH = Math.max(0, Math.min(256 * scale, viewportH - Math.min(viewportH, margin * 2)));
   const panel: SocialRect = {
     x: Math.max(0, Math.floor((viewportW - panelW) / 2)),
@@ -204,6 +210,14 @@ export function socialPanelRowRect(layout: SocialPanelLayout, index: number): So
     w: layout.body.w,
     h: layout.rowHeight,
   };
+}
+
+/** The proportional UI font is conservatively seven pixels per display cell
+ * at 1x. Compact phone panels apply a second presentation-only fit so a name
+ * accepted by the model cannot paint under the detail column. */
+export function socialPanelLabelCells(layout: SocialPanelLayout): number {
+  const textWidth = Math.max(0, layout.labelWidth - 6 * layout.scale);
+  return Math.max(1, Math.min(SOCIAL_LABEL_CELLS, Math.floor(textWidth / (7 * layout.scale))));
 }
 
 function row(

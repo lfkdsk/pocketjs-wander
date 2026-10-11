@@ -3,11 +3,13 @@ import {
   SOCIAL_DETAIL_CELLS,
   SOCIAL_LABEL_CELLS,
   SOCIAL_PAGE_ROWS,
+  SOCIAL_WIDE_PHONE_PANEL_W,
   createSocialMenuState,
   friendRealmCandidates,
   measureSocialCells,
   reduceSocialMenu,
   socialPanelLayout,
+  socialPanelLabelCells,
   socialPanelRowRect,
   socialMenuRows,
   socialMenuView,
@@ -15,6 +17,7 @@ import {
   type SocialMenuState,
   type SocialRect,
 } from "../examples/wander-online/social-model.ts";
+import { fitViewport } from "../vendor/pocket-rpgkit/tools/web/fit.ts";
 
 function fixture(): SocialMenuData {
   return {
@@ -244,5 +247,39 @@ describe("wander-online social panel layout", () => {
         .toBeGreaterThanOrEqual(120);
       expect(layout.labelWidth + layout.detailWidth + detailGutter).toBe(layout.body.w);
     }
+  });
+
+  test("the hosted landscape viewport keeps the panel between both floating control clusters", () => {
+    const fit = fitViewport({
+      policy: "dynamic",
+      default: [960, 544],
+      min: [480, 272],
+      max: [4096, 4096],
+    }, 844, 390, 3, 2);
+    expect(fit).toEqual({ size: [633, 292], k: 4 });
+
+    const [width, height] = fit.size;
+    const layout = socialPanelLayout(width, height);
+    const viewport = { x: 0, y: 0, w: width, h: height };
+    expect(layout.scale).toBe(1);
+    expect(layout.panel.w).toBe(SOCIAL_WIDE_PHONE_PANEL_W);
+    expect(inside(layout.panel, viewport)).toBe(true);
+    expect(inside(layout.header, layout.panel)).toBe(true);
+    expect(inside(layout.body, layout.panel)).toBe(true);
+    expect(inside(layout.footer, layout.panel)).toBe(true);
+    for (let row = 0; row < SOCIAL_PAGE_ROWS; row++) {
+      expect(inside(socialPanelRowRect(layout, row), layout.body), `row ${row}`).toBe(true);
+    }
+    expect(layout.detailWidth - 8).toBeGreaterThanOrEqual(120);
+    expect(socialPanelLabelCells(layout)).toBe(27);
+
+    // The immersive pad has a 152 CSS-px d-pad after 12 px padding, and a
+    // 164 CSS-px action cluster before the same right padding. Project the
+    // actual logical panel through the live 844 px stage as the browser does.
+    const cssPerLogical = 844 / width;
+    const panelLeft = layout.panel.x * cssPerLogical;
+    const panelRight = (layout.panel.x + layout.panel.w) * cssPerLogical;
+    expect(panelLeft).toBeGreaterThan(164);
+    expect(panelRight).toBeLessThan(668);
   });
 });

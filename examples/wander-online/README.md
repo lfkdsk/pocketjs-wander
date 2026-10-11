@@ -135,9 +135,12 @@ hosted social records.
 The social panel has bounded responsive layouts. Its row details are deliberate
 single-line short labels (`REQUESTS`, `POPULATION`, `PRIVACY`) because PocketJS
 text wraps only at explicit newlines; the detail column retains a 120 px text
-cell at both 390x844 portrait and 844x390 landscape. After building the bundle
-and simulator core, capture Friends, Worlds, My Data and delete-confirm screens
-at 480x272 and 960x544, together with nearest-neighbour 3x review copies:
+cell at both 390x844 portrait and 844x390 landscape. On a wide 1x landscape
+viewport, the inner panel narrows into the control-free lane between the
+floating d-pad and action cluster; labels refit to the resulting column while
+the full-screen shade remains unchanged. After building the bundle and
+simulator core, capture Friends, Worlds, My Data and delete-confirm screens at
+480x272 and 960x544, together with nearest-neighbour 3x review copies:
 
 ```sh
 bun run build:wasm
@@ -147,7 +150,9 @@ bun run shots:social -- ./wander-online-social-shots
 
 For the real browser controls, build the web app and run the DPR 3 phone
 verifier. It exercises the social-menu touch path in 390x844 portrait and
-844x390 landscape and retains its screenshots and JSON layout report:
+844x390 landscape, projects the open panel through the live logical canvas,
+fails if any visible floating game-pad control overlaps it, and retains its
+screenshots and JSON layout report:
 
 ```sh
 bun run web
