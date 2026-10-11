@@ -21,7 +21,7 @@ export const SOCIAL_MAX_COOP_REQUIRED = 8;
 export interface RealmFeatures {
   realm: string;
   coopErrands: boolean;
-  /** Additive NET-COOP-2 board/friend/cancel surface. Absent on COOP-1. */
+  /** Additive board/friend/cancel surface. Absent on older co-op servers. */
   coopPartnerFinding?: boolean;
   discoveryLeaderboard: boolean;
 }

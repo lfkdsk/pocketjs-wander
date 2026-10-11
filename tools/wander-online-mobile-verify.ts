@@ -7,12 +7,12 @@
 //
 // The verifier starts loopback web, GitHub-stub and game servers. Each phone
 // orientation signs a fresh account in through the real OAuth callback,
-// creates its character through the page text box, opens the social home and
-// Friends panels and
-// emote picker, mints/copies/closes an invite, and signs out. Landscape additionally uses
-// immersive play and proves the floating game controls clear the game's status,
-// log, errand and help HUD rectangles plus the open social panel. PNGs and
-// report.json are retained for human inspection.
+// creates its character through the page text box, exercises the co-op board,
+// friend-waiting, READY countdown/cancel surfaces, opens the social home and
+// Friends panels and emote picker, mints/copies/closes an invite, and signs
+// out. Landscape additionally uses immersive play and proves the floating
+// controls clear the game's status, log, errand and help HUD rectangles plus
+// the open social panel. PNGs and report.json are retained for inspection.
 
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
@@ -24,7 +24,13 @@ import {
   statusPlate,
   type HudRect,
 } from "../examples/wander-online/hud.ts";
+import { isCooperativeErrand } from "../examples/wander-online/net/journey.ts";
+import { COMMAND } from "../examples/wander-online/net/protocol.ts";
+import { plaqueOf } from "../examples/wander-online/net/npc.ts";
 import { socialPanelLayout } from "../examples/wander-online/social-model.ts";
+import { planRegion } from "../examples/wander/region.ts";
+import { regionHub } from "../examples/wander/world.ts";
+import { townErrand } from "../examples/wander/towns.ts";
 import { Cdp, launchChrome } from "../vendor/pocket-rpgkit/tools/lib/cdp.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -33,6 +39,7 @@ const OUT = resolve(option("out", join(ROOT, "dist", "wander-online-mobile")));
 const CHROME = option("chrome", Bun.which("google-chrome") ?? Bun.which("chromium") ?? "/usr/bin/google-chrome");
 const GAME_PORT = Number(option("server-port", "8080"));
 const DPR = 3;
+const SEED = 0x5eed_0001;
 
 function option(name: string, fallback: string): string {
   const args = process.argv.slice(2);
@@ -64,6 +71,13 @@ interface OnlineState {
   socialScreen: string;
   invite: string;
   myId: number;
+  realmId: string;
+  notice: string;
+  errand: string;
+  coopRemaining: number;
+  coopWaitingFriends: number;
+  x: number;
+  y: number;
   roster: Record<string, { name: string; look: number }>;
 }
 
@@ -105,6 +119,23 @@ function pathInside(root: string, candidate: string): boolean {
   return candidate === root || candidate.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
 }
 
+function cooperativeTown(): { rx: number; ry: number } {
+  for (let radius = 0; radius <= 12; radius++) {
+    for (let ry = -radius; ry <= radius; ry++) for (let rx = -radius; rx <= radius; rx++) {
+      if (Math.max(Math.abs(rx), Math.abs(ry)) !== radius) continue;
+      const errand = townErrand(SEED, rx, ry);
+      if (regionHub(SEED, rx, ry).town && errand && isCooperativeErrand(SEED, errand)) {
+        return { rx: rx || 0, ry: ry || 0 };
+      }
+    }
+  }
+  throw new Error("no deterministic cooperative town");
+}
+
+function han(...points: number[]): string {
+  return String.fromCodePoint(...points);
+}
+
 async function main(): Promise<void> {
   if (!existsSync(join(SITE, "wander-online", "index.html"))) {
     throw new Error(`no built Wander Online page in ${SITE}; run \`bun run web\` first`);
@@ -125,7 +156,7 @@ async function main(): Promise<void> {
   });
   const game = startServer({
     port: GAME_PORT,
-    seed: 0x5eed_0001,
+    seed: SEED,
     hz: 20,
     broadcastHz: 10,
     aoi: 48,
@@ -171,10 +202,49 @@ async function main(): Promise<void> {
     permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
   });
   // Test-only OAuth callback setup. player.js still consumes and validates
-  // the matching state through its production callback path.
+  // the matching state through its production callback path. The socket
+  // wrapper keeps real network traffic while exposing bounded protocol-frame
+  // injection and sent-frame observation to this verification harness.
   await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
     source: `(() => {
       if (location.hostname !== "127.0.0.1") return;
+      const NativeWebSocket = globalThis.WebSocket;
+      globalThis.__mobileVerifySockets = [];
+      globalThis.__mobileVerifyBinaryFrames = [];
+      globalThis.__mobileVerifyTextFrames = [];
+      class MobileVerifyWebSocket extends NativeWebSocket {
+        constructor(url, protocols) {
+          if (protocols === undefined) super(url);
+          else super(url, protocols);
+          globalThis.__mobileVerifySockets.push(this);
+        }
+        send(data) {
+          if (typeof data === "string") {
+            try {
+              globalThis.__mobileVerifyTextFrames.push(JSON.parse(data));
+              if (globalThis.__mobileVerifyTextFrames.length > 256) globalThis.__mobileVerifyTextFrames.shift();
+            } catch {}
+          } else {
+            const bytes = data instanceof ArrayBuffer
+              ? new Uint8Array(data)
+              : ArrayBuffer.isView(data)
+                ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+                : null;
+            if (bytes) {
+              globalThis.__mobileVerifyBinaryFrames.push(Array.from(bytes));
+              if (globalThis.__mobileVerifyBinaryFrames.length > 256) globalThis.__mobileVerifyBinaryFrames.shift();
+            }
+          }
+          super.send(data);
+        }
+      }
+      globalThis.WebSocket = MobileVerifyWebSocket;
+      globalThis.__mobileVerifyPushJson = (message) => {
+        const socket = globalThis.__mobileVerifySockets.findLast((candidate) => candidate.readyState === NativeWebSocket.OPEN);
+        if (!socket) return false;
+        socket.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(message) }));
+        return true;
+      };
       const params = new URLSearchParams(location.hash.slice(1));
       const state = params.get("state");
       if (state) {
@@ -246,6 +316,29 @@ async function main(): Promise<void> {
     const path = join(OUT, `${name}.png`);
     writeFileSync(path, Buffer.from(shot.data, "base64"));
     return path;
+  };
+  const pushJson = async (message: Record<string, unknown>): Promise<void> => {
+    const delivered = await evaluate<boolean>(
+      `globalThis.__mobileVerifyPushJson?.(${JSON.stringify(message)}) === true`,
+    );
+    if (!delivered) throw new Error(`${phase}: no open game socket for fixture ${String(message.type ?? "message")}`);
+    await sleep(120);
+  };
+  const screenRgbCount = (red: number, green: number, blue: number) => evaluate<number>(`(() => {
+    const canvas = document.getElementById("screen");
+    const context = canvas?.getContext?.("2d");
+    if (!context) return -1;
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    let count = 0;
+    for (let i = 0; i < pixels.length; i += 4) {
+      if (pixels[i] === ${red} && pixels[i + 1] === ${green} && pixels[i + 2] === ${blue}) count++;
+    }
+    return count;
+  })()`);
+  const checkScreenColor = async (label: string, rgb: readonly [number, number, number], minimum: number): Promise<number> => {
+    const count = await screenRgbCount(...rgb);
+    check(`${phase}: ${label} painted`, count >= minimum, `${count} matching pixels (minimum ${minimum})`);
+    return count;
   };
   const setPhone = async (width: number, height: number): Promise<void> => {
     await cdp.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: DPR, mobile: true });
@@ -347,16 +440,18 @@ async function main(): Promise<void> {
     height: number,
     token: string,
     characterName: string,
+    locale: "en" | "zh",
   ): Promise<void> => {
     phase = `${label} ${width}x${height}`;
     console.log(`\n# ${phase} @${DPR}x`);
+    await cdp.send("Emulation.setLocaleOverride", { locale: locale === "zh" ? "zh-CN" : "en-US" });
     await setPhone(width, height);
     const oauthState = `${label}-state`;
     await cdp.send("Page.navigate", {
       // The distinct query forces a new document when the second orientation
       // follows the first; changing only the fragment is a same-document
       // navigation and would not reboot the game.
-      url: `${origin}/wander-online/?mobile=${label}#oauth_token=${encodeURIComponent(token)}&state=${encodeURIComponent(oauthState)}`,
+      url: `${origin}/wander-online/?mobile=${label}&lang=${locale}#oauth_token=${encodeURIComponent(token)}&state=${encodeURIComponent(oauthState)}`,
     });
     await waitFor<string>("new player document", "globalThis.__mobileVerifyDocument ?? ''", (value) => value === oauthState);
     await stateIs("creating");
@@ -402,9 +497,163 @@ async function main(): Promise<void> {
     }
     const controls = await layoutReport();
 
+    // Put this verified account at a deterministic co-op notice board. The
+    // harness ages that region row so the board is present immediately; the
+    // browser still opens it with real touch input and the loopback server
+    // still validates and answers the scoped request.
+    const offer = cooperativeTown();
+    const board = plaqueOf(planRegion(SEED, offer.rx, offer.ry));
+    const serverPlayer = game.realmArena.players.get(joined.myId);
+    if (!board || !serverPlayer) throw new Error(`${phase}: cooperative board fixture is unavailable`);
+    const regionRevision = ++game.realmArena.realmRevision;
+    game.realmArena.world.applyRegionState({
+      flags: 0,
+      realmRevision: regionRevision,
+      serverTimeMs: Date.now(),
+      rows: [{
+        rx: offer.rx,
+        ry: offer.ry,
+        discoveredAtMs: 0,
+        improvementLevel: 0,
+        revision: regionRevision,
+        landmarkFirstName: "",
+      }],
+    });
+    const boardQueryExpression = `(() => {
+      const frames = globalThis.__mobileVerifyTextFrames ?? [];
+      for (let i = frames.length - 1; i >= 0; i--) if (frames[i]?.type === "coopBoardGet") return frames[i];
+      return null;
+    })()`;
+    // Residents keep walking while Chrome is under test. Try each adjacent
+    // action tile so a resident briefly standing on the player or board tile
+    // cannot turn this into a flaky conversation fixture.
+    const boardApproaches = [
+      { tx: board.x, ty: board.y - 1, facing: 0 },
+      { tx: board.x - 1, ty: board.y, facing: 3 },
+      { tx: board.x, ty: board.y + 1, facing: 2 },
+      { tx: board.x + 1, ty: board.y, facing: 1 },
+    ] as const;
+    let boardQuery: Record<string, unknown> | null = null;
+    for (const approach of boardApproaches) {
+      serverPlayer.state = {
+        ...serverPlayer.state,
+        move: {
+          ...serverPlayer.state.move,
+          tx: approach.tx,
+          ty: approach.ty,
+          px: approach.tx * 16,
+          py: approach.ty * 16,
+          facing: approach.facing,
+          phase: 0,
+          moving: false,
+          walking: false,
+        },
+      };
+      serverPlayer.buttons = 0;
+      serverPlayer.queue.length = 0;
+      serverPlayer.scanX = null;
+      serverPlayer.scanY = null;
+      await waitFor<OnlineState | null>(
+        "co-op board position",
+        "globalThis.__onlineState ?? null",
+        (candidate) => candidate?.x === approach.tx && candidate.y === approach.ty,
+      );
+      await sleep(150);
+      await touch('[data-button="CIRCLE"]', 140);
+      await waitFor<boolean>("co-op board or resident dialog", "globalThis.__onlineState?.dialog === true", Boolean);
+      try {
+        boardQuery = await waitFor<Record<string, unknown> | null>(
+          "anonymous co-op board query",
+          boardQueryExpression,
+          (candidate) => candidate?.offerRx === offer.rx && candidate.offerRy === offer.ry,
+          1_200,
+        );
+        break;
+      } catch {
+        // Close every page of the resident dialog before trying another side.
+        for (let page = 0; page < 8 && await evaluate<boolean>("globalThis.__onlineState?.dialog === true"); page++) {
+          await touch('[data-button="CIRCLE"]', 100);
+        }
+      }
+    }
+    if (!boardQuery) throw new Error(`${phase}: all four notice-board approaches were occupied by residents`);
+    const boardQueryExtra = Object.keys(boardQuery!).filter((key) => !["type", "v", "offerRx", "offerRy"].includes(key));
+    check(`${phase}: board query contains no partner identity`, boardQueryExtra.length === 0,
+      boardQueryExtra.length ? boardQueryExtra.join(", ") : "offer scope only");
+    const boardReply = {
+      type: "coopBoard",
+      v: 1,
+      realm: joined.realmId,
+      offerRx: offer.rx,
+      offerRy: offer.ry,
+      waiting: 1,
+      required: 2,
+    };
+    const boardReplyExtra = Object.keys(boardReply).filter((key) => !["type", "v", "realm", "offerRx", "offerRy", "waiting", "required"].includes(key));
+    check(`${phase}: board response is anonymous`, boardReplyExtra.length === 0,
+      boardReplyExtra.length ? boardReplyExtra.join(", ") : "count only");
+    await pushJson(boardReply);
+    const boardLayout = await layoutReport();
+    const boardDialogPixels = await checkScreenColor("co-op board dialog", [0x0b, 0x16, 0x26], 500);
+    const boardTextPixels = await checkScreenColor("co-op board text", [0xe7, 0xed, 0xf8], 10);
+    const boardShot = await screenshot(`${label}-${width}x${height}-coop-${locale}-board-count`);
+    await touch('[data-button="CIRCLE"]', 140);
+    await waitFor<boolean>("co-op board dialog closed", "globalThis.__onlineState?.dialog === false", Boolean);
+
+    const friend = locale === "zh"
+      ? {
+          name: han(0x5c71, 0x53cb),
+          targetTown: han(0x82d4, 0x5c71),
+          item: han(0x5305, 0x88f9),
+        }
+      : { name: "Mia", targetTown: "Moss", item: "parcel" };
+    const expiresAt = Date.now() + 30_000;
+    await pushJson({
+      type: "realmFeatures",
+      v: 1,
+      realm: joined.realmId,
+      coopErrands: true,
+      coopPartnerFinding: true,
+      discoveryLeaderboard: false,
+    });
+    await pushJson({
+      type: "socialSnapshot",
+      v: 1,
+      visible: true,
+      friends: [{
+        githubId: 72,
+        name: friend.name,
+        presence: "online",
+        realm: joined.realmId,
+        coopWaiting: { targetTown: friend.targetTown, item: friend.item, expiresAt },
+      }],
+      incoming: [],
+      outgoing: [],
+    });
+    await pushJson({
+      type: "coopFriendWaiting",
+      v: 1,
+      realm: joined.realmId,
+      friend: { githubId: 72, name: friend.name },
+      targetTown: friend.targetTown,
+      item: friend.item,
+      expiresAt,
+    });
+    const coopLabel = locale === "zh" ? han(0x534f, 0x4f5c) : "COOP";
+    const friendNotice = `${coopLabel} · ${friend.name} · ${friend.targetTown} · ${friend.item}`;
+    const friendState = await waitFor<OnlineState | null>(
+      "friend READY hint",
+      "globalThis.__onlineState ?? null",
+      (candidate) => candidate?.notice === friendNotice && candidate.coopWaitingFriends === 1,
+    );
+    check(`${phase}: friend READY is counted once`, friendState!.coopWaitingFriends === 1, friendNotice);
+    const friendPromptLayout = await layoutReport();
+    const friendPromptPixels = await checkScreenColor("friend READY notice", [0x8a, 0xd0, 0xff], 10);
+    const friendPromptShot = await screenshot(`${label}-${width}x${height}-coop-${locale}-friend-waiting`);
+
     // Open the in-game menu and choose its social row with real touch input.
-    // The loopback server intentionally ignores the hosted-only JSON queries;
-    // the bounded home panel must still be usable in both orientations.
+    // The injected snapshot is the hosted-only privacy-filtered friend view;
+    // the bounded panel itself still uses the production menu and touch path.
     await touch('[data-button="SELECT"]', 140);
     await touch('[data-button="DOWN"]', 140);
     await waitFor<boolean>("social panel", "globalThis.__onlineState?.social === true", Boolean);
@@ -420,6 +669,11 @@ async function main(): Promise<void> {
     );
     const socialFriendsLayout = await layoutReport(true);
     const socialFriendsShot = await screenshot(`${label}-${width}x${height}-social-friends`);
+    const waitingFriendState = await stateIs("world", "joined");
+    check(`${phase}: waiting friend remains visible in Friends`, waitingFriendState.coopWaitingFriends === 1,
+      `${waitingFriendState.coopWaitingFriends} waiting friend`);
+    const friendRowPixels = await checkScreenColor("selected waiting-friend row", [0x35, 0x49, 0x68], 100);
+    const friendListShot = await screenshot(`${label}-${width}x${height}-coop-${locale}-friend-list`);
     await touch('[data-button="CROSS"]', 140);
     await waitFor<boolean>(
       "social home panel",
@@ -428,6 +682,68 @@ async function main(): Promise<void> {
     );
     await touch('[data-button="CROSS"]', 140);
     await waitFor<boolean>("social panel closed", "globalThis.__onlineState?.social === false", Boolean);
+
+    await pushJson({
+      type: "coopErrand",
+      v: 1,
+      realm: joined.realmId,
+      revision: 1,
+      status: "waiting",
+      cooperative: true,
+      ready: true,
+      savedReady: 1,
+      presentReady: 1,
+      required: 2,
+      expiresAt: Date.now() + 30_000,
+    });
+    const cancelText = locale === "zh" ? `X ${han(0x53d6, 0x6d88)}` : "X CANCEL";
+    const readyNotice = locale === "zh"
+      ? `${coopLabel} 1/2 · ${han(0x5c31, 0x7eea)}`
+      : "COOP 1/2 · READY";
+    const readyState = await waitFor<OnlineState | null>(
+      "READY countdown",
+      "globalThis.__onlineState ?? null",
+      (candidate) => !!candidate && candidate.notice === readyNotice
+        && candidate.coopRemaining >= 25 && candidate.coopRemaining <= 30
+        && candidate.errand.includes(cancelText),
+    );
+    check(`${phase}: READY countdown is bounded`, readyState!.coopRemaining >= 25 && readyState!.coopRemaining <= 30,
+      `${readyState!.coopRemaining}s remaining`);
+    const readyLayout = await layoutReport();
+    const readyOrangePixels = await checkScreenColor("READY countdown", [0xff, 0xb3, 0x7a], 20);
+    const readyBluePixels = await checkScreenColor("READY notice", [0x8a, 0xd0, 0xff], 10);
+    const readyShot = await screenshot(`${label}-${width}x${height}-coop-${locale}-ready-countdown`);
+    await touch('[data-button="CROSS"]', 140);
+    const sentCancel = await waitFor<boolean>(
+      "cancelCoopErrand command",
+      `globalThis.__mobileVerifyBinaryFrames.some((frame) => frame.length === 11 && frame[1] === ${COMMAND.cancelCoopErrand})`,
+      Boolean,
+    );
+    check(`${phase}: X sends cancelCoopErrand`, sentCancel, `command kind ${COMMAND.cancelCoopErrand}`);
+    await pushJson({
+      type: "coopErrand",
+      v: 1,
+      realm: joined.realmId,
+      revision: 2,
+      status: "cancelled",
+      cooperative: true,
+      ready: false,
+      savedReady: 0,
+      presentReady: 0,
+      required: 2,
+      expiresAt: 0,
+    });
+    const cancelledNotice = locale === "zh"
+      ? `${coopLabel} · ${han(0x5df2, 0x53d6, 0x6d88)}`
+      : "COOP · CANCELLED";
+    const cancelledState = await waitFor<OnlineState | null>(
+      "cancel acknowledgement",
+      "globalThis.__onlineState ?? null",
+      (candidate) => candidate?.notice === cancelledNotice && candidate.coopRemaining === 0,
+    );
+    check(`${phase}: cancelled READY clears countdown`, cancelledState!.coopRemaining === 0, cancelledNotice);
+    const cancelledBluePixels = await checkScreenColor("cancel acknowledgement", [0x8a, 0xd0, 0xff], 10);
+    const cancelledShot = await screenshot(`${label}-${width}x${height}-coop-${locale}-cancelled`);
 
     await touch('[data-button="RTRIGGER"]', 140);
     await waitFor<boolean>("emote picker", "globalThis.__onlineState?.emoteBar === true", Boolean);
@@ -453,7 +769,12 @@ async function main(): Promise<void> {
     ];
     const inviteShot = await screenshot(`${label}-${width}x${height}-invite`);
     await touch("#auth-invite-copy");
-    await waitFor<boolean>("Copied acknowledgement", 'document.getElementById("auth-invite-copy").textContent.trim() === "Copied"', Boolean);
+    const copiedLabel = locale === "zh" ? han(0x5df2, 0x590d, 0x5236) : "Copied";
+    await waitFor<boolean>(
+      "Copied acknowledgement",
+      `document.getElementById("auth-invite-copy").textContent.trim() === ${JSON.stringify(copiedLabel)}`,
+      Boolean,
+    );
     const clipboard = await evaluate<string>("navigator.clipboard.readText()");
     check(`${phase}: Copy writes the real invite`, clipboard === invite, clipboard);
     await touch("#auth-invite-close");
@@ -471,23 +792,62 @@ async function main(): Promise<void> {
     const signedOutShot = await screenshot(`${label}-${width}x${height}-signed-out`);
     results[label] = {
       viewport: `${width}x${height}@${DPR}`,
+      locale,
       name: characterName,
       nameTargets,
       inviteTargets,
       invite,
       controls,
+      coopPartnerFinding: {
+        board: {
+          offer,
+          query: boardQuery,
+          dialogPixels: boardDialogPixels,
+          textPixels: boardTextPixels,
+          layout: boardLayout,
+        },
+        friend: {
+          notice: friendNotice,
+          waiting: friendState!.coopWaitingFriends,
+          noticePixels: friendPromptPixels,
+          selectedRowPixels: friendRowPixels,
+          worldLayout: friendPromptLayout,
+        },
+        ready: {
+          remaining: readyState!.coopRemaining,
+          countdownPixels: readyOrangePixels,
+          noticePixels: readyBluePixels,
+          layout: readyLayout,
+        },
+        cancelled: {
+          notice: cancelledNotice,
+          noticePixels: cancelledBluePixels,
+        },
+      },
       socialPanel: socialLayout.socialPanel,
       socialOverlaps: socialLayout.socialOverlaps,
       socialFriendsPanel: socialFriendsLayout.socialPanel,
       socialFriendsOverlaps: socialFriendsLayout.socialOverlaps,
-      screenshots: [nameShot, socialShot, socialFriendsShot, emoteShot, inviteShot, signedOutShot]
+      screenshots: [
+        nameShot,
+        boardShot,
+        friendPromptShot,
+        socialShot,
+        socialFriendsShot,
+        friendListShot,
+        readyShot,
+        cancelledShot,
+        emoteShot,
+        inviteShot,
+        signedOutShot,
+      ]
         .map((path) => path.split("/").at(-1)),
     };
   };
 
   try {
-    await runPhone("portrait", 390, 844, "mobile-portrait", "Touch Port");
-    await runPhone("landscape", 844, 390, "mobile-landscape", "Touch Land");
+    await runPhone("portrait", 390, 844, "mobile-portrait", "Touch Port", "en");
+    await runPhone("landscape", 844, 390, "mobile-landscape", "Touch Land", "zh");
     check("browser console stays clean", consoleErrors.length === 0, consoleErrors.length ? consoleErrors.join(" | ") : "no console errors or exceptions");
   } catch (error) {
     failures.push({ check: phase, message: error instanceof Error ? error.message : String(error) });

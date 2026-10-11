@@ -62,23 +62,40 @@ d-pad press.
 
 ### Cooperative delivery errands
 
-A server advertises co-op explicitly in `realmFeatures`; older servers keep
-every offer solo. When enabled, a stable one-in-three subset of delivery
-offers is cooperative (pure in world seed and offering region, so every
-client sees the same choice). Each courier accepts the offer normally and
-travels with their own recipient-only journey. At the target plaza, CROSS
+A server advertises co-op explicitly in `realmFeatures`; until that message
+arrives, a CROSS on a deterministically cooperative offer waits instead of
+permanently accepting it as solo. An explicit `coopErrands: false` keeps the
+offer solo for an older server. When enabled, a stable one-in-three subset of
+delivery offers is cooperative (pure in world seed and offering region, so
+every client sees the same choice). Each courier accepts the offer normally
+and travels with their own recipient-only journey. At the target plaza, CROSS
 sends READY instead of a solo delivery.
 
 One courier cannot finish alone, and two sessions of the same account still
-count as one identity. Two distinct matching couriers must both be physically
-present at that plaza while their READY records are live. READY lasts 30
-seconds, keeps its original deadline across disconnect and hosted Room
-reconstruction, and is cleared on expiry or settlement. The server serializes
-competing frames, clears both durable records before changing either journey,
-records completion for both participants and raises the target's shared plaza
-improvement exactly once. The private status contains only aggregate
-`saved/present/required` counts; it never names or locates the other courier.
-Waiting and completion notices are available in English and Chinese.
+count as one identity. Two distinct couriers who accepted the exact same
+offer must both be physically present at its target plaza while their READY
+records are live; sharing a target with a different offer is not a match.
+READY lasts 30 seconds, keeps its original deadline across disconnect and
+hosted Room reconstruction, and is cleared on cancel, expiry or settlement.
+The HUD shows the remaining seconds, and CROSS while waiting cancels without
+discarding the carried errand. The server serializes competing frames, clears
+both durable records before changing either journey, records completion for
+both participants and raises the target's shared plaza improvement exactly
+once. If an old or incomplete realm lacks that target row, settlement first
+materialises the authenticated discovery and only then applies the shared
+improvement.
+
+Servers that additionally advertise `coopPartnerFinding` expose two bounded
+ways to find the second courier. A visible mutual friend in the same realm
+receives one prompt per READY deadline and sees `COOP WAIT` / `合作等待` first
+in the Friends list, with the target town and item. Nonfriends and viewers of
+a hidden friend receive no identity or location. Reading the cooperative
+offer's physical notice board also shows only an offer-scoped anonymous
+`waiting/required` count. The board request is proximity-checked by the
+server, and its reply contains no player identity, target coordinate or exact
+position, so it does not disclose a nonfriend's online state or location.
+Waiting, cancel, expiry and completion notices are available in English and
+Chinese.
 
 The loopback server supports the same live two-player flow in memory. For a
 deterministic real-WebSocket check with two couriers and one observer, run:
@@ -337,7 +354,7 @@ Little-endian, single source in [`net/protocol.ts`](net/protocol.ts):
 | REGION_STATE | variable | `0x22` flags, realm revision, server time, signed region rows with discovery time, improvement, row revision and first-discoverer display name |
 | PLAYER_PROGRESS | variable | `0x23` private revision and signed landmark-region pairs; sent only to its account's socket |
 | PLAYER_JOURNEY | variable | `0x24` private journey revision, errand/help/talk state, cooperative flag and one confirmed event; sent only to its account's socket |
-| COMMAND | 11 | `0x04` kind u8 (accept/deliver/talk/emote/co-op accept/co-op ready), rx i32, ry i32, extra u8 (resident index or emote id) |
+| COMMAND | 11 | `0x04` kind u8 (accept/deliver/talk/emote/co-op accept/co-op ready/co-op cancel), rx i32, ry i32, extra u8 (resident index or emote id) |
 | FAR_PLAYERS | 2 + 6n | `0x25` n u8, rows of id u32, octant u8, band u8; once a second, only players outside the AOI |
 | EMOTE | 6 | `0x26` id u32, emote u8; to every AOI that holds the sender, never stored |
 | PONG | 9 | `0x30` id u32, t u32 |
@@ -441,7 +458,8 @@ migrate or reinterpret a legacy room.
   deterministic cooperative eligibility, distinct-identity quorum,
   once-only competing completion and READY restore/expiry.
 - `tests/wander-online-coop-client.test.ts` — mounted capability negotiation,
-  aggregate co-op status and leaderboard request/toggle wiring.
+  board counts, one-shot friend prompts, waiting-friend rows, countdown and
+  cancel wiring.
 - `tests/wander-online-auth-sim.test.ts` — account entry, persistence and
   complete-delete failure/success behavior through the rendered client.
 - `tests/wander-online-shared.test.ts` — the shared hosted-server logic
