@@ -68,5 +68,27 @@ describe("social wire contract", () => {
       visible: true,
       realms: [],
     })).toBeNull();
+    const history = Array.from({ length: 256 }, (_, i) => ({
+      realm: `history-${i}`,
+      discoveries: i,
+      helped: 0,
+      updatedAt: i,
+    }));
+    expect(parseSelfData({
+      profile: { login: "alice", name: "Alice", look: 7 },
+      friends: 0,
+      incoming: 0,
+      outgoing: 0,
+      visible: true,
+      realms: history,
+    })?.realms).toHaveLength(256);
+    expect(parseSelfData({
+      profile: { login: "alice", name: "Alice", look: 7 },
+      friends: 0,
+      incoming: 0,
+      outgoing: 0,
+      visible: true,
+      realms: [...history, { realm: "overflow", discoveries: 0, helped: 0, updatedAt: 0 }],
+    })).toBeNull();
   });
 });

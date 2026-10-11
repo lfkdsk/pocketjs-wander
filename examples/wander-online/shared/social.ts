@@ -9,6 +9,10 @@
 export const SOCIAL_PROTOCOL_VERSION = 1;
 export const SOCIAL_MAX_FRIENDS = 64;
 export const SOCIAL_MAX_PENDING = 64;
+/** Configured choices are a small page; deletion/self-service history must
+ * retain every realm the Auth DO can track. */
+export const SOCIAL_MAX_WORLD_CHOICES = 16;
+export const SOCIAL_MAX_REALM_HISTORY = 256;
 
 export type FriendPresence = "online" | "offline" | "hidden";
 
@@ -81,7 +85,7 @@ export function parseSocialSnapshot(value: unknown): SocialSnapshot | null {
 }
 
 export function parseRealmChoices(value: unknown): RealmChoice[] | null {
-  return boundedArray(value, 16, (row) => {
+  return boundedArray(value, SOCIAL_MAX_WORLD_CHOICES, (row) => {
     if (!record(row) || !realmId(row.realm) || !population(row.band) || typeof row.joinable !== "boolean") return null;
     return { realm: row.realm, band: row.band, joinable: row.joinable };
   });
@@ -95,7 +99,7 @@ export function parseSelfData(value: unknown): SelfDataSummary | null {
     || !integer(value.incoming, 0, SOCIAL_MAX_PENDING)
     || !integer(value.outgoing, 0, SOCIAL_MAX_PENDING)
     || typeof value.visible !== "boolean") return null;
-  const realms = boundedArray(value.realms, 16, (row) => {
+  const realms = boundedArray(value.realms, SOCIAL_MAX_REALM_HISTORY, (row) => {
     if (!record(row) || !realmId(row.realm)
       || !integer(row.discoveries, 0, 1_000_000)
       || !integer(row.helped, 0, 1_000_000)
