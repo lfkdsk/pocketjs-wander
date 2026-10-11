@@ -10,7 +10,8 @@ import {
 import { RealmStateCache } from "../examples/wander-online/net/realm-state.ts";
 import { MultiFocusWorld } from "../examples/wander-online/net/realm-world.ts";
 import { RealmPredictor } from "../examples/wander-online/net/realm-predict.ts";
-import { improvementCells } from "../examples/wander/towns.ts";
+import { festivalCells, improvementCells } from "../examples/wander/towns.ts";
+import { WANDER_UPPER } from "../examples/wander/assets-wander.ts";
 import { blocksAt, COMPLETE, UNDISCOVERED } from "../examples/wander/chunk.ts";
 import { GROWTH_TICK_FRAMES } from "../examples/wander/region.ts";
 import { CHUNK, regionHub } from "../examples/wander/world.ts";
@@ -133,6 +134,12 @@ describe("wander-online realm state projection", () => {
     world.prime([{ x: hub.x, y: hub.y }], 0);
     const plan = world.plans.get(`${town.rx},${town.ry}`)!;
     const cells = improvementCells(plan);
+    expect(cells).toEqual([
+      { x: -55, y: -324, tile: 42 },
+      { x: -50, y: -325, tile: 42 },
+      { x: -56, y: -325, tile: 42 },
+      { x: -56, y: -327, tile: 42 },
+    ]);
     const before = plan.upper!.slice();
     const apply = (revision: number) => world.applyRegionState({
       flags: revision === 1 ? 1 : 0,
@@ -160,6 +167,80 @@ describe("wander-online realm state projection", () => {
     for (const cell of cells) {
       const i = (cell.y - regenerated.y0) * 96 + cell.x - regenerated.x0;
       expect(regenerated.upper![i]).toBe(cell.tile);
+    }
+  }, 20_000);
+
+  test("level 2 adds one deterministic walkable festival ring, repaints it once, and survives regeneration", () => {
+    let town = { rx: 0, ry: 0 };
+    outer: for (let ry = -4; ry <= 4; ry++) for (let rx = -4; rx <= 4; rx++) {
+      if (regionHub(SEED, rx, ry).town) { town = { rx, ry }; break outer; }
+    }
+    const hub = regionHub(SEED, town.rx, town.ry);
+    const world = new MultiFocusWorld(SEED);
+    world.prime([{ x: hub.x, y: hub.y }], 0);
+    world.drainFresh();
+
+    const plan = world.plans.get(`${town.rx},${town.ry}`)!;
+    const flowers = improvementCells(plan);
+    const festival = festivalCells(plan);
+    expect(festival).toHaveLength(4);
+    expect(festivalCells(plan)).toEqual(festival);
+    expect(new Set(festival.map((cell) => `${cell.x},${cell.y}`)).size).toBe(festival.length);
+    expect(festival.some((cell) => flowers.some((flower) => flower.x === cell.x && flower.y === cell.y))).toBe(false);
+    expect(new Set(festival.map((cell) => cell.tile))).toEqual(new Set([41]));
+    expect(WANDER_UPPER[festival[0]!.tile]).toBeTruthy();
+    expect(festival.every((cell) => flowers.every((flower) => WANDER_UPPER[cell.tile] !== WANDER_UPPER[flower.tile]))).toBe(true);
+
+    const apply = (revision: number, improvementLevel: number) => world.applyRegionState({
+      flags: revision === 1 ? 1 : 0,
+      realmRevision: revision,
+      serverTimeMs: revision,
+      rows: [{ ...town, discoveredAtMs: 0, improvementLevel, revision, landmarkFirstName: "First" }],
+    });
+    apply(1, 1);
+    world.drainFresh();
+    const level1 = plan.upper!.slice();
+    for (const cell of festival) {
+      const i = (cell.y - plan.y0) * 96 + cell.x - plan.x0;
+      expect(plan.upper![i]).not.toBe(cell.tile);
+    }
+
+    apply(2, 2);
+    const repainted = world.drainFresh();
+    const repaintedKeys = new Set(repainted.map((chunk) => `${chunk.cx},${chunk.cy}`));
+    expect(repaintedKeys.size).toBe(repainted.length);
+    expect(repainted.length).toBeGreaterThan(0);
+    for (const cell of flowers) {
+      const i = (cell.y - plan.y0) * 96 + cell.x - plan.x0;
+      expect(plan.upper![i]).toBe(cell.tile);
+      expect(level1[i]).toBe(cell.tile);
+    }
+    for (const cell of festival) {
+      const i = (cell.y - plan.y0) * 96 + cell.x - plan.x0;
+      expect(plan.upper![i]).toBe(cell.tile);
+      const chunk = world.chunk(Math.floor(cell.x / CHUNK), Math.floor(cell.y / CHUNK))!;
+      const ci = (cell.y - chunk.y0) * CHUNK + cell.x - chunk.x0;
+      expect(chunk.devUpper[ci]).toBe(cell.tile);
+      expect(blocksAt(chunk, ci, COMPLETE)).toBe(false);
+      expect(repaintedKeys.has(`${chunk.cx},${chunk.cy}`)).toBe(true);
+    }
+
+    const once = plan.upper!.slice();
+    apply(3, 2);
+    expect(plan.upper).toEqual(once);
+    expect(world.drainFresh()).toEqual([]);
+
+    world.setFocuses([], 10_000);
+    world.clearCache();
+    world.prime([{ x: hub.x, y: hub.y }], 10_001);
+    const regenerated = world.plans.get(`${town.rx},${town.ry}`)!;
+    for (const cell of [...flowers, ...festival]) {
+      const i = (cell.y - regenerated.y0) * 96 + cell.x - regenerated.x0;
+      expect(regenerated.upper![i]).toBe(cell.tile);
+      const chunk = world.chunk(Math.floor(cell.x / CHUNK), Math.floor(cell.y / CHUNK))!;
+      const ci = (cell.y - chunk.y0) * CHUNK + cell.x - chunk.x0;
+      expect(chunk.devUpper[ci]).toBe(cell.tile);
+      expect(blocksAt(chunk, ci, COMPLETE)).toBe(false);
     }
   }, 20_000);
 

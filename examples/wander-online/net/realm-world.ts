@@ -10,7 +10,7 @@
 import { blocksAt, chunkJob, type ChunkData } from "../../wander/chunk.ts";
 import { F_DECOR, F_UPPER, planRegionJob, type RegionPlan } from "../../wander/region.ts";
 import { CHUNK, REGION, REGION_CHUNKS, TILE, regionHub } from "../../wander/world.ts";
-import { improvementCells } from "../../wander/towns.ts";
+import { festivalCells, improvementCells } from "../../wander/towns.ts";
 import { initialMovement, stepMovementLegacy, type MovementState } from "../../../vendor/pocket-rpgkit/src/engine/movement.ts";
 import type { PassageTable } from "../../../vendor/pocket-rpgkit/src/engine/passability.ts";
 import type { CharsState } from "../../../vendor/pocket-rpgkit/src/engine/chars.ts";
@@ -139,7 +139,10 @@ export class MultiFocusWorld implements RealmCollisionSource {
   private activeRegions = new Map<string, Coord>();
   private readonly chunkUsed = new Map<string, number>();
   private readonly planUsed = new Map<string, number>();
-  private readonly improvedPlans = new WeakSet<RegionPlan>();
+  /** Highest shared appearance level installed into each resident plan. The
+   * weak key lets evicted plans disappear while a regenerated plan starts at
+   * level zero and replays the authoritative region level. */
+  private readonly improvedPlans = new WeakMap<RegionPlan, number>();
   private job: RealmJob | null = null;
   private tick = 0;
   /** Rollback replay may evaluate an old input without rolling back the
@@ -206,15 +209,21 @@ export class MultiFocusWorld implements RealmCollisionSource {
     for (const { row, previous } of applied) {
       if (row.improvementLevel <= (previous?.improvementLevel ?? 0)) continue;
       const plan = this.plans.get(realmRegionKey(row.rx, row.ry));
-      if (plan) this.applyImprovement(plan);
+      if (plan) this.applyImprovement(plan, row.improvementLevel);
     }
   }
 
-  private applyImprovement(plan: RegionPlan): void {
-    if (this.improvedPlans.has(plan)) return;
-    this.improvedPlans.add(plan);
+  private applyImprovement(plan: RegionPlan, level: number): void {
+    const target = level >= 2 ? 2 : level >= 1 ? 1 : 0;
+    const applied = this.improvedPlans.get(plan) ?? 0;
+    if (target <= applied) return;
+    this.improvedPlans.set(plan, target);
     const repaint = new Set<ChunkData>();
-    for (const cell of improvementCells(plan)) {
+    const cells = [
+      ...(applied < 1 && target >= 1 ? improvementCells(plan) : []),
+      ...(applied < 2 && target >= 2 ? festivalCells(plan) : []),
+    ];
+    for (const cell of cells) {
       const pi = (cell.y - plan.y0) * REGION + cell.x - plan.x0;
       plan.upper![pi] = cell.tile;
       plan.flags![pi]! |= F_UPPER | F_DECOR;
@@ -345,7 +354,8 @@ export class MultiFocusWorld implements RealmCollisionSource {
       if (completed.kind === "plan") {
         if (!this.activeRegions.has(completed.key)) continue;
         const plan = result.value as RegionPlan;
-        if ((this.regionState(plan.rx, plan.ry)?.improvementLevel ?? 0) > 0) this.applyImprovement(plan);
+        const improvementLevel = this.regionState(plan.rx, plan.ry)?.improvementLevel ?? 0;
+        if (improvementLevel > 0) this.applyImprovement(plan, improvementLevel);
         this.plans.set(completed.key, plan);
         this.planUsed.set(completed.key, now);
         this.evictPlans();

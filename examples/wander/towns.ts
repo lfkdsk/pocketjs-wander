@@ -559,3 +559,36 @@ export function improvementCells(plan: RegionPlan): { x: number; y: number; tile
   }
   return out;
 }
+
+const FESTIVAL_TILE = 41; // STALL: a bright market canopy, installed as walkable decor.
+
+/** A second, visually distinct decoration ring for a level-2 town. These
+ * market canopies sit farther from the plaza than the level-1 flowers and
+ * only claim otherwise undeveloped, walkable cells. Pure in the plan, so a
+ * regenerated realm plan reconstructs exactly the same festival. */
+export function festivalCells(plan: RegionPlan): { x: number; y: number; tile: number }[] {
+  const out: { x: number; y: number; tile: number }[] = [];
+  const offsets = [
+    [6, 3], [-6, 3], [6, -3], [-6, -3],
+    [3, 6], [-3, 6], [3, -6], [-3, -6],
+    [7, 2], [-7, 2], [7, -2], [-7, -2],
+    [2, 7], [-2, 7], [2, -7], [-2, -7],
+    [6, 4], [-6, 4], [6, -4], [-6, -4],
+    [4, 6], [-4, 6], [4, -6], [-4, -6],
+    [8, 1], [-8, 1], [8, -1], [-8, -1],
+    [1, 8], [-1, 8], [1, -8], [-1, -8],
+    [7, 5], [-7, 5], [7, -5], [-7, -5],
+    [5, 7], [-5, 7], [5, -7], [-5, -7],
+  ] as const;
+  for (const [dx, dy] of offsets) {
+    const x = plan.hub.x + dx, y = plan.hub.y + dy;
+    const lx = x - plan.x0, ly = y - plan.y0;
+    if (lx < 0 || ly < 0 || lx >= 96 || ly >= 96) continue;
+    const i = ly * 96 + lx;
+    const f = plan.flags![i]!;
+    if (f & 0x13) continue; // F_ROAD | F_BLOCK | F_UPPER: never replace developed cells
+    out.push({ x, y, tile: FESTIVAL_TILE });
+    if (out.length >= 4) break;
+  }
+  return out;
+}
