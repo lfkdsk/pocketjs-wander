@@ -74,8 +74,20 @@ describe("social wire contract", () => {
     expect(parseRealmFeatures({
       realm: "plaza-1",
       coopErrands: true,
+      discoveryLeaderboard: true,
+      dailyGoals: true,
+    })).toEqual({ realm: "plaza-1", coopErrands: true, discoveryLeaderboard: true, dailyGoals: true });
+    expect(parseRealmFeatures({
+      realm: "plaza-1",
+      coopErrands: true,
       coopPartnerFinding: 1,
       discoveryLeaderboard: false,
+    })).toBeNull();
+    expect(parseRealmFeatures({
+      realm: "plaza-1",
+      coopErrands: true,
+      discoveryLeaderboard: false,
+      dailyGoals: 1,
     })).toBeNull();
   });
 

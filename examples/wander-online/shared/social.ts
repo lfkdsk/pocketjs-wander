@@ -24,6 +24,8 @@ export interface RealmFeatures {
   /** Additive board/friend/cancel surface. Absent on older co-op servers. */
   coopPartnerFinding?: boolean;
   discoveryLeaderboard: boolean;
+  /** Additive realm-wide UTC goal surface. Absent on older servers. */
+  dailyGoals?: boolean;
 }
 
 export type CoopErrandStatus = "none" | "travel" | "waiting" | "completed" | "cancelled" | "expired";
@@ -170,13 +172,15 @@ export function parseRealmFeatures(value: unknown): RealmFeatures | null {
   if (!record(value) || !realmId(value.realm)
     || typeof value.coopErrands !== "boolean"
     || (value.coopPartnerFinding !== undefined && typeof value.coopPartnerFinding !== "boolean")
-    || typeof value.discoveryLeaderboard !== "boolean") return null;
+    || typeof value.discoveryLeaderboard !== "boolean"
+    || (value.dailyGoals !== undefined && typeof value.dailyGoals !== "boolean")) return null;
   const parsed: RealmFeatures = {
     realm: value.realm,
     coopErrands: value.coopErrands,
     discoveryLeaderboard: value.discoveryLeaderboard,
   };
   if (value.coopPartnerFinding !== undefined) parsed.coopPartnerFinding = value.coopPartnerFinding;
+  if (value.dailyGoals !== undefined) parsed.dailyGoals = value.dailyGoals;
   return parsed;
 }
 
