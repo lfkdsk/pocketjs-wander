@@ -40,7 +40,7 @@ interface SocketHarness {
   message: (data: string | ArrayBuffer) => void;
 }
 
-function socketHarness(): SocketHarness {
+function socketHarness(opts: { deferClientClose?: boolean } = {}): SocketHarness {
   let state: SocketReadyState = "connecting";
   let sendError: SocketError | null = null;
   const sent: (string | Uint8Array | ArrayBuffer)[] = [];
@@ -69,6 +69,10 @@ function socketHarness(): SocketHarness {
       }
       if (state === "closed") return;
       closeRequests.push({ code, reason });
+      if (opts.deferClientClose) {
+        state = "closing";
+        return;
+      }
       deliverClose(code, reason);
     },
   };
@@ -282,17 +286,19 @@ describe("wander-online client core", () => {
   });
 
   test("a prediction rebase uses a private close and reconnects into the new epoch", () => {
-    const first = socketHarness(), second = socketHarness();
+    const first = socketHarness({ deferClientClose: true }), second = socketHarness();
     const factories = [first.factory, second.factory];
     let connectionCount = 0;
     let now = 1_000;
     const client = new OnlineClient("ws://unit.test/ws", {
       now: () => now,
+      auth: { kind: "ticket", ticket: "realm-ticket" },
       socketFactory: (url, opts) => factories[connectionCount++]!(url, opts),
     });
     first.open();
     readyRealm(first, realmWelcome(19));
     expect(client.status).toBe("joined");
+    const oldPredictor = client.predictor;
 
     // A snapshot from another epoch cannot be reconciled against this
     // predictor. Closing must itself be browser-valid so onClose can clear
@@ -307,7 +313,16 @@ describe("wander-online client core", () => {
       code: PREDICTION_REBASE_CLOSE_CODE,
       reason: "prediction rebase",
     }]);
+    expect(client.status).toBe("frozen");
+    expect(client.onFrame(BTN.left, 60, 0)).toBe(0);
+    expect(client.predictor).toBe(oldPredictor);
+
+    // The transport reports close asynchronously. Its echoed code/reason are
+    // not needed: a rebase follows the ordinary reconnect policy.
+    first.close(1000, "");
     expect(client.hud()).toMatchObject({ status: "reconnecting", retryIn: 1_000 });
+    expect(client.myId).toBe(0);
+    expect(client.predictor).toBeNull();
 
     now += 999;
     client.onFrame(0, 60, 0);
@@ -315,10 +330,19 @@ describe("wander-online client core", () => {
     now += 1;
     client.onFrame(0, 60, 0);
     expect(connectionCount).toBe(2);
+    expect(client.status).toBe("connecting");
     second.open();
+    expect(JSON.parse(second.sent[0] as string)).toMatchObject({
+      type: "join",
+      ticket: "realm-ticket",
+    });
     readyRealm(second, realmWelcome(20));
     expect(client.status).toBe("joined");
     expect(client.epoch).toBe(20);
+    expect(client.predictor).not.toBe(oldPredictor);
+    expect(client.predictor?.lastSeq).toBe(0);
+    expect(client.predictor?.unacked).toBe(0);
+    expect(second.closeRequests).toEqual([]);
     client.stop();
   });
 
