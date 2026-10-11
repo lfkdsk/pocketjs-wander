@@ -18,8 +18,10 @@ import {
   WORLD_STATE_VERSION,
   decodeInputBatch,
   decodeWelcome4Capabilities,
+  encodeBye,
   encodePlayerProgress,
   encodeRegionState,
+  encodeRoster,
   encodeState4,
   encodeState,
   encodeWelcome,
@@ -38,6 +40,11 @@ interface SocketHarness {
   refuseSend: (error?: SocketError) => void;
   close: (code: number, reason: string) => void;
   message: (data: string | ArrayBuffer) => void;
+  captureCallbacks: () => {
+    open: () => void;
+    close: (code: number, reason: string) => void;
+    message: (data: string | ArrayBuffer) => void;
+  };
 }
 
 function socketHarness(opts: { deferClientClose?: boolean } = {}): SocketHarness {
@@ -104,6 +111,18 @@ function socketHarness(opts: { deferClientClose?: boolean } = {}): SocketHarness
     // rule for close codes initiated by this client.
     close: deliverClose,
     message: (data) => socket.onMessage?.(typeof data === "string" ? data : new Uint8Array(data)),
+    captureCallbacks: () => {
+      // Model a native host that already queued callbacks before the client
+      // detached the old socket during an explicit realm switch.
+      const onOpen = socket.onOpen;
+      const onClose = socket.onClose;
+      const onMessage = socket.onMessage;
+      return {
+        open: () => onOpen?.(),
+        close: (code, reason) => onClose?.({ code, reason, clean: code === 1000 }),
+        message: (data) => onMessage?.(typeof data === "string" ? data : new Uint8Array(data)),
+      };
+    },
   };
 }
 
@@ -123,13 +142,13 @@ function entity(id: number): WireEntity {
   };
 }
 
-function realmWelcome(epoch = 19): ArrayBuffer {
+function realmWelcome(epoch = 19, realmId = "west"): ArrayBuffer {
   return encodeWelcome4({
     you: 7,
     seed: 0x5eed_0001,
     generatorVersion: 1,
     epoch,
-    realmId: "west",
+    realmId,
     realmRevision: 0,
     serverTimeMs: 1_000,
     mover: {
@@ -299,6 +318,10 @@ describe("wander-online client core", () => {
     readyRealm(first, realmWelcome(19));
     expect(client.status).toBe("joined");
     const oldPredictor = client.predictor;
+    client.roster.set(8, { id: 8, name: "Old", look: 1 });
+    client.far.set(8, { dir: 2, band: 1, at: now });
+    client.emotes.set(8, { emote: 1, until: now + 5_000 });
+    client.interp.push([entity(8)], now);
 
     // A snapshot from another epoch cannot be reconciled against this
     // predictor. Closing must itself be browser-valid so onClose can clear
@@ -323,6 +346,10 @@ describe("wander-online client core", () => {
     expect(client.hud()).toMatchObject({ status: "reconnecting", retryIn: 1_000 });
     expect(client.myId).toBe(0);
     expect(client.predictor).toBeNull();
+    expect(client.roster.size).toBe(0);
+    expect(client.far.size).toBe(0);
+    expect(client.emotes.size).toBe(0);
+    expect(client.interp.ids()).toEqual([]);
 
     now += 999;
     client.onFrame(0, 60, 0);
@@ -484,10 +511,18 @@ describe("wander-online client core", () => {
     });
     harness.open();
     readyRealm(harness, realmWelcome(19));
+    client.roster.set(8, { id: 8, name: "Old", look: 1 });
+    client.far.set(8, { dir: 2, band: 1, at: 1_000 });
+    client.emotes.set(8, { emote: 1, until: 6_000 });
+    client.interp.push([entity(8)], 1_000);
     for (let i = 0; i < 5; i++) client.onFrame(BTN.right, 60, 0);
     expect(inputBatches(harness.sent)).toHaveLength(0);
 
     readyRealm(harness, realmWelcome(20));
+    expect(client.roster.size).toBe(0);
+    expect(client.far.size).toBe(0);
+    expect(client.emotes.size).toBe(0);
+    expect(client.interp.ids()).toEqual([]);
     for (let i = 0; i < 5; i++) client.onFrame(BTN.left, 60, 0);
     expect(inputBatches(harness.sent)).toHaveLength(0);
     client.onFrame(BTN.left, 60, 0);
@@ -495,6 +530,109 @@ describe("wander-online client core", () => {
       firstSeq: 1,
       buttons: [BTN.left, BTN.left, BTN.left, BTN.left, BTN.left, BTN.left],
     }]);
+    client.stop();
+  });
+
+  test("switchRealm validates its target, clears the old epoch and ignores callbacks already queued by the old socket", () => {
+    const first = socketHarness(), second = socketHarness();
+    const factories = [first.factory, second.factory];
+    const urls: string[] = [];
+    let opened = 0;
+    const client = new OnlineClient("ws://unit.test/ws", {
+      now: () => 1_000,
+      socketFactory: (url, opts) => {
+        urls.push(url);
+        return factories[opened++]!(url, opts);
+      },
+    });
+    first.open();
+    readyRealm(first, realmWelcome(19, "west"));
+    const oldPredictor = client.predictor;
+    const queued = first.captureCallbacks();
+    client.roster.set(8, { id: 8, name: "Old", look: 1 });
+    client.far.set(8, { dir: 2, band: 1, at: 1_000 });
+    client.emotes.set(8, { emote: 1, until: 6_000 });
+    client.interp.push([entity(8)], 1_000);
+    for (let i = 0; i < 5; i++) client.onFrame(BTN.right, 60, 0);
+
+    for (const [realm, invite] of [
+      ["", null],
+      ["bad realm", null],
+      ["x".repeat(33), null],
+      [null, "ABCDEFGH"],
+      ["east_2", "abcdefgh"],
+      ["east_2", "ABC"],
+    ] as const) {
+      expect(client.switchRealm(realm, invite)).toBe(false);
+    }
+    expect(client.realmPin).toBe("west");
+    expect(client.predictor).toBe(oldPredictor);
+    expect(first.closeRequests).toEqual([]);
+
+    expect(client.switchRealm("east_2", "ABCDEFGH")).toBe(true);
+    expect(client.realmPin).toBe("east_2");
+    expect(client.invite).toBe("ABCDEFGH");
+    expect(client.status).toBe("reconnecting");
+    expect(client.predictor).toBeNull();
+    expect(client.roster.size).toBe(0);
+    expect(client.far.size).toBe(0);
+    expect(client.emotes.size).toBe(0);
+    expect(client.interp.ids()).toEqual([]);
+    expect(first.closeRequests).toEqual([{ code: 1000, reason: "switch realm" }]);
+
+    client.onFrame(0, 60, 0);
+    expect(urls).toEqual([
+      "ws://unit.test/ws/v4",
+      "ws://unit.test/ws/v4?realm=east_2&invite=ABCDEFGH",
+    ]);
+
+    // These closures were captured before switchRealm detached the handlers.
+    // Identity guards must make them inert even though a new socket now owns
+    // the client.
+    const firstSent = first.sent.length;
+    queued.open();
+    queued.message(realmWelcome(99, "stale"));
+    queued.close(1008, "realm");
+    expect(first.sent).toHaveLength(firstSent);
+    expect(client.realmPin).toBe("east_2");
+    expect(client.status).toBe("reconnecting");
+
+    second.open();
+    expect(JSON.parse(second.sent[0] as string)).toMatchObject({ type: "join" });
+    readyRealm(second, realmWelcome(20, "east_2"));
+    expect(client.status).toBe("joined");
+    expect(client.realmPin).toBe("east_2");
+    expect(client.invite).toBeNull();
+    for (let i = 0; i < 6; i++) client.onFrame(BTN.left, 60, 0);
+    expect(inputBatches(second.sent)).toEqual([{
+      firstSeq: 1,
+      buttons: [BTN.left, BTN.left, BTN.left, BTN.left, BTN.left, BTN.left],
+    }]);
+    client.stop();
+  });
+
+  test("a strict BYE removes only the named roster entry", () => {
+    const harness = socketHarness();
+    const client = new OnlineClient("ws://unit.test/ws", { socketFactory: harness.factory });
+    harness.open();
+    readyRealm(harness);
+    harness.message(encodeRoster([
+      { id: 7, name: "Self", look: 0 },
+      { id: 8, name: "Gone", look: 1 },
+    ]));
+    client.far.set(8, { dir: 2, band: 1, at: 1_000 });
+    client.emotes.set(8, { emote: 1, until: 6_000 });
+    expect([...client.roster.keys()]).toEqual([7, 8]);
+
+    const trailing = new Uint8Array(6);
+    trailing.set(new Uint8Array(encodeBye(8)));
+    harness.message(trailing.buffer);
+    expect(client.roster.has(8)).toBe(true);
+
+    harness.message(encodeBye(8));
+    expect([...client.roster.keys()]).toEqual([7]);
+    expect(client.far.has(8)).toBe(false);
+    expect(client.emotes.has(8)).toBe(false);
     client.stop();
   });
 
@@ -617,7 +755,7 @@ describe("wander-online client core", () => {
   });
 
   test("late auth replies cannot revive a stopped client", () => {
-    const harness = socketHarness();
+    const harness = socketHarness({ deferClientClose: true });
     const tickets: [string, string][] = [];
     const creates: [string, string][] = [];
     const client = new OnlineClient("ws://unit.test/ws", {
@@ -627,8 +765,15 @@ describe("wander-online client core", () => {
       onNeedCreate: (login, ticket) => creates.push([login, ticket]),
     });
     harness.open();
+    client.roster.set(8, { id: 8, name: "Old", look: 1 });
+    client.far.set(8, { dir: 2, band: 1, at: 1_000 });
+    client.emotes.set(8, { emote: 1, until: 6_000 });
     const sentBeforeStop = harness.sent.length;
     client.stop();
+
+    expect(client.roster.size).toBe(0);
+    expect(client.far.size).toBe(0);
+    expect(client.emotes.size).toBe(0);
 
     harness.message(JSON.stringify({ type: "needCreate", login: "late", ticket: "create-ticket" }));
     harness.message(JSON.stringify({ type: "ready", ticket: "ready-ticket" }));

@@ -55,7 +55,12 @@ import {
 import { emptyJourney, type JourneyEvent, type PlayerJourney } from "./journey.ts";
 import { EMOTE_MIN_INTERVAL_MS, EMOTE_SHOW_MS, isEmoteId } from "./emote.ts";
 import { FAR_TTL_MS } from "./far.ts";
-import { formatInviteToken, realmJoinUrl } from "../shared/invite.ts";
+import {
+  formatInviteToken,
+  inviteCodeWellFormed,
+  realmIdWellFormed,
+  realmJoinUrl,
+} from "../shared/invite.ts";
 import { Predictor, type AuthoritativeMover } from "./predict.ts";
 import { RealmPredictor } from "./realm-predict.ts";
 import { GENERATOR_VERSION } from "./realm-world.ts";
@@ -344,35 +349,60 @@ export class OnlineClient {
     return realmJoinUrl(this.url, this.realmPin, this.invite);
   }
 
-  /** "Any world": drop the realm pin and invite and connect again at once.
-   *  The way out of a pinned realm that is full, gone or whose invite was
-   *  refused; the next WELCOME4 pins whatever realm admitted us. */
-  leaveRealm(): void {
-    this.realmPin = null;
-    this.invite = null;
-    this.rejectReason = null;
-    this.slowBackoffMs = SLOW_BACKOFF_START_MS;
-    // A new realm is a fresh sequence epoch. Never let a partial packet from
-    // the old realm choose the firstSeq or buttons of the next connection.
+  /** Drop all state that belongs to one socket/realm epoch. This is shared by
+   *  explicit realm switches, transport closes and fresh WELCOME messages so
+   *  no queued input or remote identity can cross an epoch boundary. */
+  private clearEpochState(): void {
+    this.predictor = null;
+    this.grid = null;
     this.pending.length = 0;
     this.inputBatchSize = BATCH_SIZE;
+    this.worldStateReady = false;
+    this.fastConfirmed = false;
+    this.serverClockMs = 0;
+    this.serverClockLocalMs = 0;
+    this.interp.reset();
+    this.far.clear();
+    this.emotes.clear();
+    this.roster.clear();
+    this.inviteWaiters.length = 0;
+  }
+
+  /** Connect to one exact realm, optionally through its invite. Invalid
+   *  caller input is rejected without changing the live connection. A null
+   *  realm means the service may choose one; an invite without a realm is
+   *  never meaningful. */
+  switchRealm(realm: string | null, invite: string | null = null): boolean {
+    if (realm !== null && !realmIdWellFormed(realm)) return false;
+    if (invite !== null && (realm === null || !inviteCodeWellFormed(invite))) return false;
+
+    this.realmPin = realm;
+    this.invite = invite;
+    this.rejectReason = null;
+    this.slowBackoffMs = SLOW_BACKOFF_START_MS;
     const old = this.socket;
     if (old) {
-      // Detach first: the old socket's close must not clobber the state of
-      // the connection started below.
+      // Detach every callback first. The native host may already have queued
+      // any of them, so connect() also guards each callback by socket identity.
+      old.onOpen = undefined;
       old.onClose = undefined;
       old.onMessage = undefined;
       old.onError = undefined;
       this.socket = null;
-      this.predictor = null;
-      this.interp.reset();
-      this.far.clear();
-      this.emotes.clear();
-      old.close(1000, "leave realm");
     }
+    this.clearEpochState();
+    old?.close(1000, "switch realm");
     this.stopped = false;
     this.status = "reconnecting";
     this.reconnectAt = this.now();
+    return true;
+  }
+
+  /** "Any world": drop the realm pin and invite and connect again at once.
+   *  The way out of a pinned realm that is full, gone or whose invite was
+   *  refused; the next WELCOME4 pins whatever realm admitted us. */
+  leaveRealm(): void {
+    this.switchRealm(null);
   }
 
   private connect(): void {
@@ -408,11 +438,14 @@ export class OnlineClient {
         throw error;
       }
     };
-    sock.onMessage = (data) => this.onMessage(data);
+    sock.onMessage = (data) => {
+      if (this.socket !== sock) return;
+      this.onMessage(data);
+    };
     sock.onClose = (ev) => {
+      if (this.socket !== sock) return;
       this.socket = null;
-      this.predictor = null;
-      this.grid = null;
+      this.clearEpochState();
       this.myId = 0;
       this.online = 0;
       this.allOnline = 0;
@@ -428,18 +461,6 @@ export class OnlineClient {
       this.journey = emptyJourney();
       this.journeyRevision = 0;
       this.journeyEvent = { seq: 0, kind: 0, rx: 0, ry: 0 };
-      this.fastConfirmed = false;
-      this.worldStateReady = false;
-      this.serverClockMs = 0;
-      this.serverClockLocalMs = 0;
-      this.pending.length = 0;
-      this.inputBatchSize = BATCH_SIZE;
-      this.far.clear();
-      this.emotes.clear();
-      this.inviteWaiters.length = 0;
-      // Drop the previous epoch's remote entities so they cannot render
-      // (or interpolate against the next epoch's snapshots) while away.
-      this.interp.reset();
       this.handleClose(ev?.code ?? 0, ev?.reason ?? "");
     };
     sock.onError = () => { /* onClose follows; the reconnect lives there */ };
@@ -500,9 +521,7 @@ export class OnlineClient {
     this.reconnectAt = 0;
     this.socket?.close(1000, "client stop");
     this.socket = null;
-    this.predictor = null;
-    this.grid = null;
-    this.interp.reset();
+    this.clearEpochState();
   }
 
   private onMessage(data: string | Uint8Array): void {
@@ -560,6 +579,7 @@ export class OnlineClient {
     const kind = v.getUint8(0);
     if (kind === MSG.welcome) {
       const w = decodeWelcome(data);
+      this.clearEpochState();
       this.myId = w.you;
       this.grid = w.grid;
       this.predictor = new Predictor(w.seed);
@@ -578,9 +598,6 @@ export class OnlineClient {
       this.rejectReason = null;
       this.slowBackoffMs = SLOW_BACKOFF_START_MS;
       this.lastStateAt = this.now();
-      // Fresh epoch: the interpolation buffer must not hold the previous
-      // session's entities (push([]) alone would keep them until TTL).
-      this.interp.reset();
       return;
     }
     if (kind === MSG.welcome4) {
@@ -592,6 +609,7 @@ export class OnlineClient {
         return;
       }
       const welcome = decoded.welcome;
+      this.clearEpochState();
       this.myId = welcome.you;
       this.grid = null;
       this.predictor = new RealmPredictor(welcome);
@@ -616,7 +634,6 @@ export class OnlineClient {
       this.rejectReason = null;
       this.slowBackoffMs = SLOW_BACKOFF_START_MS;
       this.lastStateAt = this.now();
-      this.interp.reset();
       return;
     }
     if (kind === MSG.regionState) {
@@ -750,7 +767,15 @@ export class OnlineClient {
       this.rtt = Math.max(0, Math.round(this.now() - v.getUint32(5, true)));
       return;
     }
-    // BYE: the interpolator drops the entity on its TTL.
+    if (kind === MSG.bye) {
+      // BYE has one exact u32 id. The interpolator still lets the last pose
+      // age out smoothly, but identity-backed UI must forget the player now.
+      if (data.byteLength !== 5) return;
+      const id = v.getUint32(1, true);
+      this.roster.delete(id);
+      this.far.delete(id);
+      this.emotes.delete(id);
+    }
   }
 
   /** One host frame. `buttons` is the held button mask; `hz` is the host
