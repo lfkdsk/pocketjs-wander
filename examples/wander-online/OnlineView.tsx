@@ -53,6 +53,7 @@ import { SocialPanel } from "./SocialPanel.tsx";
 import {
   createSocialMenuState,
   normalizeSocialMenuState,
+  onlineNoticeTypography,
   reduceSocialMenu,
   resolveOnlineLocale,
   type SocialAction,
@@ -489,6 +490,10 @@ export function OnlineView() {
   const coopLabel = () => locale === "zh" ? han(0x534f, 0x4f5c) : "COOP";
   const coopReadiness = (snapshot: CoopErrandSnapshot): string =>
     `${coopLabel()} ${snapshot.presentReady}/${snapshot.required}`;
+  // The app intentionally bakes its large GB2312 fallback only into the
+  // compact 12 px slot. Chinese notices must use that slot; the 14 px Latin
+  // notice slot would otherwise render every Han character as a tofu box.
+  const noticeTypography = onlineNoticeTypography(locale);
 
   const showNotice = (text: string, ms = 3000) => {
     setNotice(text);
@@ -2155,7 +2160,7 @@ export function OnlineView() {
         <Show when={notice() !== "" && !emoteOpen()}>
           <View class="absolute flex-row justify-center" style={{ posType: 1, insetT: noticeRect(viewport().w, viewport().h, debugOn()).y0, insetL: 0, insetR: 0 }} debugName="online-notice">
             <View style={{ bgColor: "#0b1626", paddingL: 10, paddingR: 10, paddingT: 2, paddingB: 2 }}>
-              <Text class="text-sm" style={{ textColor: "#8ad0ff", lineHeight: 18, height: 18 }}>{notice()}</Text>
+              <Text class={noticeTypography.className} style={{ textColor: "#8ad0ff", lineHeight: noticeTypography.lineHeight, height: noticeTypography.lineHeight }}>{notice()}</Text>
             </View>
           </View>
         </Show>
@@ -2222,7 +2227,7 @@ export function OnlineView() {
         <Show when={notice() !== "" && !socialOpen()}>
           <View class="absolute flex-row justify-center" style={{ posType: 1, insetT: 8, insetL: 0, insetR: 0 }} debugName="creating-notice">
             <View style={{ bgColor: "#0b1626", paddingL: 10, paddingR: 10, paddingT: 2, paddingB: 2 }}>
-              <Text class="text-sm" style={{ textColor: "#8ad0ff", lineHeight: 18, height: 18 }}>{notice()}</Text>
+              <Text class={noticeTypography.className} style={{ textColor: "#8ad0ff", lineHeight: noticeTypography.lineHeight, height: noticeTypography.lineHeight }}>{notice()}</Text>
             </View>
           </View>
         </Show>

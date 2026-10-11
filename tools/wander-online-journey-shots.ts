@@ -8,7 +8,7 @@
 //   bun tools/wander-online-journey-shots.ts [outdir] [--nameplate-only]
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { bootWorld } from "../vendor/pocket-rpgkit/vendor/pocketjs/hosts/sim/sim.ts";
+import { bootWorld, treeHasText } from "../vendor/pocket-rpgkit/vendor/pocketjs/hosts/sim/sim.ts";
 import { appBundle } from "../tests/helpers/boot.ts";
 import { fakeOnlineSocketFactory, type FakeOnlineOpts } from "../tests/lib/fake-online-socket.ts";
 import { encodePNG } from "../vendor/pocket-rpgkit/vendor/pocketjs/tests/png.ts";
@@ -18,10 +18,19 @@ import { JOURNEY_EVENT } from "../examples/wander-online/net/journey.ts";
 import { regionHub } from "../examples/wander/world.ts";
 import { townErrand } from "../examples/wander/towns.ts";
 import type { OnlinePublished } from "../examples/wander-online/OnlineView.tsx";
+import type { PocketSocket } from "@pocketjs/framework/socket";
 
 const out = process.argv[2] ?? "./wander-online-journey-shots";
 const nameplateOnly = process.argv.includes("--nameplate-only");
 mkdirSync(out, { recursive: true });
+const coopReport: Array<{
+  scene: string;
+  viewport: string;
+  requiredText: readonly string[];
+  orangePixels: number;
+  bluePixels: number;
+  files: string[];
+}> = [];
 
 /** The journey view test's realm: region (4,0) is West Roserest, hub
  *  (438,42), notice board (439,43), OLD CAMP at (464,23). */
@@ -68,12 +77,13 @@ interface World {
   frame: (b: number) => void;
   tick: () => void;
   render: () => Uint8Array;
+  getTree: () => unknown;
   ticksPerFrame: number;
 }
 
 const state = (): OnlinePublished | undefined => (globalThis as { __onlineState?: OnlinePublished }).__onlineState;
 
-async function boot(opts: FakeOnlineOpts, width: number, height: number): Promise<World> {
+async function boot(opts: FakeOnlineOpts, width: number, height: number, locale: "en" | "zh" = "en"): Promise<World> {
   (globalThis as { __onlineState?: OnlinePublished }).__onlineState = undefined;
   return (await bootWorld(
     appBundle("wander-online"),
@@ -81,6 +91,7 @@ async function boot(opts: FakeOnlineOpts, width: number, height: number): Promis
     {
       __onlineUrl: "ws://fake/ws",
       __onlineAuth: { kind: "ticket", ticket: "t1" },
+      __onlineLocale: locale,
       __onlineSocketFactory: fakeOnlineSocketFactory(opts),
     },
     undefined,
@@ -150,6 +161,110 @@ async function shot3x(name: string, w: number, h: number, fb: Uint8Array): Promi
   console.log(`${name}.${w}x${h}-3x.png`);
 }
 
+function rgbCount(framebuffer: Uint8Array, red: number, green: number, blue: number): number {
+  let count = 0;
+  for (let i = 0; i < framebuffer.length; i += 4) {
+    if (framebuffer[i] === red && framebuffer[i + 1] === green && framebuffer[i + 2] === blue) count++;
+  }
+  return count;
+}
+
+async function coopShot(name: string, world: World, width: number, height: number, requiredText: readonly string[]): Promise<void> {
+  const tree = world.getTree();
+  for (const text of requiredText) {
+    if (!treeHasText(tree, text)) throw new Error(`${name} ${width}x${height}: missing text ${JSON.stringify(text)}`);
+  }
+  const framebuffer = world.render();
+  // Semantic colors prove both the cooperative errand line (orange) and the
+  // transient server notice (blue) painted over the live world.
+  const orangePixels = rgbCount(framebuffer, 0xff, 0xb3, 0x7a);
+  const bluePixels = rgbCount(framebuffer, 0x8a, 0xd0, 0xff);
+  if (orangePixels < 20) {
+    throw new Error(`${name} ${width}x${height}: cooperative errand line did not paint`);
+  }
+  if (bluePixels < 10) {
+    throw new Error(`${name} ${width}x${height}: cooperative notice did not paint`);
+  }
+  await shot(name, width, height, framebuffer);
+  coopReport.push({
+    scene: name,
+    viewport: `${width}x${height}`,
+    requiredText,
+    orangePixels,
+    bluePixels,
+    files: [`${name}.${width}x${height}.png`, `${name}.${width}x${height}-3x.png`],
+  });
+}
+
+function han(...points: number[]): string {
+  return String.fromCodePoint(...points);
+}
+
+async function coopScenes(width: number, height: number, locale: "en" | "zh"): Promise<void> {
+  let socket: PocketSocket | null = null;
+  const offer = { rx: 0, ry: 0 };
+  const errand = townErrand(SEED, offer.rx, offer.ry);
+  if (!errand || errand.kind !== "deliver") throw new Error("cooperative screenshot fixture lost its delivery");
+  const world = await boot(realm(errand.tx, errand.ty, {
+    name: locale === "zh" ? han(0x540c, 0x884c, 0x8005) : "Coop Scout",
+    journey: { errand: offer, cooperative: true },
+    onSocket: (value) => { socket = value; },
+  }), width, height, locale);
+  await enterRealm(world);
+  const pushText = (message: Record<string, unknown>): void => {
+    socket!.onMessage?.(JSON.stringify(message));
+  };
+  pushText({
+    type: "realmFeatures",
+    v: 1,
+    realm: "realm-test",
+    coopErrands: true,
+    discoveryLeaderboard: true,
+  });
+  pushText({
+    type: "coopErrand",
+    v: 1,
+    realm: "realm-test",
+    revision: 1,
+    status: "waiting",
+    cooperative: true,
+    ready: true,
+    savedReady: 1,
+    presentReady: 1,
+    required: 2,
+    expiresAt: GROWN_MS + 30_000,
+  });
+  pump(world, 2);
+  const label = locale === "zh" ? han(0x534f, 0x4f5c) : "COOP";
+  const waitingNotice = locale === "zh"
+    ? `${label} 1/2 · ${han(0x5c31, 0x7eea)}`
+    : "COOP 1/2 · READY";
+  if (!state()?.errand.includes(`${label} 1/2`)) throw new Error(`${locale} ${width}x${height}: cooperative HUD is missing`);
+  if (state()?.notice !== waitingNotice) throw new Error(`${locale} ${width}x${height}: waiting notice mismatch`);
+  await coopShot(`coop-${locale}-waiting`, world, width, height, [state()!.errand, waitingNotice]);
+
+  pushText({
+    type: "coopErrand",
+    v: 1,
+    realm: "realm-test",
+    revision: 2,
+    status: "completed",
+    cooperative: true,
+    ready: false,
+    savedReady: 0,
+    presentReady: 0,
+    required: 2,
+    expiresAt: 0,
+  });
+  pump(world, 2);
+  const completedNotice = locale === "zh"
+    ? `${label} · ${han(0x5b8c, 0x6210)}`
+    : "COOP · COMPLETE";
+  if (state()?.notice !== completedNotice) throw new Error(`${locale} ${width}x${height}: completion notice mismatch`);
+  await coopShot(`coop-${locale}-completed`, world, width, height, [state()!.errand, completedNotice]);
+  world.frame(0);
+}
+
 async function main() {
   const town = errandTown();
   const hub = regionHub(SEED, town.rx, town.ry);
@@ -216,7 +331,17 @@ async function main() {
       await shot("menu", w, h, world.render());
       world.frame(0);
     }
+
+    await coopScenes(w, h, "en");
+    await coopScenes(w, h, "zh");
   }
 }
 
 await main();
+if (!nameplateOnly) {
+  writeFileSync(join(out, "coop-report.json"), `${JSON.stringify({
+    verdict: "PASS",
+    scale: 3,
+    scenes: coopReport,
+  }, null, 2)}\n`);
+}

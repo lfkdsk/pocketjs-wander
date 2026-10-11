@@ -8,6 +8,7 @@ import {
   friendRealmCandidates,
   fitSocialText,
   measureSocialCells,
+  onlineNoticeTypography,
   reduceSocialMenu,
   resolveOnlineLocale,
   socialPanelLayout,
@@ -160,6 +161,8 @@ describe("wander-online social menu model", () => {
     expect(resolveOnlineLocale("ZH-hans", "en-US")).toBe("zh");
     expect(resolveOnlineLocale("en", "zh-CN")).toBe("en");
     expect(resolveOnlineLocale(undefined, "fr")).toBe("en");
+    expect(onlineNoticeTypography("zh")).toEqual({ className: "text-xs", lineHeight: 12 });
+    expect(onlineNoticeTypography("en")).toEqual({ className: "text-sm", lineHeight: 18 });
     expect(socialMenuRows(screen("home"), data)[2]).toMatchObject({ label: discovery, detail: firstFinders });
     const view = socialMenuView(screen("discovery"), data);
     expect(view.title).toBe("FIRST FINDERS");

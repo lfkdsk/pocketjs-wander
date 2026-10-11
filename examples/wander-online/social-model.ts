@@ -143,6 +143,15 @@ export function resolveOnlineLocale(injected?: unknown, navigatorLanguage?: unkn
   return /^zh(?:-|$)/i.test(value.trim()) ? "zh" : "en";
 }
 
+/** Keep localized notices on a font slot that actually carries their glyphs.
+ * The online app bakes the GB2312 fallback into text-xs only; English keeps
+ * the roomier historical text-sm treatment. */
+export function onlineNoticeTypography(locale: OnlineLocale): { className: "text-xs" | "text-sm"; lineHeight: 12 | 18 } {
+  return locale === "zh"
+    ? { className: "text-xs", lineHeight: 12 }
+    : { className: "text-sm", lineHeight: 18 };
+}
+
 /** Keep Han out of source literals: the app's font scan sees these values at
  * runtime in the same 12 px slot used by all social-panel rows. */
 function han(...points: number[]): string {

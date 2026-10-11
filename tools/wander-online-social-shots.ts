@@ -18,6 +18,13 @@ import { fakeOnlineSocketFactory, type FakeOnlineOpts } from "../tests/lib/fake-
 
 const out = process.argv[2] ?? "./wander-online-social-shots";
 mkdirSync(out, { recursive: true });
+const leaderboardReport: Array<{
+  scene: string;
+  viewport: string;
+  requiredText: readonly string[];
+  selectedRowPixels: number;
+  files: string[];
+}> = [];
 
 const SEED = 1593842689;
 const HUB = { x: 438, y: 42 };
@@ -92,7 +99,8 @@ function capture(world: World, name: string, width: number, height: number, requ
   const framebuffer = world.render();
   // The selected-row fill (#354968) is a semantic proof that the panel and
   // its controller cursor painted, not merely the underlying world.
-  if (rgbCount(framebuffer, 0x35, 0x49, 0x68) < 100) {
+  const selectedRowPixels = rgbCount(framebuffer, 0x35, 0x49, 0x68);
+  if (selectedRowPixels < 100) {
     throw new Error(`${name} ${width}x${height}: selected social row did not paint`);
   }
   writeFileSync(join(out, `${name}.${width}x${height}.png`), encodePNG(framebuffer, width, height));
@@ -100,6 +108,15 @@ function capture(world: World, name: string, width: number, height: number, requ
     join(out, `${name}.${width}x${height}-3x.png`),
     encodePNG(scale3(framebuffer, width, height), width * 3, height * 3),
   );
+  if (name.startsWith("leaderboard-")) {
+    leaderboardReport.push({
+      scene: name,
+      viewport: `${width}x${height}`,
+      requiredText,
+      selectedRowPixels,
+      files: [`${name}.${width}x${height}.png`, `${name}.${width}x${height}-3x.png`],
+    });
+  }
   console.log(`wrote ${name}.${width}x${height}.png (+3x)`);
 }
 
@@ -198,6 +215,101 @@ async function scene(width: number, height: number): Promise<void> {
   world.frame(0);
 }
 
+function han(...points: number[]): string {
+  return String.fromCodePoint(...points);
+}
+
+async function leaderboardScene(width: number, height: number, locale: "en" | "zh"): Promise<void> {
+  let socket: PocketSocket | null = null;
+  const sent: Record<string, unknown>[] = [];
+  const opts: FakeOnlineOpts = {
+    mode: "welcome4",
+    name: locale === "zh" ? han(0x5c71, 0x6d77, 0x5ba2) : "Trail Scout",
+    look: 40,
+    ticket: `leaderboard-${locale}`,
+    realm: { tx: HUB.x, ty: HUB.y, seed: SEED, epoch: 5, id: "plaza-1" },
+    serverTimeMs: GROWN_MS,
+    heartbeat: true,
+    sent,
+    onSocket: (value) => { socket = value; },
+  };
+  (globalThis as { __onlineState?: OnlinePublished }).__onlineState = undefined;
+  const world = (await bootWorld(
+    appBundle("wander-online"),
+    60,
+    {
+      __onlineUrl: "ws://fake/ws",
+      __onlineAuth: { kind: "ticket", ticket: opts.ticket },
+      __onlineLocale: locale,
+      __onlineSocketFactory: fakeOnlineSocketFactory(opts),
+    },
+    undefined,
+    { width, height },
+  )) as unknown as World;
+  const pushText = (message: Record<string, unknown>): void => {
+    socket!.onMessage?.(JSON.stringify(message));
+  };
+  const leaderboard = (revision: number, listed: boolean): Record<string, unknown> => ({
+    type: "discoveryLeaderboard",
+    v: 1,
+    realm: "plaza-1",
+    revision,
+    listed,
+    mine: { rank: 3, firsts: 7 },
+    leaders: [
+      { rank: 1, name: locale === "zh" ? han(0x661f, 0x6cb3, 0x65c5, 0x4eba) : "River Sage", firsts: 12 },
+      { rank: 2, name: locale === "zh" ? han(0x677e, 0x98ce) : "Moss Finch", firsts: 9 },
+    ],
+  });
+
+  pump(world, 5);
+  await waitFor(world, () => state()?.status === "joined", `leaderboard ${locale} joined realm`);
+  pushText({
+    type: "realmFeatures",
+    v: 1,
+    realm: "plaza-1",
+    coopErrands: true,
+    discoveryLeaderboard: true,
+  });
+  pushText(leaderboard(1, false));
+  pump(world, 2);
+
+  press(world, BTN.SELECT);
+  press(world, BTN.DOWN);
+  if (!state()?.social) throw new Error(`${locale} ${width}x${height}: social panel did not open`);
+  press(world, BTN.DOWN);
+  press(world, BTN.DOWN);
+  press(world, BTN.CIRCLE);
+  if (state()?.socialScreen !== "discovery") throw new Error(`${locale} ${width}x${height}: discovery route did not open`);
+
+  const mine = locale === "zh" ? `${han(0x4f60)} · #3` : "YOU · #3";
+  const mineScore = locale === "zh" ? `7 ${han(0x6b21)}` : "7 FIRSTS";
+  const leader = locale === "zh" ? `#1 ${han(0x661f, 0x6cb3, 0x65c5, 0x4eba)}` : "#1 River Sage";
+  capture(world, `leaderboard-${locale}-private`, width, height, ["FIRST FINDERS", mine, mineScore, leader, "TRIANGLE LIST · CROSS BACK"]);
+
+  press(world, BTN.TRIANGLE);
+  const optIn = sent.findLast((message) => message.type === "leaderboardSet");
+  if (optIn?.listed !== true) throw new Error(`${locale} ${width}x${height}: opt-in command was not sent`);
+  pushText(leaderboard(2, true));
+  pump(world, 2);
+  capture(world, `leaderboard-${locale}-listed`, width, height, ["FIRST FINDERS", mine, mineScore, leader, "TRIANGLE UNLIST · CROSS BACK"]);
+
+  press(world, BTN.TRIANGLE);
+  const optOut = sent.findLast((message) => message.type === "leaderboardSet");
+  if (optOut?.listed !== false) throw new Error(`${locale} ${width}x${height}: opt-out command was not sent`);
+  pushText(leaderboard(3, false));
+  pump(world, 2);
+  capture(world, `leaderboard-${locale}-opted-out`, width, height, ["FIRST FINDERS", mine, mineScore, leader, "TRIANGLE LIST · CROSS BACK"]);
+  world.frame(0);
+}
+
 for (const [width, height] of [[480, 272], [960, 544]] as const) {
   await scene(width, height);
+  await leaderboardScene(width, height, "en");
+  await leaderboardScene(width, height, "zh");
 }
+writeFileSync(join(out, "leaderboard-report.json"), `${JSON.stringify({
+  verdict: "PASS",
+  scale: 3,
+  scenes: leaderboardReport,
+}, null, 2)}\n`);
