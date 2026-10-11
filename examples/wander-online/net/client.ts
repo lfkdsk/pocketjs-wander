@@ -76,6 +76,9 @@ const SLOW_BACKOFF_MAX_MS = 60_000;
 /** Private-use code for a client that cannot accept the server's WELCOME4.
  *  WebSocket clients may initiate only 1000 or 3000..4999 closes. */
 export const UPGRADE_REQUIRED_CLOSE_CODE = 4000;
+/** Private-use code for discarding prediction state that cannot be rebased.
+ *  The echoed close follows normal reconnect policy. */
+export const PREDICTION_REBASE_CLOSE_CODE = 4001;
 /** D-pad bits the arena understands. */
 const DPAD = BTN.up | BTN.right | BTN.down | BTN.left;
 
@@ -726,7 +729,7 @@ export class OnlineClient {
           else if (result === "rebase-required") {
             this.frozen = true;
             this.status = "frozen";
-            this.socket?.close(1012, "prediction rebase");
+            this.socket?.close(PREDICTION_REBASE_CLOSE_CODE, "prediction rebase");
             return;
           }
         }

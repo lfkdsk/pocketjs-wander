@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { SocketError, type PocketSocket, type SocketCloseEvent, type SocketReadyState } from "@pocketjs/framework/socket";
 import {
   OnlineClient,
+  PREDICTION_REBASE_CLOSE_CODE,
   UPGRADE_REQUIRED_CLOSE_CODE,
   realmEndpoint,
   type SocketFactory,
@@ -278,6 +279,47 @@ describe("wander-online client core", () => {
 
     client.stop();
     refusedClient.stop();
+  });
+
+  test("a prediction rebase uses a private close and reconnects into the new epoch", () => {
+    const first = socketHarness(), second = socketHarness();
+    const factories = [first.factory, second.factory];
+    let connectionCount = 0;
+    let now = 1_000;
+    const client = new OnlineClient("ws://unit.test/ws", {
+      now: () => now,
+      socketFactory: (url, opts) => factories[connectionCount++]!(url, opts),
+    });
+    first.open();
+    readyRealm(first, realmWelcome(19));
+    expect(client.status).toBe("joined");
+
+    // A snapshot from another epoch cannot be reconciled against this
+    // predictor. Closing must itself be browser-valid so onClose can clear
+    // the frozen client and schedule the normal reconnect.
+    expect(() => first.message(encodeState4(
+      1_100,
+      0,
+      20,
+      [{ ...entity(7), tx: -700, ty: 800 }],
+    ))).not.toThrow();
+    expect(first.closeRequests).toEqual([{
+      code: PREDICTION_REBASE_CLOSE_CODE,
+      reason: "prediction rebase",
+    }]);
+    expect(client.hud()).toMatchObject({ status: "reconnecting", retryIn: 1_000 });
+
+    now += 999;
+    client.onFrame(0, 60, 0);
+    expect(connectionCount).toBe(1);
+    now += 1;
+    client.onFrame(0, 60, 0);
+    expect(connectionCount).toBe(2);
+    second.open();
+    readyRealm(second, realmWelcome(20));
+    expect(client.status).toBe("joined");
+    expect(client.epoch).toBe(20);
+    client.stop();
   });
 
   test("v4 route, JOIN capability and epoch-aware state are explicit", () => {
