@@ -45,7 +45,7 @@ the same words.
 | CROSS | near a town hub: accept the town's errand, or deliver the one it targets; elsewhere: page the travel log |
 | TRIANGLE | request fast mode; the HUD says `FAST` once a snapshot confirms it |
 | R | the emote picker: LEFT/RIGHT choose one of five presets, CIRCLE sends it, CROSS or R closes |
-| SELECT | the menu: link a device, delete the profile, TRIANGLE toggles debug, START toggles auto-walk, L mints an invite to this world, R leaves for any world |
+| SELECT | open/close the menu: CIRCLE links a device, SQUARE twice deletes all account data, TRIANGLE toggles debug, START toggles auto-walk, L mints an invite to this world, R leaves for any world, DOWN opens friends/worlds/my data |
 
 Residents of the nearby towns walk their routes on the realm clock (a pure
 function of the plan, the region's discovery time and the server time, so
@@ -89,6 +89,63 @@ realm, three per player per minute, and are never consumed: one link can
 bring several friends. `shared/invite.ts` holds the rule; the local server
 keeps codes in memory, the hosted one in the realm's SQLite.
 
+### Friends, worlds and account data
+
+The hosted service adds a low-frequency, versioned JSON social control plane.
+The controller UI is deliberately separate from movement: press SELECT and
+then DOWN to open it, use the d-pad and CIRCLE to choose a row, and use CROSS
+to go back. All dialog, emote, menu and social-panel input is consumed before
+the gameplay client sees that frame. The loopback Bun server has no accounts
+or persistence, so it can display the panel shell but does not provide these
+hosted social records.
+
+- **Friends.** The Friends page lists incoming requests, mutual friends,
+  outgoing requests and players currently in the same realm. CIRCLE accepts
+  an incoming request, joins the visible realm of an online friend, or sends
+  a request to the selected same-realm player. SQUARE declines or cancels a
+  request, or removes a mutual friend. A same-realm request carries only that
+  connection's temporary player id; the Room resolves it to the account, while
+  accept/remove actions use the stable account id from the authenticated
+  snapshot. A friendship exists only after the recipient accepts it. Redeeming
+  an invite creates the issuer's pending request for the arriving player; it
+  never accepts on either player's behalf.
+- **Presence privacy.** Only mutual friends receive presence. With sharing on,
+  they see `online` plus the exact realm or `offline`; with sharing off they see
+  `hidden` and no realm. Other accounts cannot query either value. On My Data,
+  TRIANGLE toggles this setting.
+- **Worlds.** The Worlds page reports `empty`, `quiet`, `lively`, `busy` or
+  `full`, never an exact player count. CIRCLE on a joinable row reconnects to
+  that exact realm instead of using the default fullest-with-space choice. A
+  stale choice or friend join that has filled in the meantime is refused as
+  `WORLD FULL`; the client keeps the exact realm pin and retries slowly until
+  the player uses the old menu's R action to choose any world.
+- **My Data.** This page shows the profile, friend/request totals, visibility
+  and each known realm's discovery/helped journey summary. SQUARE opens a
+  destructive confirmation and a second SQUARE requests complete deletion.
+  The server first fences the account, removes social/session/link data and
+  purges every known/configured realm, then confirms success; only then does
+  the client clear its ticket and return to sign-in. A partial failure leaves
+  the player signed in so the idempotent deletion can be retried.
+
+The social panel has bounded 480x272 and 960x544 layouts. After building the
+bundle and simulator core, capture Friends, Worlds, My Data and delete-confirm
+screens at both sizes, together with nearest-neighbour 3x review copies:
+
+```sh
+bun run build:wasm
+bun run build
+bun run shots:social -- ./wander-online-social-shots
+```
+
+For the real browser controls, build the web app and run the DPR 3 phone
+verifier. It exercises the social-menu touch path in 390x844 portrait and
+844x390 landscape and retains its screenshots and JSON layout report:
+
+```sh
+bun run web
+bun tools/wander-online-mobile-verify.ts --out dist/wander-online-mobile
+```
+
 Players of the same realm outside the AOI appear once a second as a
 **far marker**: a square at the screen edge in their compass octant with
 the name and a band word (`near` within 64 tiles, `far` within 256,
@@ -105,7 +162,7 @@ whose AOI holds the sender (sender included), and each client draws the
 glyph above that walker's name tag for five seconds. Nothing is stored:
 a player who arrives later never sees it. There is no free-text message
 of any kind; the only things a player can send are inputs, these
-one-byte commands and the fixed auth/invite requests.
+one-byte commands and the fixed auth, invite and social requests.
 
 ### Names and the name font
 
@@ -274,6 +331,9 @@ migrate or reinterpret a legacy room.
 | [`net/far.ts`](net/far.ts) | octant and distance band of far players, the only thing the band leaks |
 | [`net/emote.ts`](net/emote.ts) | the five preset emotes and their limits |
 | [`shared/invite.ts`](shared/invite.ts) | invite tokens, lifetimes and the realm pin query |
+| [`shared/social.ts`](shared/social.ts) | bounded social snapshots, world choices and self-data parsers |
+| [`social-model.ts`](social-model.ts) | controller navigation, pagination and typed social actions |
+| [`SocialPanel.tsx`](SocialPanel.tsx) | the responsive friends/worlds/my-data overlay |
 | [`net/client.ts`](net/client.ts) | the PocketJS net client (socket, reconnect, freeze, rejection policy) |
 | [`server/area.ts`](server/area.ts) | the authoritative arena (input queues, AOI) |
 | [`server/realm-area.ts`](server/realm-area.ts) | v4 authoritative realm (streaming budget, sparse AOI) |
@@ -318,7 +378,13 @@ migrate or reinterpret a legacy room.
   and emotes (AOI-only, once a second, never replayed).
 - `tests/wander-online-meet-view.test.ts` — the same features on screen:
   far markers with a CJK name at both viewport sizes, the emote picker and
-  bubbles, the invite notice and page events, the realm pin at boot.
+  bubbles, the invite notice and page events, the realm pin at boot, modal
+  input capture, social wire identities and exact-realm selection.
+- `tests/wander-online-social-panel.test.ts` — friend/world/self-data rows,
+  stable-versus-temporary identity actions, destructive confirmation,
+  bounded pagination and 480x272/960x544 geometry.
+- `tests/wander-online-auth-sim.test.ts` — account entry, persistence and
+  complete-delete failure/success behavior through the rendered client.
 - `tests/wander-online-shared.test.ts` — the shared hosted-server logic
   under a fake clock: Origin whitelist, sliding-window rate limit, room
   picker, IP counter, idle tracker, billing conversion, month ledger +

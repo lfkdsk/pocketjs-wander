@@ -47,6 +47,15 @@ bilingual Sign out control uses the same credential-clearing path as the game,
 player names stay above world art, and the HUD shows both current-room and
 whole-service presence as `ROOM n · ALL m`.
 
+The hosted game also has a controller-first social panel: press SELECT, then
+DOWN to manage mutual friend requests, follow a visible friend into their
+exact realm, choose a world by its coarse population band, review profile and
+per-realm journey summaries, change presence privacy, or delete all account
+data and sign out. Invite redemption creates a pending request rather than an
+automatic friendship, and hidden friends reveal neither online state nor
+realm. The detailed controls and screenshot verification commands are in the
+[Wander Online guide](examples/wander-online/README.md#friends-worlds-and-account-data).
+
 For local development, start the loopback-only Bun server with its explicit
 guest switch, then launch clients with matching guest credentials:
 
