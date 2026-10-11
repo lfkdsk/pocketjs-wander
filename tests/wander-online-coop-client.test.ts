@@ -227,7 +227,7 @@ simDescribe("wander-online realm feature client wiring", () => {
         __onlineUrl: "ws://fake/ws",
         __onlineAuth: { kind: "ticket", ticket: "t1" },
         __onlineSocketFactory: factory,
-        __onlineLocale: "zh-CN",
+        __pocketPageLang: "zh",
       },
       undefined,
       { width: 480, height: 272 },
@@ -249,7 +249,7 @@ simDescribe("wander-online realm feature client wiring", () => {
     expect(sent.some((message) => message.type === "leaderboardGet")).toBe(false);
 
     // A valid capability received while the panel is open immediately asks
-    // for its private/public snapshot, and uses the injected Chinese locale.
+    // for its private/public snapshot, and uses the web page's Chinese locale.
     push({ type: "realmFeatures", v: 1, realm: "realm-test", coopErrands: true, discoveryLeaderboard: true });
     expect(sent.filter((message) => message.type === "leaderboardGet")).toEqual([
       { type: "leaderboardGet", v: 1 },

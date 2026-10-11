@@ -232,6 +232,9 @@ declare global {
   /** Test/demo hook for the small bilingual social/co-op surface. */
   // eslint-disable-next-line no-var
   var __onlineLocale: string | undefined;
+  /** Active language published by the generated web player's switcher. */
+  // eslint-disable-next-line no-var
+  var __pocketPageLang: string | undefined;
 }
 
 export interface OnlinePublished {
@@ -389,13 +392,14 @@ export function OnlineView() {
     __onlineRealm?: string;
     __onlineAutoInvite?: boolean;
     __onlineLocale?: string;
+    __pocketPageLang?: string;
     __pocketAuth?: { token?: string };
     __pocketInvite?: string;
     __pocketWeb?: boolean;
   };
   const url = resolveUrl(g.__onlineUrl);
   const locale = resolveOnlineLocale(
-    g.__onlineLocale,
+    g.__onlineLocale ?? g.__pocketPageLang,
     (globalThis as { navigator?: { language?: unknown } }).navigator?.language,
   );
   // The realm to ask for: an invite token (from the page's URL fragment or
