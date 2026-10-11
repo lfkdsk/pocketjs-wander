@@ -7,8 +7,8 @@
 //
 // The verifier starts loopback web, GitHub-stub and game servers. Each phone
 // orientation signs a fresh account in through the real OAuth callback,
-// creates its character through the page text box, opens the emote picker,
-// mints/copies/closes an invite, and signs out. Landscape additionally uses
+// creates its character through the page text box, opens the social panel and
+// emote picker, mints/copies/closes an invite, and signs out. Landscape additionally uses
 // immersive play and proves the floating controls clear the game's status,
 // log, errand and help HUD rectangles. PNGs and report.json are retained for
 // human inspection.
@@ -58,6 +58,8 @@ interface OnlineState {
   status: string;
   screen: string;
   emoteBar: boolean;
+  social: boolean;
+  socialScreen: string;
   invite: string;
   myId: number;
   roster: Record<string, { name: string; look: number }>;
@@ -355,7 +357,7 @@ async function main(): Promise<void> {
     await waitFor<boolean>("Sign out shown", '!document.getElementById("auth-signout").hidden', Boolean);
 
     const buttonNames = await evaluate<string[]>(`[...document.querySelectorAll("[data-button]")].map((b) => b.dataset.button)`);
-    for (const needed of ["RTRIGGER", "SELECT", "LTRIGGER", "CIRCLE", "CROSS"]) {
+    for (const needed of ["DOWN", "RTRIGGER", "SELECT", "LTRIGGER", "CIRCLE", "CROSS"]) {
       check(`${phase}: ${needed} has a touch button`, buttonNames.includes(needed), `${buttonNames.length} rendered game buttons`);
     }
 
@@ -373,6 +375,18 @@ async function main(): Promise<void> {
       check(`${phase}: all game buttons fit the first viewport`, firstViewport, `${buttonNames.length} buttons reachable without scrolling`);
     }
     const controls = await layoutReport();
+
+    // Open the in-game menu and choose its social row with real touch input.
+    // The loopback server intentionally ignores the hosted-only JSON queries;
+    // the bounded home panel must still be usable in both orientations.
+    await touch('[data-button="SELECT"]', 140);
+    await touch('[data-button="DOWN"]', 140);
+    await waitFor<boolean>("social panel", "globalThis.__onlineState?.social === true", Boolean);
+    const socialScreen = await evaluate<string>('globalThis.__onlineState?.socialScreen || ""');
+    check(`${phase}: social panel opens at home`, socialScreen === "home", socialScreen);
+    const socialShot = await screenshot(`${label}-${width}x${height}-social`);
+    await touch('[data-button="CROSS"]', 140);
+    await waitFor<boolean>("social panel closed", "globalThis.__onlineState?.social === false", Boolean);
 
     await touch('[data-button="RTRIGGER"]', 140);
     await waitFor<boolean>("emote picker", "globalThis.__onlineState?.emoteBar === true", Boolean);
@@ -421,7 +435,7 @@ async function main(): Promise<void> {
       inviteTargets,
       invite,
       controls,
-      screenshots: [nameShot, emoteShot, inviteShot, signedOutShot].map((path) => path.split("/").at(-1)),
+      screenshots: [nameShot, socialShot, emoteShot, inviteShot, signedOutShot].map((path) => path.split("/").at(-1)),
     };
   };
 

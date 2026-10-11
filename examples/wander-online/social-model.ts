@@ -125,7 +125,7 @@ const SCREEN_TITLES: Record<SocialScreen, string> = {
   friends: "FRIENDS",
   worlds: "WORLDS",
   "my-data": "MY DATA",
-  "delete-confirm": "DELETE PROFILE?",
+  "delete-confirm": "DELETE ALL DATA?",
 };
 
 /** One display cell for ASCII, two for non-ASCII. This deliberately
@@ -335,7 +335,7 @@ function selfRows(summary: SelfDataSummary | null): SocialMenuRow[] {
 
 function deleteRows(): SocialMenuRow[] {
   return [
-    row("delete-warning", "warning", "THIS ERASES PROFILE + JOURNEYS", "", "danger"),
+    row("delete-warning", "warning", "PROFILE + FRIENDS + JOURNEYS", "", "danger"),
     row("delete-again", "warning", "PRESS DELETE AGAIN", "CANNOT UNDO", "danger"),
   ];
 }

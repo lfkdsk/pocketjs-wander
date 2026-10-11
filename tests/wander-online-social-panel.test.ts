@@ -121,6 +121,8 @@ describe("wander-online social menu model", () => {
 
     const armed = reduceSocialMenu(screen("my-data"), "delete", data);
     expect(armed).toEqual({ state: screen("delete-confirm"), action: null });
+    expect(socialMenuView(armed.state, data).title).toBe("DELETE ALL DATA?");
+    expect(socialMenuRows(armed.state, data)[0]?.label).toBe("PROFILE + FRIENDS + JOURNEYS");
     expect(reduceSocialMenu(armed.state, "confirm", data).action).toBeNull();
     expect(reduceSocialMenu(armed.state, "back", data)).toEqual({ state: screen("my-data"), action: null });
     expect(reduceSocialMenu(armed.state, "delete", data)).toEqual({
