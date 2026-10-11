@@ -584,6 +584,7 @@ describe("authoritative arena rules", () => {
   test("two distinct ready identities complete once at the authoritative plaza", () => {
     const clock = { now: 2_500_000 };
     const writes: { id: number; ready: CoopReady | null }[] = [];
+    const contributions: Array<{ playerId: number; nowMs: number; fact: unknown }> = [];
     let improvements = 0;
     const arena = new RealmArena({
       seed: SEED,
@@ -592,6 +593,7 @@ describe("authoritative arena rules", () => {
       hooks: {
         persistCoopReady: (player, ready) => writes.push({ id: player.id, ready: ready ? { ...ready } : null }),
         improveRegion: () => { improvements++; return null; },
+        contributeDaily: (fact, nowMs, player) => contributions.push({ playerId: player.id, nowMs, fact }),
       },
     });
     const origin = regionHub(SEED, 0, 0);
@@ -645,6 +647,24 @@ describe("authoritative arena rules", () => {
     expect(b.event.kind).toBe(JOURNEY_EVENT.coopDelivered);
     expect(writes.map((w) => w.ready === null)).toEqual([false, false, true, true]);
     expect(improvements).toBe(1);
+    expect(contributions).toEqual([
+      {
+        playerId: a.id,
+        nowMs: clock.now,
+        fact: {
+          kind: "delivery", offerRx: 0, offerRy: 0,
+          targetRx: errand.trx, targetRy: errand.try,
+        },
+      },
+      {
+        playerId: b.id,
+        nowMs: clock.now,
+        fact: {
+          kind: "delivery", offerRx: 0, offerRy: 0,
+          targetRx: errand.trx, targetRy: errand.try,
+        },
+      },
+    ]);
     // Replayed and crossed legacy commands see completed journeys and cannot
     // create another shared improvement.
     expect(arena.applyCommand(b, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now)).toBeNull();
@@ -670,8 +690,12 @@ describe("authoritative arena rules", () => {
     for (const p of [a, b]) {
       arena.applyCommand(p, { kind: COMMAND.acceptCoopErrand, rx: 0, ry: 0, extra: 0 }, clock.now);
       teleport(p, errand.tx, errand.ty);
-      expect(arena.applyCommand(p, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now)).toBe(JOURNEY_EVENT.coopWaiting);
     }
+    expect(arena.applyCommand(a, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now))
+      .toBe(JOURNEY_EVENT.coopWaiting);
+    expect(arena.applyCommand(b, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now),
+      "a sibling replay cannot mint another identity deadline").toBeNull();
+    expect(b.coopReady).toEqual(a.coopReady);
     expect(a.journey.errand).not.toBeNull();
     expect(b.journey.errand).not.toBeNull();
     expect(arena.coopStatusFor(a, clock.now).presentReady).toBe(1);
@@ -684,7 +708,7 @@ describe("authoritative arena rules", () => {
     expect(a.journey.errand, "the earliest ready session is selected").toBeNull();
     expect(c.journey.errand).toBeNull();
     expect(b.journey.errand, "only the selected two settle").not.toBeNull();
-    expect(b.coopReady).not.toBeNull();
+    expect(b.coopReady, "settling the identity's one READY clears every sibling").toBeNull();
     expect(improvements).toBe(1);
   });
 
@@ -732,9 +756,12 @@ describe("authoritative arena rules", () => {
     const hub = regionHub(SEED, origin.rx, origin.ry);
     const errand = townErrand(SEED, origin.rx, origin.ry)!;
     const p = arena.add("Cancel", 1, 0, { tx: hub.x, ty: hub.y }, { coopIdentity: "cancel-account" });
-    expect(arena.applyCommand(p, { kind: COMMAND.acceptCoopErrand, ...origin, extra: 0 }, clock.now))
-      .toBe(JOURNEY_EVENT.accepted);
-    teleport(p, errand.tx, errand.ty);
+    const other = arena.add("Cancel 2", 2, 0, { tx: hub.x, ty: hub.y }, { coopIdentity: "cancel-account" });
+    for (const sibling of [p, other]) {
+      expect(arena.applyCommand(sibling, { kind: COMMAND.acceptCoopErrand, ...origin, extra: 0 }, clock.now))
+        .toBe(JOURNEY_EVENT.accepted);
+      teleport(sibling, errand.tx, errand.ty);
+    }
     expect(arena.applyCommand(p, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now))
       .toBe(JOURNEY_EVENT.coopWaiting);
     const firstDeadline = p.coopReady!.expiresAtMs;
@@ -742,16 +769,12 @@ describe("authoritative arena rules", () => {
     expect(arena.applyCommand(p, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now))
       .toBeNull();
     expect(p.coopReady!.expiresAtMs, "replay cannot extend READY or send another friend hint").toBe(firstDeadline);
-    const other = arena.add("Cancel 2", 2, 0, { tx: hub.x, ty: hub.y }, { coopIdentity: "cancel-account" });
-    expect(arena.applyCommand(other, { kind: COMMAND.acceptCoopErrand, ...origin, extra: 0 }, clock.now))
-      .toBe(JOURNEY_EVENT.accepted);
-    teleport(other, errand.tx, errand.ty);
-    expect(arena.applyCommand(other, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now))
-      .toBe(JOURNEY_EVENT.coopWaiting);
+    expect(other.coopReady, "READY is shared with an already-connected sibling").toEqual(p.coopReady);
+    expect(arena.coopStatusFor(other, clock.now)).toMatchObject({ savedReady: true, presentReady: 1 });
     expect(arena.coopWaitingCountForOffer(origin.rx, origin.ry, clock.now)).toBe(1);
     arena.drainCoopStatuses(clock.now);
 
-    expect(arena.applyCommand(p, { kind: COMMAND.cancelCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now)).toBeNull();
+    expect(arena.applyCommand(other, { kind: COMMAND.cancelCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now)).toBeNull();
     expect(p.coopReady).toBeNull();
     expect(other.coopReady, "all live sessions of the persisted incarnation are cleared").toBeNull();
     expect(p.journey.errand).toEqual(origin);
@@ -987,6 +1010,37 @@ describe("authoritative arena rules", () => {
     expect(arena.landmarkVisible(later, lm.cx, lm.cy, clock.now)).toBe(false);
     expect(arena.landmarkVisible(later, lm.cx, lm.cy, clock.now + 40 * GROWTH_TICK_FRAMES * 1000 / 60 + 1)).toBe(true);
     expect(regionOf(lm.cx)).toBe(4);
+  });
+
+  test("only the authoritative landmark election emits a daily discovery fact", () => {
+    const lm = purePlacedLandmark(SEED, 4, 0)!;
+    const clock = { now: 6_500_000 };
+    const localFacts: unknown[] = [];
+    const local = new RealmArena({
+      seed: SEED,
+      hz: 60,
+      now: () => clock.now,
+      hooks: { contributeDaily: (fact) => localFacts.push(fact) },
+    });
+    local.add("Winner", 1, 0, { tx: lm.cx, ty: lm.cy });
+    expect(localFacts).toEqual([{ kind: "landmark", landmarkRx: 4, landmarkRy: 0 }]);
+
+    const hostedFacts: unknown[] = [];
+    const hosted = new RealmArena({
+      seed: SEED,
+      hz: 60,
+      now: () => clock.now,
+      hooks: {
+        landmarkFirst: (rx, ry) => ({
+          rx, ry, discoveredAtMs: clock.now, improvementLevel: 0,
+          revision: 100, landmarkFirstName: "Stored winner",
+        }),
+        contributeDaily: (fact) => hostedFacts.push(fact),
+      },
+    });
+    hosted.add("CAS loser", 2, 0, { tx: lm.cx, ty: lm.cy });
+    expect(hostedFacts, "the storage hook must credit only its actual CAS winner").toEqual([]);
+    expect(hosted.world.regionState(4, 0)?.landmarkFirstName).toBe("Stored winner");
   });
 
   test("restored private state survives admission and the snapshots carry it", () => {

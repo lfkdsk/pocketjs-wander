@@ -158,6 +158,23 @@ export interface RealmPlayerRestore {
   coopReady?: CoopReady | null;
 }
 
+/** An authoritative gameplay fact before a storage-backed host attaches its
+ * realm and captured UTC day. Keeping wall-clock attribution in the host
+ * makes a contribution at midnight belong to exactly one atomic store call. */
+export type RealmDailyContribution =
+  | {
+    kind: "delivery";
+    offerRx: number;
+    offerRy: number;
+    targetRx: number;
+    targetRy: number;
+  }
+  | {
+    kind: "landmark";
+    landmarkRx: number;
+    landmarkRy: number;
+  };
+
 /** Storage-backed hosts intercept the shared facts a journey can create and
  *  the private cooperative readiness it can change. Region hooks return the
  *  authoritative row after compare-and-set (or null to refuse); readiness
@@ -167,6 +184,9 @@ export interface RealmArenaHooks {
   landmarkFirst?(rx: number, ry: number, player: RealmPlayer, nowMs: number): RealmRegionState | null;
   /** Synchronous write-through for every readiness write or clear. */
   persistCoopReady?(player: RealmPlayer, ready: CoopReady | null): void;
+  /** A fact already accepted by the authoritative reducer. Hosts may use it
+   *  to advance a realm-owned aggregate; clients never submit goal credit. */
+  contributeDaily?(contribution: RealmDailyContribution, nowMs: number, player: RealmPlayer): void;
 }
 
 export interface RealmArenaConfig {
@@ -406,7 +426,16 @@ export class RealmArena {
     const coopIdentity = restore?.coopIdentity !== undefined
       ? checkedCoopIdentity(restore.coopIdentity)
       : spawnKey.length >= 1 && spawnKey.length <= COOP_IDENTITY_MAX ? spawnKey : `player:${id}`;
-    const restoredCoopReady = restore?.coopReady ? checkedCoopReady(restore.coopReady) : null;
+    // READY belongs to the authenticated identity rather than a socket. A
+    // storage-backed admission normally restores it from the same row; the
+    // sibling fallback also keeps the in-memory loopback model truthful.
+    const siblingCoopReady = restore?.coopIdentity !== undefined
+      ? [...this.players.values()]
+        .find((other) => other.coopIdentity === coopIdentity && other.coopReady)?.coopReady ?? null
+      : null;
+    const restoredCoopReady = restore?.coopReady
+      ? checkedCoopReady(restore.coopReady)
+      : siblingCoopReady ? checkedCoopReady(siblingCoopReady) : null;
     const player: RealmPlayer = {
       id,
       name,
@@ -556,6 +585,20 @@ export class RealmArena {
     return ready && ready.expiresAtMs > nowMs && this.coopReadyMatchesJourney(p, ready) ? ready : null;
   }
 
+  /** One incarnation has one durable READY row even when it owns two live
+   * sockets. Every sibling therefore observes the same claim and may cancel
+   * it without having sent READY itself. */
+  private identityCoopReady(p: RealmPlayer, nowMs: number): CoopReady | null {
+    const own = this.savedCoopReady(p, nowMs);
+    if (own) return own;
+    for (const other of this.players.values()) {
+      if (other === p || other.coopIdentity !== p.coopIdentity) continue;
+      const ready = this.savedCoopReady(other, nowMs);
+      if (ready && this.coopReadyMatchesJourney(p, ready)) return ready;
+    }
+    return null;
+  }
+
   private presentForCoop(p: RealmPlayer, ready: CoopReady, nowMs: number): boolean {
     if (this.players.get(p.id) !== p || !this.savedCoopReady(p, nowMs)) return false;
     const here = this.playerRegion(p);
@@ -566,11 +609,15 @@ export class RealmArena {
   private writeCoopReady(p: RealmPlayer, ready: CoopReady | null): void {
     p.coopReady = ready ? checkedCoopReady(ready) : null;
     this.hooks.persistCoopReady?.(p, p.coopReady ? { ...p.coopReady } : null);
+    for (const other of this.players.values()) {
+      if (other === p || other.coopIdentity !== p.coopIdentity) continue;
+      other.coopReady = p.coopReady ? { ...p.coopReady } : null;
+    }
   }
 
   private rawCoopStatusFor(p: RealmPlayer, nowMs: number): CoopStatus {
     const errand = this.cooperativeDelivery(p);
-    const saved = errand ? this.savedCoopReady(p, nowMs) : null;
+    const saved = errand ? this.identityCoopReady(p, nowMs) : null;
     const ready = !!saved && this.presentForCoop(p, saved, nowMs);
     const identities = new Set<string>();
     if (errand) {
@@ -731,6 +778,15 @@ export class RealmArena {
     // A storage-backed host first guarantees that this physically occupied
     // target has a region row, so its compare-and-set cannot silently vanish.
     this.improve(mine.targetRx, mine.targetRy, 1, nowMs, player);
+    for (const [courier, errand] of [[partner, partnerErrand], [player, mineErrand]] as const) {
+      this.hooks.contributeDaily?.({
+        kind: "delivery",
+        offerRx: errand.orx,
+        offerRy: errand.ory,
+        targetRx: errand.trx,
+        targetRy: errand.try,
+      }, nowMs, courier);
+    }
     return true;
   }
 
@@ -775,8 +831,10 @@ export class RealmArena {
       if (this.players.get(p.id) !== p) return null;
       const errand = this.cooperativeDelivery(p);
       if (!errand || errand.trx !== here.rx || errand.try !== here.ry || !this.onPlaza(p, plan)) return null;
-      const existing = this.savedCoopReady(p, nowMs);
-      if (existing && this.presentForCoop(p, existing, nowMs)) return null;
+      const existing = this.identityCoopReady(p, nowMs);
+      // Replaying from any tab cannot replace the incarnation's fixed
+      // deadline or emit a second friend notification.
+      if (existing) return null;
       const before = this.captureCoopStatus(nowMs);
       p.coopTransition = null;
       const expiresAtMs = Math.min(Number.MAX_SAFE_INTEGER, nowMs + COOP_READY_TTL_MS);
@@ -796,7 +854,7 @@ export class RealmArena {
       return event;
     }
     if (cmd.kind === COMMAND.cancelCoopErrand) {
-      const ready = this.savedCoopReady(p, nowMs);
+      const ready = this.identityCoopReady(p, nowMs);
       if (!ready) return null;
       const before = this.captureCoopStatus(nowMs);
       // Readiness is persisted per account incarnation, not per socket. One
@@ -804,8 +862,7 @@ export class RealmArena {
       // identity; otherwise a second tab could resurrect the deleted claim.
       this.writeCoopReady(p, null);
       for (const other of this.players.values()) {
-        if (other.coopIdentity !== p.coopIdentity || !other.coopReady) continue;
-        other.coopReady = null;
+        if (other.coopIdentity !== p.coopIdentity) continue;
         other.coopTransition = "cancelled";
       }
       p.coopTransition = "cancelled";
@@ -869,6 +926,15 @@ export class RealmArena {
 
   private complete(p: RealmPlayer, errand: Errand, kind: JourneyEventKind, nowMs: number): JourneyEventKind {
     const done = journeyComplete(this.seed, p.journey, errand);
+    if (errand.kind === "deliver") {
+      this.hooks.contributeDaily?.({
+        kind: "delivery",
+        offerRx: errand.orx,
+        offerRy: errand.ory,
+        targetRx: errand.trx,
+        targetRy: errand.try,
+      }, nowMs, p);
+    }
     this.setJourney(p, done.journey);
     if (done.newlyHelped) this.improve(done.hrx, done.hry, 1, nowMs, p);
     return this.confirm(p, kind, done.hrx, done.hry);
@@ -903,6 +969,15 @@ export class RealmArena {
       this.world.applyRegionState({ flags: 0, realmRevision: this.realmRevision, serverTimeMs: nowMs, rows: [row] });
       this.changedRows.push(row);
     }
+  }
+
+  /** Host-owned shared appearance transition. Daily-goal settlement uses the
+   * same compare-and-set/repaint path as ordinary journey flowers; it is not
+   * exposed as a client command. */
+  raiseSharedImprovement(player: RealmPlayer, rx: number, ry: number, level: number, nowMs = this.now()): void {
+    if (this.players.get(player.id) !== player) throw new RangeError("shared improvement player is not admitted");
+    if (!Number.isInteger(level) || level < 1 || level > 0xff) throw new RangeError("shared improvement level must be 1..255");
+    this.improve(rx, ry, level, nowMs, player);
   }
 
   // -- landmarks --------------------------------------------------------------------
@@ -950,6 +1025,12 @@ export class RealmArena {
       row = { ...current, landmarkFirstName: p.name, revision: ++this.realmRevision };
     }
     if (!row || (current && row.revision <= current.revision)) return;
+    // A storage-backed landmark hook performs the first-writer CAS and owns
+    // crediting its actual winner. Without that hook this arena elected the
+    // winner itself, so the generic contribution callback is safe here.
+    if (!this.hooks.landmarkFirst) {
+      this.hooks.contributeDaily?.({ kind: "landmark", landmarkRx: rx, landmarkRy: ry }, nowMs, p);
+    }
     this.world.applyRegionState({ flags: 0, realmRevision: this.realmRevision, serverTimeMs: nowMs, rows: [row] });
     this.changedRows.push(row);
   }
