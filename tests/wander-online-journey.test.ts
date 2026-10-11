@@ -737,19 +737,27 @@ describe("authoritative arena rules", () => {
     teleport(p, errand.tx, errand.ty);
     expect(arena.applyCommand(p, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now))
       .toBe(JOURNEY_EVENT.coopWaiting);
+    const other = arena.add("Cancel 2", 2, 0, { tx: hub.x, ty: hub.y }, { coopIdentity: "cancel-account" });
+    expect(arena.applyCommand(other, { kind: COMMAND.acceptCoopErrand, ...origin, extra: 0 }, clock.now))
+      .toBe(JOURNEY_EVENT.accepted);
+    teleport(other, errand.tx, errand.ty);
+    expect(arena.applyCommand(other, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now))
+      .toBe(JOURNEY_EVENT.coopWaiting);
     expect(arena.coopWaitingCountForOffer(origin.rx, origin.ry, clock.now)).toBe(1);
     arena.drainCoopStatuses(clock.now);
 
     expect(arena.applyCommand(p, { kind: COMMAND.cancelCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now)).toBeNull();
     expect(p.coopReady).toBeNull();
+    expect(other.coopReady, "all live sessions of the persisted incarnation are cleared").toBeNull();
     expect(p.journey.errand).toEqual(origin);
     expect(p.journey.cooperative).toBe(true);
     expect(arena.coopWaitingCountForOffer(origin.rx, origin.ry, clock.now)).toBe(0);
     expect(arena.coopStatusFor(p, clock.now)).toMatchObject({
       status: "cancelled", ready: false, savedReady: false, presentReady: 0, expiresAt: null,
     });
-    expect(arena.drainCoopStatuses(clock.now)).toEqual([
+    expect(arena.drainCoopStatuses(clock.now).sort((a, b) => a.playerId - b.playerId)).toEqual([
       { playerId: p.id, status: expect.objectContaining({ status: "cancelled", savedReady: false }) },
+      { playerId: other.id, status: expect.objectContaining({ status: "cancelled", savedReady: false }) },
     ]);
     expect(arena.coopStatusFor(p, clock.now).status).toBe("traveling");
   });

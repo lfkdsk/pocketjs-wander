@@ -797,7 +797,15 @@ export class RealmArena {
       const ready = this.savedCoopReady(p, nowMs);
       if (!ready) return null;
       const before = this.captureCoopStatus(nowMs);
+      // Readiness is persisted per account incarnation, not per socket. One
+      // device cancelling therefore clears every live session of that same
+      // identity; otherwise a second tab could resurrect the deleted claim.
       this.writeCoopReady(p, null);
+      for (const other of this.players.values()) {
+        if (other.coopIdentity !== p.coopIdentity || !other.coopReady) continue;
+        other.coopReady = null;
+        other.coopTransition = "cancelled";
+      }
       p.coopTransition = "cancelled";
       this.finishCoopStatusChange(before, nowMs);
       return null;
