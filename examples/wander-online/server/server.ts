@@ -24,7 +24,7 @@
 import { join } from "node:path";
 import { type ServerWebSocket } from "bun";
 import { Arena } from "./area.ts";
-import { REALM_PLAYER_CAP, RealmArena, type CoopStatus, type RealmPlayer } from "./realm-area.ts";
+import { COOP_REQUIRED_PLAYERS, REALM_PLAYER_CAP, RealmArena, type CoopStatus, type RealmPlayer } from "./realm-area.ts";
 import { DevAuth } from "./dev-auth.ts";
 import { entityFor, snapshotFor, snapshotForRealm } from "../shared/snapshot.ts";
 import {
@@ -353,6 +353,29 @@ export function startServer(opts: ServerOpts): ServerHandle {
           ws.send(JSON.stringify({ type: "invite", code: issued.code, realm: realmArena.realmId, expiresIn: INVITE_TTL_SEC }));
           return;
         }
+        case "coopBoardGet": {
+          const conn = ws.data.conn;
+          if (!conn?.realm || m.v !== SOCIAL_PROTOCOL_VERSION) return;
+          const offerRx = m.offerRx;
+          const offerRy = m.offerRy;
+          if (!Number.isInteger(offerRx) || !Number.isInteger(offerRy)
+            || Number(offerRx) < -0x8000_0000 || Number(offerRx) > 0x7fff_ffff
+            || Number(offerRy) < -0x8000_0000 || Number(offerRy) > 0x7fff_ffff) return;
+          const player = realmArena.players.get(conn.playerId);
+          if (!player) return;
+          const waiting = realmArena.coopBoardWaitingFor(player, Number(offerRx), Number(offerRy));
+          if (waiting === null) return;
+          ws.send(JSON.stringify({
+            type: "coopBoard",
+            v: SOCIAL_PROTOCOL_VERSION,
+            realm: realmArena.realmId,
+            offerRx,
+            offerRy,
+            waiting,
+            required: COOP_REQUIRED_PLAYERS,
+          }));
+          return;
+        }
         case "linkq": {
           if (!joined) return;
           const a = await authReady;
@@ -493,6 +516,7 @@ export function startServer(opts: ServerOpts): ServerHandle {
         v: SOCIAL_PROTOCOL_VERSION,
         realm: realmArena.realmId,
         coopErrands: true,
+        coopPartnerFinding: true,
         discoveryLeaderboard: false,
       }));
       rp.coopDirty = false;
@@ -607,7 +631,7 @@ function coopErrandMessage(realm: string, status: CoopStatus): Record<string, un
     revision: status.revision,
     status: status.status === "inactive" ? "none"
       : status.status === "traveling" ? "travel"
-        : "waiting",
+        : status.status,
     cooperative: status.cooperative,
     ready: status.ready,
     savedReady: status.savedReady ? 1 : 0,

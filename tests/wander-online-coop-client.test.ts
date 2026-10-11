@@ -8,6 +8,12 @@ import { bootWorld, treeHasText } from "../vendor/pocket-rpgkit/vendor/pocketjs/
 import type { OnlinePublished } from "../examples/wander-online/OnlineView.tsx";
 import { appBundle, appPreflight } from "./helpers/boot.ts";
 import { fakeOnlineSocketFactory } from "./lib/fake-online-socket.ts";
+import { planRegion } from "../examples/wander/region.ts";
+import { regionHub } from "../examples/wander/world.ts";
+import { townErrand } from "../examples/wander/towns.ts";
+import { isCooperativeErrand } from "../examples/wander-online/net/journey.ts";
+import { plaqueOf } from "../examples/wander-online/net/npc.ts";
+import { COMMAND, type CommandMessage } from "../examples/wander-online/net/protocol.ts";
 
 const preflight = appPreflight("wander-online");
 if (!preflight.ok) console.warn(`wander-online co-op client test skipped: ${preflight.reason}`);
@@ -35,6 +41,22 @@ function press(world: World, button: number): void {
 const state = (): OnlinePublished | undefined =>
   (globalThis as { __onlineState?: OnlinePublished }).__onlineState;
 
+const SEED = 1593842689;
+const GROWN_MS = 10_000_000;
+
+function cooperativeTown(): { rx: number; ry: number } {
+  for (let radius = 0; radius <= 12; radius++) {
+    for (let ry = -radius; ry <= radius; ry++) for (let rx = -radius; rx <= radius; rx++) {
+      if (Math.max(Math.abs(rx), Math.abs(ry)) !== radius) continue;
+      const errand = townErrand(SEED, rx, ry);
+      if (regionHub(SEED, rx, ry).town && errand && isCooperativeErrand(SEED, errand)) {
+        return { rx: rx || 0, ry: ry || 0 };
+      }
+    }
+  }
+  throw new Error("no deterministic cooperative town");
+}
+
 const waitFor = async (world: World, predicate: () => boolean, what: string): Promise<void> => {
   const deadline = Date.now() + 8000;
   while (Date.now() < deadline) {
@@ -46,6 +68,145 @@ const waitFor = async (world: World, predicate: () => boolean, what: string): Pr
 };
 
 simDescribe("wander-online realm feature client wiring", () => {
+  test("a delayed feature cannot turn a cooperative offer into a solo acceptance", async () => {
+    const offer = cooperativeTown();
+    const hub = regionHub(SEED, offer.rx, offer.ry);
+    const sentBinary: CommandMessage[] = [];
+    let socket: PocketSocket | null = null;
+    const world = await bootWorld(
+      appBundle("wander-online"),
+      60,
+      {
+        __onlineUrl: "ws://fake/ws",
+        __onlineAuth: { kind: "ticket", ticket: "t1" },
+        __onlineSocketFactory: fakeOnlineSocketFactory({
+          mode: "welcome4",
+          name: "Octo",
+          ticket: "t1",
+          realm: { id: "realm-test", seed: SEED, tx: hub.x, ty: hub.y, epoch: 5 },
+          serverTimeMs: GROWN_MS,
+          heartbeat: true,
+          sentBinary,
+          onSocket: (value) => { socket = value; },
+        }),
+      },
+      undefined,
+      { width: 480, height: 272 },
+    ) as unknown as World;
+    pump(world, 5);
+    await waitFor(world, () => state()?.status === "joined", "realm join");
+    await waitFor(world, () => (state()?.villagers ?? 0) > 0, "town plan");
+
+    press(world, BTN.CROSS);
+    expect(sentBinary).toEqual([]);
+    expect(state()?.notice).toBe("CHECKING WORLD FEATURES…");
+
+    socket!.onMessage?.(JSON.stringify({
+      type: "realmFeatures", v: 1, realm: "realm-test",
+      coopErrands: false, coopPartnerFinding: false, discoveryLeaderboard: false,
+    }));
+    pump(world, 2);
+    press(world, BTN.CROSS);
+    expect(sentBinary.at(-1)?.kind).toBe(COMMAND.acceptErrand);
+
+    socket!.onMessage?.(JSON.stringify({
+      type: "realmFeatures", v: 1, realm: "realm-test",
+      coopErrands: true, coopPartnerFinding: true, discoveryLeaderboard: false,
+    }));
+    pump(world, 2);
+    press(world, BTN.CROSS);
+    expect(sentBinary.at(-1)?.kind).toBe(COMMAND.acceptCoopErrand);
+  }, 30_000);
+
+  test("board aggregate, friend prompt/list, countdown and cancel remain realm scoped", async () => {
+    const offer = cooperativeTown();
+    const plan = planRegion(SEED, offer.rx, offer.ry);
+    const board = plaqueOf(plan)!;
+    const sent: Record<string, unknown>[] = [];
+    const sentBinary: CommandMessage[] = [];
+    let socket: PocketSocket | null = null;
+    const world = await bootWorld(
+      appBundle("wander-online"),
+      60,
+      {
+        __onlineUrl: "ws://fake/ws",
+        __onlineAuth: { kind: "ticket", ticket: "t1" },
+        __onlineSocketFactory: fakeOnlineSocketFactory({
+          mode: "welcome4",
+          name: "Octo",
+          ticket: "t1",
+          realm: { id: "realm-test", seed: SEED, tx: board.x, ty: board.y - 1, epoch: 5 },
+          serverTimeMs: GROWN_MS,
+          heartbeat: true,
+          sent,
+          sentBinary,
+          onSocket: (value) => { socket = value; },
+        }),
+      },
+      undefined,
+      { width: 480, height: 272 },
+    ) as unknown as World;
+    pump(world, 5);
+    await waitFor(world, () => state()?.status === "joined", "realm join");
+    await waitFor(world, () => (state()?.villagers ?? 0) > 0, "town plan");
+    const push = (message: Record<string, unknown>): void => {
+      socket!.onMessage?.(JSON.stringify(message));
+      pump(world, 2);
+    };
+    push({
+      type: "realmFeatures", v: 1, realm: "realm-test",
+      coopErrands: true, coopPartnerFinding: true, discoveryLeaderboard: false,
+    });
+
+    press(world, BTN.CIRCLE);
+    expect(sent).toContainEqual({ type: "coopBoardGet", v: 1, offerRx: offer.rx, offerRy: offer.ry });
+    expect(treeHasText(world.getTree(), "COOP · CHECKING WAITERS…")).toBe(true);
+    push({ type: "coopBoard", v: 1, realm: "other", offerRx: offer.rx, offerRy: offer.ry, waiting: 1, required: 2 });
+    push({ type: "coopBoard", v: 1, realm: "realm-test", offerRx: offer.rx + 1, offerRy: offer.ry, waiting: 1, required: 2 });
+    expect(treeHasText(world.getTree(), "COOP · 1/2 WAITING")).toBe(false);
+    push({ type: "coopBoard", v: 1, realm: "realm-test", offerRx: offer.rx, offerRy: offer.ry, waiting: 1, required: 2 });
+    expect(treeHasText(world.getTree(), "COOP · 1/2 WAITING")).toBe(true);
+    press(world, BTN.CIRCLE);
+
+    const waiting = { targetTown: "Moss Hill", item: "a parcel", expiresAt: GROWN_MS + 30_000 };
+    push({
+      type: "socialSnapshot", v: 1, visible: true,
+      friends: [{ githubId: 22, name: "Alice", presence: "online", realm: "realm-test", coopWaiting: waiting }],
+      incoming: [], outgoing: [],
+    });
+    expect(state()?.coopWaitingFriends).toBe(1);
+    push({ type: "coopFriendWaiting", v: 1, realm: "realm-test", friend: { githubId: 22, name: "Alice" }, ...waiting });
+    expect(state()?.notice).toBe("COOP · Alice · Moss Hill · a parcel");
+
+    push({
+      type: "coopErrand", v: 1, realm: "realm-test", revision: 1,
+      status: "waiting", cooperative: true, ready: true, savedReady: 1,
+      presentReady: 1, required: 2, expiresAt: GROWN_MS + 30_000,
+    });
+    pump(world, 6);
+    expect(state()?.coopRemaining).toBeGreaterThanOrEqual(29);
+    expect(state()?.coopRemaining).toBeLessThanOrEqual(30);
+    expect(state()?.errand).toContain("X CANCEL");
+    press(world, BTN.CROSS);
+    expect(sentBinary.at(-1)?.kind).toBe(COMMAND.cancelCoopErrand);
+    expect(state()?.coopRemaining).toBeGreaterThan(0);
+
+    push({
+      type: "coopErrand", v: 1, realm: "realm-test", revision: 2,
+      status: "cancelled", cooperative: true, ready: false, savedReady: 0,
+      presentReady: 0, required: 2, expiresAt: 0,
+    });
+    expect(state()?.coopRemaining).toBe(0);
+    expect(state()?.notice).toBe("COOP · CANCELLED");
+    push({ type: "coopFriendWaiting", v: 1, realm: "realm-test", friend: { githubId: 22, name: "Alice" }, ...waiting });
+    expect(state()?.notice, "the same READY deadline is not announced twice").toBe("COOP · CANCELLED");
+
+    press(world, BTN.SELECT);
+    press(world, BTN.DOWN);
+    press(world, BTN.CIRCLE);
+    expect(treeHasText(world.getTree(), "COOP WAIT")).toBe(true);
+  }, 30_000);
+
   test("Discovery refresh and listing obey capability, realm and monotonic revision", async () => {
     let socket: PocketSocket | null = null;
     const sent: Record<string, unknown>[] = [];

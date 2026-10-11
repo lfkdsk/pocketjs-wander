@@ -164,6 +164,7 @@ const ZH = {
   you: han(0x4f60),
   count: han(0x6b21),
   unavailable: han(0x6682, 0x65e0, 0x6392, 0x884c),
+  coopWaiting: han(0x5408, 0x4f5c, 0x7b49, 0x5f85),
 } as const;
 
 function discoveryAvailable(data: SocialMenuData): boolean {
@@ -297,7 +298,7 @@ function row(
   };
 }
 
-function friendRows(snapshot: SocialSnapshot | null, nearby: SocialMenuData["nearby"]): SocialMenuRow[] {
+function friendRows(snapshot: SocialSnapshot | null, nearby: SocialMenuData["nearby"], locale: OnlineLocale = "en"): SocialMenuRow[] {
   if (!snapshot) return [row("friends-loading", "empty", "SOCIAL DATA UNAVAILABLE", "", "muted")];
   const rows: SocialMenuRow[] = [];
   for (const friend of snapshot.incoming.slice(0, SOCIAL_MAX_PENDING)) {
@@ -312,9 +313,14 @@ function friendRows(snapshot: SocialSnapshot | null, nearby: SocialMenuData["nea
   }
   const friends = snapshot.friends.slice(0, SOCIAL_MAX_FRIENDS);
   for (const presence of ["online", "hidden", "offline"] as const) {
-    for (const friend of friends) {
+    const grouped = friends
+      .filter((friend) => friend.presence === presence)
+      .sort((a, b) => Number(!!b.coopWaiting) - Number(!!a.coopWaiting));
+    for (const friend of grouped) {
       if (friend.presence !== presence) continue;
-      const detail = presence === "online" && friend.realm ? `ON ${friend.realm}` : presence.toUpperCase();
+      const detail = friend.coopWaiting
+        ? locale === "zh" ? ZH.coopWaiting : "COOP WAIT"
+        : presence === "online" && friend.realm ? `ON ${friend.realm}` : presence.toUpperCase();
       rows.push(row(
         `friend-${friend.githubId}`,
         "friend",
@@ -450,7 +456,7 @@ function deleteRows(): SocialMenuRow[] {
 export function socialMenuRows(state: SocialMenuState, data: SocialMenuData): SocialMenuRow[] {
   switch (state.screen) {
     case "home": return homeRows(data);
-    case "friends": return friendRows(data.social, data.nearby);
+    case "friends": return friendRows(data.social, data.nearby, data.locale);
     case "worlds": return worldRows(data);
     case "discovery": return discoveryRows(data);
     case "my-data": return selfRows(data.self);

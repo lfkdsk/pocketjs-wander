@@ -168,6 +168,8 @@ export const COMMAND = {
   emote: 4,
   acceptCoopErrand: 5,
   readyCoopErrand: 6,
+  /** Withdraw a still-live READY claim without abandoning the errand. */
+  cancelCoopErrand: 7,
 } as const;
 export const FAR_PLAYERS_HEADER_BYTES = 2;
 export const FAR_PLAYERS_ROW_BYTES = 6;

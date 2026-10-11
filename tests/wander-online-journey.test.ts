@@ -430,7 +430,8 @@ describe("COMMAND and PLAYER_JOURNEY codecs", () => {
     expect(decodeCommand(zeroKind)).toBeNull();
     expect(() => encodeCommand({ kind: 0, rx: 0, ry: 0, extra: 0 })).toThrow();
     expect(() => encodeCommand({ kind: 1, rx: 2 ** 31, ry: 0, extra: 0 })).toThrow();
-    for (const kind of [COMMAND.acceptCoopErrand, COMMAND.readyCoopErrand]) {
+    expect(COMMAND.cancelCoopErrand).toBe(7);
+    for (const kind of [COMMAND.acceptCoopErrand, COMMAND.readyCoopErrand, COMMAND.cancelCoopErrand]) {
       expect(encodeCommand({ kind, rx: 1, ry: -1, extra: 0 }).byteLength).toBe(COMMAND_BYTES);
       expect(decodeCommand(encodeCommand({ kind, rx: 1, ry: -1, extra: 0 }))?.kind).toBe(kind);
     }
@@ -687,6 +688,72 @@ describe("authoritative arena rules", () => {
     expect(improvements).toBe(1);
   });
 
+  test("different offers to the same target do not match or share anonymous counts", () => {
+    const clock = { now: 2_650_000 };
+    const arena = arenaAt(SEED, clock);
+    const firstOffer = { rx: 1, ry: -5 };
+    const secondOffer = { rx: 2, ry: -4 };
+    const firstErrand = townErrand(SEED, firstOffer.rx, firstOffer.ry)!;
+    const secondErrand = townErrand(SEED, secondOffer.rx, secondOffer.ry)!;
+    expect(firstErrand).toMatchObject({ kind: "deliver", trx: 1, try: -4 });
+    expect(secondErrand).toMatchObject({ kind: "deliver", trx: 1, try: -4 });
+    expect(isCooperativeErrand(SEED, firstErrand)).toBe(true);
+    expect(isCooperativeErrand(SEED, secondErrand)).toBe(true);
+
+    const aHub = regionHub(SEED, firstOffer.rx, firstOffer.ry);
+    const bHub = regionHub(SEED, secondOffer.rx, secondOffer.ry);
+    const a = arena.add("Offer A", 1, 0, { tx: aHub.x, ty: aHub.y }, { coopIdentity: "offer-a" });
+    const b = arena.add("Offer B", 2, 0, { tx: bHub.x, ty: bHub.y }, { coopIdentity: "offer-b" });
+    expect(arena.applyCommand(a, { kind: COMMAND.acceptCoopErrand, rx: firstOffer.rx, ry: firstOffer.ry, extra: 0 }, clock.now))
+      .toBe(JOURNEY_EVENT.accepted);
+    expect(arena.applyCommand(b, { kind: COMMAND.acceptCoopErrand, rx: secondOffer.rx, ry: secondOffer.ry, extra: 0 }, clock.now))
+      .toBe(JOURNEY_EVENT.accepted);
+    teleport(a, firstErrand.tx, firstErrand.ty);
+    teleport(b, secondErrand.tx, secondErrand.ty);
+
+    expect(arena.applyCommand(a, { kind: COMMAND.readyCoopErrand, rx: firstErrand.trx, ry: firstErrand.try, extra: 0 }, clock.now))
+      .toBe(JOURNEY_EVENT.coopWaiting);
+    expect(arena.coopWaitingCountForOffer(firstOffer.rx, firstOffer.ry, clock.now)).toBe(1);
+    expect(arena.coopWaitingCountForOffer(secondOffer.rx, secondOffer.ry, clock.now)).toBe(0);
+    expect(arena.applyCommand(b, { kind: COMMAND.readyCoopErrand, rx: secondErrand.trx, ry: secondErrand.try, extra: 0 }, clock.now))
+      .toBe(JOURNEY_EVENT.coopWaiting);
+    expect(a.journey.errand).toEqual(firstOffer);
+    expect(b.journey.errand).toEqual(secondOffer);
+    expect(arena.coopStatusFor(a, clock.now).presentReady).toBe(1);
+    expect(arena.coopStatusFor(b, clock.now).presentReady).toBe(1);
+    expect(arena.coopWaitingCountForOffer(firstOffer.rx, firstOffer.ry, clock.now)).toBe(1);
+    expect(arena.coopWaitingCountForOffer(secondOffer.rx, secondOffer.ry, clock.now)).toBe(1);
+  });
+
+  test("READY cancellation clears only the claim and publishes a one-shot transition", () => {
+    const clock = { now: 2_675_000 };
+    const arena = arenaAt(SEED, clock);
+    const origin = { rx: 0, ry: 0 };
+    const hub = regionHub(SEED, origin.rx, origin.ry);
+    const errand = townErrand(SEED, origin.rx, origin.ry)!;
+    const p = arena.add("Cancel", 1, 0, { tx: hub.x, ty: hub.y }, { coopIdentity: "cancel-account" });
+    expect(arena.applyCommand(p, { kind: COMMAND.acceptCoopErrand, ...origin, extra: 0 }, clock.now))
+      .toBe(JOURNEY_EVENT.accepted);
+    teleport(p, errand.tx, errand.ty);
+    expect(arena.applyCommand(p, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now))
+      .toBe(JOURNEY_EVENT.coopWaiting);
+    expect(arena.coopWaitingCountForOffer(origin.rx, origin.ry, clock.now)).toBe(1);
+    arena.drainCoopStatuses(clock.now);
+
+    expect(arena.applyCommand(p, { kind: COMMAND.cancelCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now)).toBeNull();
+    expect(p.coopReady).toBeNull();
+    expect(p.journey.errand).toEqual(origin);
+    expect(p.journey.cooperative).toBe(true);
+    expect(arena.coopWaitingCountForOffer(origin.rx, origin.ry, clock.now)).toBe(0);
+    expect(arena.coopStatusFor(p, clock.now)).toMatchObject({
+      status: "cancelled", ready: false, savedReady: false, presentReady: 0, expiresAt: null,
+    });
+    expect(arena.drainCoopStatuses(clock.now)).toEqual([
+      { playerId: p.id, status: expect.objectContaining({ status: "cancelled", savedReady: false }) },
+    ]);
+    expect(arena.coopStatusFor(p, clock.now).status).toBe("traveling");
+  });
+
   test("readiness survives restore until its exact expiry and clears through the hook", () => {
     const clock = { now: 2_700_000 };
     const origin = regionHub(SEED, 0, 0), errand = townErrand(SEED, 0, 0)!;
@@ -722,7 +789,12 @@ describe("authoritative arena rules", () => {
     expect(restored.coopReady).toBeNull();
     expect(clears).toEqual([null]);
     expect(restored.coopDirty).toBe(true);
-    expect(restoredArena.coopStatusFor(restored, clock.now)).toMatchObject({ status: "traveling", ready: false, savedReady: false, presentReady: 0, expiresAt: null });
+    expect(restoredArena.coopWaitingCountForOffer(0, 0, clock.now)).toBe(0);
+    expect(restoredArena.coopStatusFor(restored, clock.now)).toMatchObject({ status: "expired", ready: false, savedReady: false, presentReady: 0, expiresAt: null });
+    expect(restoredArena.drainCoopStatuses(clock.now)).toEqual([
+      { playerId: restored.id, status: expect.objectContaining({ status: "expired", savedReady: false }) },
+    ]);
+    expect(restoredArena.coopStatusFor(restored, clock.now).status).toBe("traveling");
   });
 
   test("removing a ready player dirties remaining participants whose visible count changes", () => {

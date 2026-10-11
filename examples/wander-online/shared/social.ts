@@ -21,10 +21,12 @@ export const SOCIAL_MAX_COOP_REQUIRED = 8;
 export interface RealmFeatures {
   realm: string;
   coopErrands: boolean;
+  /** Additive NET-COOP-2 board/friend/cancel surface. Absent on COOP-1. */
+  coopPartnerFinding?: boolean;
   discoveryLeaderboard: boolean;
 }
 
-export type CoopErrandStatus = "none" | "travel" | "waiting" | "completed" | "expired";
+export type CoopErrandStatus = "none" | "travel" | "waiting" | "completed" | "cancelled" | "expired";
 
 /** Private co-op state for the authenticated caller. It contains only
  * aggregate readiness: never another player's identity or location. */
@@ -38,6 +40,32 @@ export interface CoopErrandSnapshot {
   presentReady: number;
   required: number;
   expiresAt: number;
+}
+
+/** Anonymous, offer-scoped queue depth returned only for the notice board the
+ * caller is currently reading. It intentionally carries neither identities
+ * nor the target coordinates where READY players are standing. */
+export interface CoopBoardSnapshot {
+  realm: string;
+  offerRx: number;
+  offerRy: number;
+  waiting: number;
+  required: number;
+}
+
+/** A mutual visible friend's active wait. The deterministic task copy is
+ * useful to the recipient without publishing either player's coordinates. */
+export interface FriendCoopWaiting {
+  targetTown: string;
+  item: string;
+  expiresAt: number;
+}
+
+/** One ephemeral friend-only prompt. Repeated status/count changes for the
+ * same READY deadline do not create another prompt. */
+export interface CoopFriendWaiting extends FriendCoopWaiting {
+  realm: string;
+  friend: FriendIdentity;
 }
 
 export interface DiscoveryLeaderboardRow {
@@ -69,6 +97,8 @@ export interface FriendView extends FriendIdentity {
   presence: FriendPresence;
   /** Present only when the friend is online, visible and in a v4 realm. */
   realm: string | null;
+  /** Present only for a visible mutual friend waiting in the caller's realm. */
+  coopWaiting?: FriendCoopWaiting | null;
 }
 
 export interface SocialSnapshot {
@@ -139,12 +169,15 @@ export function parseRealmChoices(value: unknown): RealmChoice[] | null {
 export function parseRealmFeatures(value: unknown): RealmFeatures | null {
   if (!record(value) || !realmId(value.realm)
     || typeof value.coopErrands !== "boolean"
+    || (value.coopPartnerFinding !== undefined && typeof value.coopPartnerFinding !== "boolean")
     || typeof value.discoveryLeaderboard !== "boolean") return null;
-  return {
+  const parsed: RealmFeatures = {
     realm: value.realm,
     coopErrands: value.coopErrands,
     discoveryLeaderboard: value.discoveryLeaderboard,
   };
+  if (value.coopPartnerFinding !== undefined) parsed.coopPartnerFinding = value.coopPartnerFinding;
+  return parsed;
 }
 
 export function parseCoopErrandSnapshot(value: unknown): CoopErrandSnapshot | null {
@@ -168,6 +201,28 @@ export function parseCoopErrandSnapshot(value: unknown): CoopErrandSnapshot | nu
     required: value.required,
     expiresAt: value.expiresAt,
   };
+}
+
+export function parseCoopBoardSnapshot(value: unknown): CoopBoardSnapshot | null {
+  if (!record(value) || !realmId(value.realm)
+    || !integer(value.offerRx, -0x8000_0000, 0x7fff_ffff)
+    || !integer(value.offerRy, -0x8000_0000, 0x7fff_ffff)
+    || !integer(value.required, 2, SOCIAL_MAX_COOP_REQUIRED)
+    || !integer(value.waiting, 0, value.required)) return null;
+  return {
+    realm: value.realm,
+    offerRx: value.offerRx,
+    offerRy: value.offerRy,
+    waiting: value.waiting,
+    required: value.required,
+  };
+}
+
+export function parseCoopFriendWaiting(value: unknown): CoopFriendWaiting | null {
+  if (!record(value) || !realmId(value.realm)) return null;
+  const friend = parseIdentity(value.friend);
+  const waiting = parseFriendCoopWaiting(value);
+  return friend && waiting ? { realm: value.realm, friend, ...waiting } : null;
 }
 
 export function parseDiscoveryLeaderboard(value: unknown): DiscoveryLeaderboard | null {
@@ -248,7 +303,20 @@ function parseFriendView(value: unknown): FriendView | null {
   if (!identity || !record(value) || !presence(value.presence)) return null;
   const realm = value.realm === null ? null : realmId(value.realm) ? value.realm : undefined;
   if (realm === undefined || (value.presence !== "online" && realm !== null)) return null;
-  return { ...identity, presence: value.presence, realm };
+  const coopWaiting = value.coopWaiting === undefined || value.coopWaiting === null
+    ? null
+    : parseFriendCoopWaiting(value.coopWaiting);
+  if (value.coopWaiting !== undefined && value.coopWaiting !== null && !coopWaiting) return null;
+  if (coopWaiting && (value.presence !== "online" || realm === null)) return null;
+  return value.coopWaiting === undefined
+    ? { ...identity, presence: value.presence, realm }
+    : { ...identity, presence: value.presence, realm, coopWaiting };
+}
+
+function parseFriendCoopWaiting(value: unknown): FriendCoopWaiting | null {
+  if (!record(value) || !displayText(value.targetTown) || !displayText(value.item)
+    || !integer(value.expiresAt, 1, Number.MAX_SAFE_INTEGER)) return null;
+  return { targetTown: value.targetTown, item: value.item, expiresAt: value.expiresAt };
 }
 
 function boundedArray<T>(value: unknown, cap: number, parse: (item: unknown) => T | null): T[] | null {
@@ -274,6 +342,11 @@ function displayName(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 48;
 }
 
+function displayText(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 80
+    && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
 function realmId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/.test(value);
 }
@@ -287,5 +360,6 @@ function population(value: unknown): value is RealmPopulationBand {
 }
 
 function coopStatus(value: unknown): value is CoopErrandStatus {
-  return value === "none" || value === "travel" || value === "waiting" || value === "completed" || value === "expired";
+  return value === "none" || value === "travel" || value === "waiting" || value === "completed"
+    || value === "cancelled" || value === "expired";
 }

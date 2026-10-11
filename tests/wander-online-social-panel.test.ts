@@ -199,6 +199,29 @@ describe("wander-online social menu model", () => {
     expect(reduceSocialMenu(screen("friends", 2), "confirm", data).action).toBeNull();
   });
 
+  test("waiting friends sort first and use concise English and Chinese co-op labels", () => {
+    const data = fixture();
+    data.social!.friends.push({
+      githubId: 4,
+      name: "Waiting",
+      presence: "online",
+      realm: "plaza-2",
+      coopWaiting: { targetTown: "Moss Hill", item: "a parcel", expiresAt: 12_345 },
+    });
+
+    data.locale = "en";
+    let rows = socialMenuRows(screen("friends"), data);
+    expect(rows.slice(1, 3).map((row) => [row.key, row.detail, row.tone])).toEqual([
+      ["friend-4", "COOP WAIT", "accent"],
+      ["friend-1", "ON plaza-2", "accent"],
+    ]);
+
+    data.locale = "zh";
+    rows = socialMenuRows(screen("friends"), data);
+    expect(rows.find((row) => row.key === "friend-4")?.detail)
+      .toBe(String.fromCodePoint(0x5408, 0x4f5c, 0x7b49, 0x5f85));
+  });
+
   test("the friends footer keeps complete controller copy inside the narrow panel", () => {
     expect(socialMenuView(screen("friends"), fixture()).footer)
       .toBe("CIRCLE ACT · SQUARE REMOVE · CROSS BACK");

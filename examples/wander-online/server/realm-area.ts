@@ -6,7 +6,7 @@ import { motionTicksPerFrame } from "../../../vendor/pocket-rpgkit/src/engine/mo
 import type { Dir4 } from "../../../vendor/pocket-rpgkit/src/engine/passability.ts";
 import { regionOf } from "../../wander/world.ts";
 import { planRegion, type RegionPlan } from "../../wander/region.ts";
-import { purePlacedLandmark, type Errand } from "../../wander/towns.ts";
+import { purePlacedLandmark, townErrand, type Errand } from "../../wander/towns.ts";
 import type { Landmark } from "../../wander/landmarks.ts";
 import {
   emptyJourney,
@@ -23,7 +23,7 @@ import {
   type JourneyPair,
   type PlayerJourney,
 } from "../net/journey.ts";
-import { residentDistance, ticksSinceDiscovery, townResidentsAt } from "../net/npc.ts";
+import { frontTile, plaqueOf, residentDistance, ticksSinceDiscovery, townResidentsAt } from "../net/npc.ts";
 import { BTN, COMMAND, PLAYER_PROGRESS_MAX, type CommandMessage, type PlayerJourneyMessage, type PlayerProgressMessage } from "../net/protocol.ts";
 import {
   MultiFocusWorld,
@@ -75,7 +75,7 @@ export interface CoopReady {
   expiresAtMs: number;
 }
 
-export type CoopStatusKind = "inactive" | "traveling" | "waiting";
+export type CoopStatusKind = "inactive" | "traveling" | "waiting" | "cancelled" | "expired";
 export type CoopReadyCount = 0 | 1 | typeof COOP_REQUIRED_PLAYERS;
 
 /** JSON-safe recipient-only status. It exposes neither account identities
@@ -123,6 +123,8 @@ export interface RealmPlayer {
   coopReady: CoopReady | null;
   /** The recipient-only cooperative JSON status needs sending. */
   coopDirty: boolean;
+  /** One-shot reason for a READY claim ending while the errand stays active. */
+  coopTransition: "cancelled" | "expired" | null;
   /** Monotonic recipient-only cooperative status revision. */
   coopRevision: number;
   /** Latest confirmed journey event (seq 0 = none yet). */
@@ -161,7 +163,7 @@ export interface RealmPlayerRestore {
  *  authoritative row after compare-and-set (or null to refuse); readiness
  *  is a synchronous write-through. */
 export interface RealmArenaHooks {
-  improveRegion?(rx: number, ry: number, level: number, nowMs: number): RealmRegionState | null;
+  improveRegion?(rx: number, ry: number, level: number, nowMs: number, player: RealmPlayer): RealmRegionState | null;
   landmarkFirst?(rx: number, ry: number, player: RealmPlayer, nowMs: number): RealmRegionState | null;
   /** Synchronous write-through for every readiness write or clear. */
   persistCoopReady?(player: RealmPlayer, ready: CoopReady | null): void;
@@ -422,6 +424,7 @@ export class RealmArena {
       coopIdentity,
       coopReady: restoredCoopReady,
       coopDirty: false,
+      coopTransition: null,
       coopRevision: 0,
       event: { seq: 0, kind: JOURNEY_EVENT.none, rx: 0, ry: 0 },
       landmarks: [...(restore?.landmarks ?? [])],
@@ -573,13 +576,15 @@ export class RealmArena {
     if (errand) {
       for (const other of this.players.values()) {
         const otherReady = this.savedCoopReady(other, nowMs);
-        if (!otherReady || otherReady.targetRx !== errand.trx || otherReady.targetRy !== errand.try) continue;
+        if (!otherReady
+          || otherReady.offerRx !== errand.orx || otherReady.offerRy !== errand.ory
+          || otherReady.targetRx !== errand.trx || otherReady.targetRy !== errand.try) continue;
         if (this.presentForCoop(other, otherReady, nowMs)) identities.add(other.coopIdentity);
       }
     }
     const presentReady = Math.min(COOP_REQUIRED_PLAYERS, identities.size) as CoopReadyCount;
     return {
-      status: !errand ? "inactive" : ready ? "waiting" : "traveling",
+      status: !errand ? "inactive" : p.coopTransition ?? (ready ? "waiting" : "traveling"),
       cooperative: !!errand,
       ready,
       savedReady: !!saved,
@@ -614,19 +619,21 @@ export class RealmArena {
    *  synchronously written through to persistence. */
   expireCoopReadiness(nowMs = this.now()): number {
     const owners = new Set<number>();
-    const targets = new Set<string>();
+    const offers = new Set<string>();
     let expired = 0;
     for (const p of this.players.values()) {
       if (!p.coopReady || p.coopReady.expiresAtMs > nowMs) continue;
       owners.add(p.id);
-      targets.add(`${p.coopReady.targetRx},${p.coopReady.targetRy}`);
+      offers.add(`${p.coopReady.offerRx},${p.coopReady.offerRy}:${p.coopReady.targetRx},${p.coopReady.targetRy}`);
       this.writeCoopReady(p, null);
+      p.coopTransition = "expired";
       expired++;
     }
     if (expired > 0) {
       for (const p of this.players.values()) {
         const errand = this.cooperativeDelivery(p);
-        if (!owners.has(p.id) && (!errand || !targets.has(`${errand.trx},${errand.try}`))) continue;
+        if (!owners.has(p.id)
+          && (!errand || !offers.has(`${errand.orx},${errand.ory}:${errand.trx},${errand.try}`))) continue;
         p.coopRevision = (p.coopRevision + 1) >>> 0;
         p.coopDirty = true;
       }
@@ -650,8 +657,39 @@ export class RealmArena {
       if (!p.coopDirty) continue;
       out.push({ playerId: p.id, status: this.rawCoopStatusFor(p, nowMs) });
       p.coopDirty = false;
+      p.coopTransition = null;
     }
     return out;
+  }
+
+  /** Public notice-board aggregate for one complete deterministic offer.
+   * Distinct identities are counted only while physically READY; no identity
+   * or target position leaves the arena. */
+  coopWaitingCountForOffer(offerRx: number, offerRy: number, nowMs = this.now()): CoopReadyCount {
+    this.expireCoopReadiness(nowMs);
+    const identities = new Set<string>();
+    for (const player of this.players.values()) {
+      const ready = this.savedCoopReady(player, nowMs);
+      if (!ready || ready.offerRx !== offerRx || ready.offerRy !== offerRy) continue;
+      if (this.presentForCoop(player, ready, nowMs)) identities.add(player.coopIdentity);
+    }
+    return Math.min(COOP_REQUIRED_PLAYERS, identities.size) as CoopReadyCount;
+  }
+
+  /** Anonymous count for the deterministic cooperative offer on the board
+   * directly in front of `player`. This proximity gate prevents a client
+   * from probing sparse activity across arbitrary realm coordinates. */
+  coopBoardWaitingFor(player: RealmPlayer, offerRx: number, offerRy: number, nowMs = this.now()): CoopReadyCount | null {
+    if (this.players.get(player.id) !== player) return null;
+    const here = this.playerRegion(player);
+    if (here.rx !== offerRx || here.ry !== offerRy) return null;
+    const plan = this.townPlan(offerRx, offerRy);
+    const board = plaqueOf(plan);
+    const front = frontTile(player.state.move);
+    if (!board || board.x !== front.x || board.y !== front.y) return null;
+    const offer = townErrand(this.seed, offerRx, offerRy);
+    if (!offer || !isCooperativeErrand(this.seed, offer)) return null;
+    return this.coopWaitingCountForOffer(offerRx, offerRy, nowMs);
   }
 
   /** Settle one deterministic pair containing `player`, if two distinct
@@ -664,6 +702,8 @@ export class RealmArena {
         if (other === player || other.coopIdentity === player.coopIdentity) return false;
         const ready = this.savedCoopReady(other, nowMs);
         return !!ready
+          && ready.offerRx === mine.offerRx
+          && ready.offerRy === mine.offerRy
           && ready.targetRx === mine.targetRx
           && ready.targetRy === mine.targetRy
           && this.presentForCoop(other, ready, nowMs);
@@ -688,9 +728,9 @@ export class RealmArena {
     this.setJourney(player, mineDone.journey);
     this.confirm(partner, JOURNEY_EVENT.coopDelivered, mine.targetRx, mine.targetRy);
     this.confirm(player, JOURNEY_EVENT.coopDelivered, mine.targetRx, mine.targetRy);
-    // The pair creates one shared fact, regardless of whether one participant
-    // had helped this town before. The storage CAS still owns idempotence.
-    this.improve(mine.targetRx, mine.targetRy, 1, nowMs);
+    // A storage-backed host first guarantees that this physically occupied
+    // target has a region row, so its compare-and-set cannot silently vanish.
+    this.improve(mine.targetRx, mine.targetRy, 1, nowMs, player);
     return true;
   }
 
@@ -736,6 +776,7 @@ export class RealmArena {
       const errand = this.cooperativeDelivery(p);
       if (!errand || errand.trx !== here.rx || errand.try !== here.ry || !this.onPlaza(p, plan)) return null;
       const before = this.captureCoopStatus(nowMs);
+      p.coopTransition = null;
       const expiresAtMs = Math.min(Number.MAX_SAFE_INTEGER, nowMs + COOP_READY_TTL_MS);
       this.writeCoopReady(p, {
         offerRx: errand.orx,
@@ -751,6 +792,15 @@ export class RealmArena {
         : this.confirm(p, JOURNEY_EVENT.coopWaiting, here.rx, here.ry);
       this.finishCoopStatusChange(before, nowMs);
       return event;
+    }
+    if (cmd.kind === COMMAND.cancelCoopErrand) {
+      const ready = this.savedCoopReady(p, nowMs);
+      if (!ready) return null;
+      const before = this.captureCoopStatus(nowMs);
+      this.writeCoopReady(p, null);
+      p.coopTransition = "cancelled";
+      this.finishCoopStatusChange(before, nowMs);
+      return null;
     }
     if (cmd.kind === COMMAND.talk) {
       if (plan.empty || !plan.hub.town) return null;
@@ -810,7 +860,7 @@ export class RealmArena {
   private complete(p: RealmPlayer, errand: Errand, kind: JourneyEventKind, nowMs: number): JourneyEventKind {
     const done = journeyComplete(this.seed, p.journey, errand);
     this.setJourney(p, done.journey);
-    if (done.newlyHelped) this.improve(done.hrx, done.hry, 1, nowMs);
+    if (done.newlyHelped) this.improve(done.hrx, done.hry, 1, nowMs, p);
     return this.confirm(p, kind, done.hrx, done.hry);
   }
 
@@ -826,19 +876,23 @@ export class RealmArena {
 
   /** Raise a town's shared improvement once: the storage hook decides with
    *  a compare-and-set; in memory the level is simply monotonic. */
-  private improve(rx: number, ry: number, level: number, nowMs: number): void {
+  private improve(rx: number, ry: number, level: number, nowMs: number, player: RealmPlayer): void {
     const current = this.world.regionState(rx, ry);
     let row: RealmRegionState | null;
     if (this.hooks.improveRegion) {
-      row = this.hooks.improveRegion(rx, ry, level, nowMs);
-    } else if (!current || current.improvementLevel >= level) {
-      row = null;
+      row = this.hooks.improveRegion(rx, ry, level, nowMs, player);
+    } else if (!current) {
+      return;
+    } else if (current.improvementLevel >= level) {
+      return;
     } else {
       row = { ...current, improvementLevel: level, revision: ++this.realmRevision };
     }
-    if (!row || (current && row.revision <= current.revision)) return;
-    this.world.applyRegionState({ flags: 0, realmRevision: this.realmRevision, serverTimeMs: nowMs, rows: [row] });
-    this.changedRows.push(row);
+    if (!row) return;
+    if (!current || row.revision > current.revision) {
+      this.world.applyRegionState({ flags: 0, realmRevision: this.realmRevision, serverTimeMs: nowMs, rows: [row] });
+      this.changedRows.push(row);
+    }
   }
 
   // -- landmarks --------------------------------------------------------------------

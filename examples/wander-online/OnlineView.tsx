@@ -98,13 +98,17 @@ import { INVITE_TTL_SEC, parseInviteToken } from "./shared/invite.ts";
 import { AUTH_PROTOCOL_VERSION, NAME_MAX, validateName } from "./shared/auth.ts";
 import {
   SOCIAL_PROTOCOL_VERSION,
+  parseCoopBoardSnapshot,
   parseCoopErrandSnapshot,
+  parseCoopFriendWaiting,
   parseDiscoveryLeaderboard,
   parseRealmChoices,
   parseRealmFeatures,
   parseSelfData,
   parseSocialSnapshot,
+  type CoopBoardSnapshot,
   type CoopErrandSnapshot,
+  type CoopFriendWaiting,
   type DiscoveryLeaderboard,
   type RealmChoice,
   type RealmFeatures,
@@ -262,6 +266,10 @@ export interface OnlinePublished {
   helpedCount: number;
   /** The ERRAND bar's line. */
   errand: string;
+  /** Whole seconds left on this client's READY claim. */
+  coopRemaining: number;
+  /** Mutual visible friends currently advertised as waiting in this realm. */
+  coopWaitingFriends: number;
   /** Private landmark sightings (the travel log's length). */
   logCount: number;
   /** A talk / notice-board dialog is open (movement blocked). */
@@ -465,18 +473,32 @@ export function OnlineView() {
    * revive a response from the previous socket. */
   const featureCache = new Map<string, RealmFeatures>();
   const coopCache = new Map<string, CoopErrandSnapshot>();
+  const coopBoardCache = new Map<string, CoopBoardSnapshot>();
+  /** Alert each friend READY deadline once even when an aggregate update or
+   *  social refresh repeats the same state. Realm changes clear the keys. */
+  const coopFriendHinted = new Set<string>();
   const leaderboardCache = new Map<string, DiscoveryLeaderboard>();
   let jsonRealm = "";
+  let openCoopBoard: { realm: string; offerRx: number; offerRy: number; base: readonly string[] } | null = null;
 
   const clearRealmJson = (nextRealm = ""): void => {
     featureCache.clear();
     coopCache.clear();
+    coopBoardCache.clear();
+    coopFriendHinted.clear();
     leaderboardCache.clear();
+    openCoopBoard = null;
     jsonRealm = nextRealm;
     batch(() => {
       setRealmFeatures(null);
       setCoopErrand(null);
       setDiscoveryLeaderboard(null);
+      setSocialSnapshot((snapshot) => snapshot ? {
+        ...snapshot,
+        friends: snapshot.friends.map((friend) => friend.coopWaiting
+          ? { ...friend, coopWaiting: null }
+          : friend),
+      } : snapshot);
       setSocialState((state) => state.screen === "discovery" ? createSocialMenuState() : state);
     });
   };
@@ -490,6 +512,44 @@ export function OnlineView() {
   const coopLabel = () => locale === "zh" ? han(0x534f, 0x4f5c) : "COOP";
   const coopReadiness = (snapshot: CoopErrandSnapshot): string =>
     `${coopLabel()} ${snapshot.presentReady}/${snapshot.required}`;
+  const coopRemainingSeconds = (snapshot = coopErrand()): number => {
+    if (!snapshot?.savedReady || snapshot.expiresAt <= 0 || !client) return 0;
+    return Math.ceil(Math.max(0, snapshot.expiresAt - client.estimatedServerTime()) / 1000);
+  };
+  const coopBoardKey = (realm: string, offerRx: number, offerRy: number): string =>
+    `${realm}:${offerRx},${offerRy}`;
+  const coopBoardLine = (snapshot: CoopBoardSnapshot | null): string => {
+    if (!snapshot) {
+      return locale === "zh"
+        ? `${coopLabel()} · ${han(0x67e5, 0x8be2, 0x7b49, 0x5f85, 0x4eba, 0x6570)}…`
+        : `${coopLabel()} · CHECKING WAITERS…`;
+    }
+    const waiting = locale === "zh" ? han(0x4eba, 0x7b49, 0x5f85) : "WAITING";
+    return `${coopLabel()} · ${snapshot.waiting}/${snapshot.required} ${waiting}`;
+  };
+  const friendWaitNotice = (waiting: CoopFriendWaiting): string =>
+    `${coopLabel()} · ${waiting.friend.name} · ${waiting.targetTown} · ${waiting.item}`;
+  const coopWaitingFriendCount = (): number => {
+    if (realmFeatures()?.coopPartnerFinding !== true) return 0;
+    const realm = currentJsonRealm();
+    const now = client?.estimatedServerTime() ?? 0;
+    return socialSnapshot()?.friends.filter((friend) => friend.presence === "online"
+      && friend.realm === realm && !!friend.coopWaiting && friend.coopWaiting.expiresAt > now).length ?? 0;
+  };
+  const pruneExpiredFriendWaits = (now: number): void => {
+    if (realmFeatures()?.coopPartnerFinding !== true) return;
+    setSocialSnapshot((snapshot) => {
+      if (!snapshot || !snapshot.friends.some((friend) => friend.coopWaiting && friend.coopWaiting.expiresAt <= now)) {
+        return snapshot;
+      }
+      return {
+        ...snapshot,
+        friends: snapshot.friends.map((friend) => friend.coopWaiting && friend.coopWaiting.expiresAt <= now
+          ? { ...friend, coopWaiting: null }
+          : friend),
+      };
+    });
+  };
   // The app intentionally bakes its large GB2312 fallback only into the
   // compact 12 px slot. Chinese notices must use that slot; the 14 px Latin
   // notice slot would otherwise render every Han character as a tofu box.
@@ -691,7 +751,8 @@ export function OnlineView() {
   const handleSocialMessage = (msg: Record<string, unknown>): boolean => {
     const type = String(msg.type ?? "");
     const socialType = type === "socialSnapshot" || type === "worlds" || type === "selfData"
-      || type === "realmFeatures" || type === "coopErrand" || type === "discoveryLeaderboard"
+      || type === "realmFeatures" || type === "coopErrand" || type === "coopBoard"
+      || type === "coopFriendWaiting" || type === "discoveryLeaderboard"
       || type === "friendResult" || type === "privacyResult" || type === "socialError"
       || type === "deletedAll" || type === "deleteAllError";
     if (!socialType) return false;
@@ -706,6 +767,17 @@ export function OnlineView() {
       if (!parsed.coopErrands) {
         coopCache.delete(realm);
         setCoopErrand(null);
+      }
+      if (parsed.coopPartnerFinding !== true) {
+        coopBoardCache.clear();
+        coopFriendHinted.clear();
+        openCoopBoard = null;
+        setSocialSnapshot((snapshot) => snapshot ? {
+          ...snapshot,
+          friends: snapshot.friends.map((friend) => friend.coopWaiting
+            ? { ...friend, coopWaiting: null }
+            : friend),
+        } : snapshot);
       }
       if (!parsed.discoveryLeaderboard) {
         leaderboardCache.delete(realm);
@@ -736,7 +808,53 @@ export function OnlineView() {
       } else if (parsed.cooperative && parsed.status === "expired") {
         const suffix = locale === "zh" ? han(0x8fc7, 0x671f) : "EXPIRED";
         showNotice(`${coopLabel()} · ${suffix}`, NOTICE_EVENT_MS);
+      } else if (parsed.cooperative && parsed.status === "cancelled") {
+        const suffix = locale === "zh" ? han(0x5df2, 0x53d6, 0x6d88) : "CANCELLED";
+        showNotice(`${coopLabel()} · ${suffix}`, NOTICE_EVENT_MS);
       }
+      return true;
+    }
+    if (type === "coopBoard") {
+      const parsed = parseCoopBoardSnapshot(msg);
+      const realm = currentJsonRealm();
+      const board = openCoopBoard;
+      if (!parsed || !realm || parsed.realm !== realm || realmFeatures()?.coopPartnerFinding !== true
+        || !board || board.realm !== parsed.realm
+        || board.offerRx !== parsed.offerRx || board.offerRy !== parsed.offerRy) return true;
+      coopBoardCache.set(coopBoardKey(realm, parsed.offerRx, parsed.offerRy), parsed);
+      dialogLines = [...board.base, coopBoardLine(parsed)];
+      dialogPage = 0;
+      setDialogRows(dialogLines.slice(0, DIALOG_ROWS));
+      return true;
+    }
+    if (type === "coopFriendWaiting") {
+      const parsed = parseCoopFriendWaiting(msg);
+      const realm = currentJsonRealm();
+      if (!parsed || !realm || parsed.realm !== realm || realmFeatures()?.coopPartnerFinding !== true) return true;
+      const key = `${realm}:${parsed.friend.githubId}:${parsed.expiresAt}`;
+      if (!coopFriendHinted.has(key)) {
+        if (coopFriendHinted.size >= 256) coopFriendHinted.clear();
+        coopFriendHinted.add(key);
+        showNotice(friendWaitNotice(parsed), NOTICE_EVENT_MS);
+      }
+      setSocialSnapshot((snapshot) => {
+        if (!snapshot) return snapshot;
+        let changed = false;
+        const friends = snapshot.friends.map((friend) => {
+          if (friend.githubId !== parsed.friend.githubId || friend.presence !== "online" || friend.realm !== realm) return friend;
+          changed = true;
+          return {
+            ...friend,
+            coopWaiting: {
+              targetTown: parsed.targetTown,
+              item: parsed.item,
+              expiresAt: parsed.expiresAt,
+            },
+          };
+        });
+        return changed ? { ...snapshot, friends } : snapshot;
+      });
+      setSocialState((state) => normalizeSocialMenuState(state, socialMenuData()));
       return true;
     }
     if (type === "discoveryLeaderboard") {
@@ -753,7 +871,17 @@ export function OnlineView() {
     if (type === "socialSnapshot") {
       const parsed = parseSocialSnapshot(msg);
       if (parsed) {
-        setSocialSnapshot(parsed);
+        const realm = currentJsonRealm();
+        const allowCoop = realmFeatures()?.coopPartnerFinding === true;
+        setSocialSnapshot({
+          ...parsed,
+          friends: parsed.friends.map((friend) => friend.coopWaiting
+            && allowCoop && friend.presence === "online" && friend.realm === realm
+            ? friend
+            : friend.coopWaiting === undefined
+              ? friend
+              : { ...friend, coopWaiting: null }),
+        });
         setSocialState((state) => normalizeSocialMenuState(state, socialMenuData()));
       }
       return true;
@@ -1519,6 +1647,7 @@ export function OnlineView() {
   let dialogLines: readonly string[] = [];
   let dialogPage = 0;
   const openDialog = (lines: readonly string[]) => {
+    openCoopBoard = null;
     dialogLines = lines;
     dialogPage = 0;
     setDialogRows(lines.slice(0, DIALOG_ROWS));
@@ -1527,6 +1656,7 @@ export function OnlineView() {
   const advanceDialog = () => {
     dialogPage += DIALOG_ROWS;
     if (dialogPage >= dialogLines.length) {
+      openCoopBoard = null;
       dialogLines = [];
       dialogPage = 0;
       setDialogRows([]);
@@ -1558,7 +1688,19 @@ export function OnlineView() {
     const board = plaqueOf(plan);
     if (!board || board.x !== front.x || board.y !== front.y) return;
     if (world.regionTick(rx, ry, c.estimatedServerTime()) < board.born) return;
-    openDialog(townLines(c, world.seed, plan, null));
+    const lines = townLines(c, world.seed, plan, null);
+    const offer = townErrand(world.seed, rx, ry);
+    if (realmFeatures()?.coopPartnerFinding === true && offer && isCooperativeErrand(world.seed, offer)) {
+      const realm = currentJsonRealm();
+      if (!realm) return;
+      const key = coopBoardKey(realm, rx, ry);
+      const cached = coopBoardCache.get(key) ?? null;
+      openDialog([...lines, coopBoardLine(cached)]);
+      openCoopBoard = { realm, offerRx: rx, offerRy: ry, base: lines };
+      sendSocial({ type: "coopBoardGet", offerRx: rx, offerRy: ry });
+      return;
+    }
+    openDialog(lines);
   };
 
   /** CROSS outside dialogs: the plaza action near a town hub (accept the
@@ -1584,6 +1726,11 @@ export function OnlineView() {
       pageLog(c, seed);
       return;
     }
+    const currentCoop = coopErrand();
+    if (realmFeatures()?.coopPartnerFinding === true && currentCoop?.cooperative === true && currentCoop.savedReady > 0) {
+      c.sendCommand({ kind: COMMAND.cancelCoopErrand, rx: 0, ry: 0, extra: 0 });
+      return;
+    }
     const move = predictor.current.move;
     const rx = regionOf(move.tx), ry = regionOf(move.ty);
     const plan = predictor.world.plans.get(realmRegionKey(rx, ry));
@@ -1597,7 +1744,19 @@ export function OnlineView() {
     if (!errand) {
       const offer = townErrand(seed, rx, ry);
       if (!offer) return;
-      const cooperative = realmFeatures()?.coopErrands === true && isCooperativeErrand(seed, offer);
+      const features = realmFeatures();
+      const eligible = isCooperativeErrand(seed, offer);
+      // REGION_STATE makes the plaza actionable before the additive JSON
+      // capability necessarily arrives. Never turn a deterministic co-op
+      // offer into a permanent solo acceptance during that small window.
+      if (eligible && features === null) {
+        const checking = locale === "zh"
+          ? han(0x6b63, 0x5728, 0x68c0, 0x67e5, 0x4e16, 0x754c, 0x529f, 0x80fd, 0x2026)
+          : "CHECKING WORLD FEATURES…";
+        showNotice(checking, NOTICE_EMPTY_MS);
+        return;
+      }
+      const cooperative = features?.coopErrands === true && eligible;
       c.sendCommand({ kind: cooperative ? COMMAND.acceptCoopErrand : COMMAND.acceptErrand, rx, ry, extra: 0 });
     } else if (errand.kind === "deliver" && errand.trx === rx && errand.try === ry) {
       // A legacy server never advertises co-op, so deterministic co-op-
@@ -1700,6 +1859,7 @@ export function OnlineView() {
     const realm = c.predictor instanceof RealmPredictor;
     const seed = c.predictor?.world.seed ?? 0;
     const mode = h.fast ? "FAST" : autoMode ? "AUTO" : "YOU";
+    pruneExpiredFriendWaits(c.estimatedServerTime());
     batch(() => {
       setStatusText(status);
       setNameLine(`${roster.get(c.myId)?.name ?? (login() || "?")} · ROOM ${h.online} · ALL ${h.allOnline}`);
@@ -1721,7 +1881,14 @@ export function OnlineView() {
         const base = errandHudText(resolveErrand(seed, c.journey), c.journey.helpedCount);
         const coop = coopErrand();
         const activeCoop = coop?.cooperative === true && (coop.status === "travel" || coop.status === "waiting");
-        setErrandText(activeCoop ? `${base}   ${coopReadiness(coop)}` : base);
+        if (activeCoop && coop.savedReady > 0 && realmFeatures()?.coopPartnerFinding === true) {
+          const seconds = coopRemainingSeconds(coop);
+          const cancel = locale === "zh" ? han(0x53d6, 0x6d88) : "CANCEL";
+          const second = locale === "zh" ? han(0x79d2) : "s";
+          setErrandText(`${coopReadiness(coop)} · ${seconds}${second} · X ${cancel}`);
+        } else {
+          setErrandText(activeCoop ? `${base}   ${coopReadiness(coop)}` : base);
+        }
       }
     });
   };
@@ -1755,6 +1922,8 @@ export function OnlineView() {
     out.fast = h?.fast ?? false;
     out.helpedCount = h?.helpedCount ?? 0;
     out.errand = errandText();
+    out.coopRemaining = coopRemainingSeconds();
+    out.coopWaitingFriends = coopWaitingFriendCount();
     out.logCount = h?.progressCount ?? 0;
     out.dialog = dialogOpen();
     out.login = login();
