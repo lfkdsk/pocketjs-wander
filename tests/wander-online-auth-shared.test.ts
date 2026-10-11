@@ -39,6 +39,14 @@ describe("shared auth: ticket signer", () => {
     expect(await signer.verify(ticket, T0 + 100)).toBeNull();
   });
 
+  test("a random uint32 account incarnation round-trips", async () => {
+    const signer = await TicketSigner.generate();
+    const ticket = await signer.issue(7, 0xffff_ffff, T0, 100);
+    expect((await signer.verify(ticket, T0))?.version).toBe(0xffff_ffff);
+    const tooLarge = await signer.issue(7, 0x1_0000_0000, T0, 100);
+    expect(await signer.verify(tooLarge, T0)).toBeNull();
+  });
+
   test("a tampered ticket is rejected", async () => {
     const signer = await TicketSigner.generate();
     const ticket = await signer.issue(12345, 1, T0);

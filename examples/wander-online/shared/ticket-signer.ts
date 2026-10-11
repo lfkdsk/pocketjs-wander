@@ -83,12 +83,17 @@ export class TicketSigner {
     const parts = ticket.split(".");
     if (parts.length !== 4) return null;
     const [idStr, verStr, expStr, sig] = parts as [string, string, string, string];
-    if (!/^\d{1,12}$/.test(idStr) || !/^\d{1,6}$/.test(verStr) || !/^\d{1,11}$/.test(expStr)) return null;
+    // Account incarnations are random uint32 values after full-data deletion,
+    // so a previously issued ticket cannot revive when the same GitHub user
+    // returns.  Legacy one-to-six-digit profile versions remain valid.
+    if (!/^\d{1,12}$/.test(idStr) || !/^\d{1,10}$/.test(verStr) || !/^\d{1,11}$/.test(expStr)) return null;
     const payload = `${idStr}.${verStr}.${expStr}`;
     if (!(await this.verifyPayload(payload, sig))) return null;
     const expiry = Number(expStr);
     if (expiry <= now) return null;
-    return { githubId: Number(idStr), version: Number(verStr), expiry };
+    const version = Number(verStr);
+    if (!Number.isSafeInteger(version) || version < 1 || version > 0xffff_ffff) return null;
+    return { githubId: Number(idStr), version, expiry };
   }
 
   private async signPayload(payload: string): Promise<string> {
