@@ -2,7 +2,12 @@
 // client-only protocol behavior that does not need the loopback Bun server.
 import { describe, expect, test } from "bun:test";
 import { SocketError, type PocketSocket, type SocketCloseEvent, type SocketReadyState } from "@pocketjs/framework/socket";
-import { OnlineClient, realmEndpoint, type SocketFactory } from "../examples/wander-online/net/client.ts";
+import {
+  OnlineClient,
+  UPGRADE_REQUIRED_CLOSE_CODE,
+  realmEndpoint,
+  type SocketFactory,
+} from "../examples/wander-online/net/client.ts";
 import {
   BTN,
   MSG,
@@ -25,6 +30,7 @@ import { WINDOW } from "../examples/wander/window.ts";
 interface SocketHarness {
   factory: SocketFactory;
   sent: (string | Uint8Array | ArrayBuffer)[];
+  closeRequests: { code: number; reason: string }[];
   open: () => void;
   refusedOpen: () => void;
   refusedSendOpen: () => void;
@@ -37,6 +43,13 @@ function socketHarness(): SocketHarness {
   let state: SocketReadyState = "connecting";
   let sendError: SocketError | null = null;
   const sent: (string | Uint8Array | ArrayBuffer)[] = [];
+  const closeRequests: { code: number; reason: string }[] = [];
+  const deliverClose = (code: number, reason: string): void => {
+    if (state === "closed") return;
+    state = "closed";
+    const event: SocketCloseEvent = { code, reason, clean: code === 1000 };
+    socket.onClose?.(event);
+  };
   const socket: PocketSocket = {
     url: "ws://unit.test/ws",
     protocol: "",
@@ -50,15 +63,18 @@ function socketHarness(): SocketHarness {
       return true;
     },
     close(code = 1000, reason = ""): void {
+      if (code !== 1000 && (!Number.isInteger(code) || code < 3000 || code > 4999)) {
+        throw new RangeError(`invalid client WebSocket close code ${code}`);
+      }
       if (state === "closed") return;
-      state = "closed";
-      const event: SocketCloseEvent = { code, reason, clean: code === 1000 };
-      socket.onClose?.(event);
+      closeRequests.push({ code, reason });
+      deliverClose(code, reason);
     },
   };
   return {
     factory: () => socket,
     sent,
+    closeRequests,
     open: () => {
       state = "open";
       socket.onOpen?.();
@@ -79,7 +95,9 @@ function socketHarness(): SocketHarness {
     refuseSend: (error = new SocketError("closed", "socket: socket is not open")) => {
       sendError = error;
     },
-    close: (code, reason) => socket.close(code, reason),
+    // Peer-originated close codes are not subject to the browser's narrower
+    // rule for close codes initiated by this client.
+    close: deliverClose,
     message: (data) => socket.onMessage?.(typeof data === "string" ? data : new Uint8Array(data)),
   };
 }
@@ -207,6 +225,59 @@ describe("wander-online client core", () => {
     harness.refuseSend(new SocketError("protocol", "socket: malformed test frame"));
     expect(() => client.onFrame(BTN.left, 60, 0)).toThrow("socket: malformed test frame");
     client.stop();
+  });
+
+  test("an incompatible WELCOME4 uses a private close without retrying, while server 1008 remains compatible", () => {
+    const incompatible = socketHarness();
+    let now = 1_000;
+    let connectionCount = 0;
+    const client = new OnlineClient("ws://unit.test/ws", {
+      now: () => now,
+      socketFactory: (url, opts) => {
+        connectionCount++;
+        return incompatible.factory(url, opts);
+      },
+    });
+    incompatible.open();
+
+    // Keep the WELCOME4 discriminator but truncate its fixed payload so the
+    // client must reject it before accepting a world epoch.
+    const malformedWelcome = realmWelcome().slice(0, 41);
+    expect(() => incompatible.message(malformedWelcome)).not.toThrow();
+    expect(incompatible.closeRequests).toEqual([{
+      code: UPGRADE_REQUIRED_CLOSE_CODE,
+      reason: "upgrade-required",
+    }]);
+    expect(client.hud()).toMatchObject({
+      status: "rejected",
+      rejectReason: "upgrade-required",
+      rejectText: "WORLD UPDATE REQUIRED",
+      retryIn: 0,
+    });
+
+    now += 120_000;
+    client.onFrame(0, 60, 0);
+    expect(connectionCount).toBe(1);
+
+    // A hosted server can still originate the standard 1008 policy close;
+    // it is delivered as a peer event, not mistaken for a client request.
+    const refused = socketHarness();
+    const refusedClient = new OnlineClient("ws://unit.test/ws", {
+      now: () => now,
+      socketFactory: refused.factory,
+    });
+    refused.open();
+    refused.close(1008, "upgrade-required");
+    expect(refused.closeRequests).toEqual([]);
+    expect(refusedClient.hud()).toMatchObject({
+      status: "rejected",
+      rejectReason: "upgrade-required",
+      rejectText: "WORLD UPDATE REQUIRED",
+      retryIn: 0,
+    });
+
+    client.stop();
+    refusedClient.stop();
   });
 
   test("v4 route, JOIN capability and epoch-aware state are explicit", () => {

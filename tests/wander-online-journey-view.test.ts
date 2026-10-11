@@ -171,6 +171,14 @@ async function enterWorld(w: World): Promise<void> {
   pump(w, 6);
 }
 
+/** Join without requiring a town: contrast fixtures deliberately include
+ *  open grass, sand, snow and a water edge. */
+async function enterRealm(w: World): Promise<void> {
+  pump(w, 5);
+  await waitFor(w, () => state()?.status === "joined", "v4 joined");
+  pump(w, 12);
+}
+
 function press(w: World, btn: number): void {
   pump(w, 1, btn);
   pump(w, 1, 0);
@@ -299,6 +307,34 @@ function nameTag(W: number, H: number, text: string): { x0: number; x1: number; 
   const spriteX = Math.floor(W / 2) - TILE / 2, spriteY = Math.floor(H / 2) - TILE / 2;
   const x0 = spriteX + TILE / 2 - NAME_LABEL_W / 2;
   return { x0, x1: x0 + NAME_LABEL_W, y0: spriteY - 14, textX: x0 + Math.floor((NAME_LABEL_W - measure(text)) / 2) };
+}
+
+/** Count fully dark outline pixels one pixel to a given side of a fully
+ *  white foreground pixel. Requiring the blank frame to differ prevents a
+ *  naturally dark terrain pixel from impersonating the outline. */
+function directionalOutlinePixels(
+  named: Uint8Array,
+  blank: Uint8Array,
+  stride: number,
+  tag: ReturnType<typeof nameTag>,
+  dx: number,
+  dy: number,
+): number {
+  let n = 0;
+  for (let y = tag.y0 - 1; y < tag.y0 + CELL_ROWS; y++) {
+    for (let x = tag.x0; x < tag.x1; x++) {
+      const fi = (y * stride + x) * 4;
+      const foreground = named[fi]! + named[fi + 1]! + named[fi + 2]! >= 660;
+      if (!foreground) continue;
+      const ox = x + dx, oy = y + dy;
+      if (ox < 0 || ox >= stride || oy < 0) continue;
+      const oi = (oy * stride + ox) * 4;
+      const namedLuma = named[oi]! + named[oi + 1]! + named[oi + 2]!;
+      const blankLuma = blank[oi]! + blank[oi + 1]! + blank[oi + 2]!;
+      if (namedLuma <= 300 && blankLuma - namedLuma >= 36) n++;
+    }
+  }
+  return n;
 }
 
 const unmount = (w: World): void => { w.frame(0); };
@@ -540,6 +576,34 @@ simDescribe("wander-online journey view: auto-walk and fast", () => {
 });
 
 simDescribe("wander-online journey view: text fits", () => {
+  test("the local name has a rendered four-sided dark outline on grass, sand, snow and a water edge", async () => {
+    const terrains = [
+      ["grass", -76, -390],
+      ["sand", 40, -400],
+      ["snow", -358, -396],
+      ["water edge", 135, -549],
+    ] as const;
+    const W = 480, H = 272;
+    for (const [terrain, x, y] of terrains) {
+      const f = fixture(x, y, { name: "Octo" });
+      const w = await boot(f.opts, W, H);
+      await enterRealm(w);
+      const roster = (name: string) => {
+        f.socket().onMessage?.(new Uint8Array(encodeRoster([{ id: 1, name, look: f.opts.look! }])));
+        pump(w, 2);
+      };
+      roster(" ");
+      const blank = w.render().slice();
+      roster("Octo");
+      const named = w.render().slice();
+      const tag = nameTag(W, H, "Octo");
+      for (const [side, dx, dy] of [["left", -1, 0], ["right", 1, 0], ["up", 0, -1], ["down", 0, 1]] as const) {
+        expect(directionalOutlinePixels(named, blank, W, tag, dx, dy), `${terrain}: ${side} outline pixels`).toBeGreaterThan(0);
+      }
+      unmount(w);
+    }
+  }, 40_000);
+
   for (const [W, H] of [[480, 272], [960, 544]] as const) {
     test(`${W}x${H}: a CJK first/local name, a long log line and the errand line fit their boxes and paint`, async () => {
       const town = errandTown();

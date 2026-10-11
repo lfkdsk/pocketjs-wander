@@ -41,11 +41,35 @@
         },
         {
           "button": "CIRCLE",
-          "action": "Confirm"
+          "action": "Talk / confirm"
         },
         {
           "button": "CROSS",
-          "action": "Cancel / back"
+          "action": "Act / log / back"
+        },
+        {
+          "button": "TRIANGLE",
+          "action": "Fast travel"
+        },
+        {
+          "button": "SQUARE",
+          "action": "Delete profile (menu)"
+        },
+        {
+          "button": "LTRIGGER",
+          "action": "Invite friend (menu)"
+        },
+        {
+          "button": "RTRIGGER",
+          "action": "Emotes / any world (menu)"
+        },
+        {
+          "button": "SELECT",
+          "action": "Menu"
+        },
+        {
+          "button": "START",
+          "action": "Auto-walk (menu)"
         }
       ],
       "languages": [
@@ -67,8 +91,14 @@
           "description": "一个共享的多人世界：使用 GitHub 登录、创建角色，并与其他玩家实时同行。",
           "controls": {
             "Walk": "行走",
-            "Confirm": "确认",
-            "Cancel / back": "取消 / 返回"
+            "Talk / confirm": "交谈 / 确认",
+            "Act / log / back": "互动 / 日志 / 返回",
+            "Fast travel": "快速移动",
+            "Delete profile (menu)": "删除角色（菜单）",
+            "Invite friend (menu)": "邀请好友（菜单）",
+            "Emotes / any world (menu)": "表情 / 任意世界（菜单）",
+            "Menu": "菜单",
+            "Auto-walk (menu)": "自动行走（菜单）"
           }
         }
       },

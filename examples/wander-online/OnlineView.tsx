@@ -729,7 +729,13 @@ export function OnlineView() {
   const lookCache = new TileTextureCache({ maxEntries: 64, maxBytes: 96 * 1024 });
   const LOOK_POSE_KEY = ["idle", "walkL", "walkR"] as const;
   let local: NodeMirror | null = null;
-  let localName: NodeMirror | null = null;
+  interface LocalNameplate {
+    root: NodeMirror;
+    outlines: NodeMirror[];
+    label: NodeMirror;
+    text: string;
+  }
+  let localName: LocalNameplate | null = null;
   let localBubble: Bubble | null = null;
   let localRec: SpriteRec = { tileRef: null, tileIdx: -1 };
   /** An emote bubble: a small plate with the preset's glyph, above the
@@ -778,6 +784,28 @@ export function OnlineView() {
   /** Test hook: increments when a remote node is born or recycled (the
    *  steady state must not churn the pool). */
   let nodeChurn = 0;
+
+  /** White alone disappears over snow. Four one-pixel dark copies preserve
+   *  each glyph edge without putting an opaque plate over the terrain. */
+  const makeLocalNameplate = (parent: NodeMirror): LocalNameplate => {
+    const root = createElement("view");
+    setProp(root, "style", { posType: 1, insetL: 0, insetT: 0, width: NAME_LABEL_W, height: 12 });
+    setProp(root, "debugName", "online-local-nameplate");
+    insertNode(parent, root);
+    const outlines: NodeMirror[] = [];
+    for (const [dx, dy, side] of [[-1, 0, "left"], [1, 0, "right"], [0, -1, "up"], [0, 1, "down"]] as const) {
+      const outline = createElement("text");
+      setProp(outline, "style", { posType: 1, insetL: dx, insetT: dy, width: NAME_LABEL_W, height: 12, textColor: "#0b1626", lineHeight: 12, textAlign: 1 });
+      setProp(outline, "debugName", `online-local-name-outline-${side}`);
+      insertNode(root, outline);
+      outlines.push(outline);
+    }
+    const label = createElement("text");
+    setProp(label, "style", { posType: 1, insetL: 0, insetT: 0, width: NAME_LABEL_W, height: 12, textColor: "#ffffff", lineHeight: 12, textAlign: 1 });
+    setProp(label, "debugName", "online-local-name");
+    insertNode(root, label);
+    return { root, outlines, label, text: "" };
+  };
 
   const cameraResult = { x: 0, y: 0, tx: 0, ty: 0 };
   const camera = () => {
@@ -965,12 +993,8 @@ export function OnlineView() {
       setProp(node, "style", { posType: 1, insetL: 0, insetT: 0, width: TILE, height: TILE });
       setProp(node, "debugName", "online-local");
       insertNode(r.sprites, node);
-      const label = createElement("text");
-      setProp(label, "style", { posType: 1, insetL: 0, insetT: 0, width: NAME_LABEL_W, height: 12, textColor: "#ffffff", lineHeight: 12, textAlign: 1 });
-      setProp(label, "debugName", "online-local-name");
-      insertNode(nameOverlay!, label);
       local = node;
-      localName = label;
+      localName = makeLocalNameplate(nameOverlay!);
       localBubble = makeBubble(nameOverlay!, "online-local-emote");
     }
     c.expireEmotes(now);
@@ -984,9 +1008,14 @@ export function OnlineView() {
     const ly = Math.round((worldY0 - r.oy) * TILE + p.move.py);
     jump(myNode, "translateX", lx);
     jump(myNode, "translateY", ly);
-    getOps().setText(myLabel.id, roster.get(c.myId)?.name ?? login());
-    jump(myLabel, "translateX", lx + TILE / 2 - NAME_LABEL_W / 2);
-    jump(myLabel, "translateY", ly - 14);
+    const myName = roster.get(c.myId)?.name ?? login();
+    if (myLabel.text !== myName) {
+      myLabel.text = myName;
+      for (const outline of myLabel.outlines) replaceText(outline, myName);
+      replaceText(myLabel.label, myName);
+    }
+    jump(myLabel.root, "translateX", lx + TILE / 2 - NAME_LABEL_W / 2);
+    jump(myLabel.root, "translateY", ly - 14);
     placeBubble(localBubble!, c.emotes.get(c.myId)?.emote ?? 0, lx, ly);
 
     // Frozen-world residents follow the same reducer event state and

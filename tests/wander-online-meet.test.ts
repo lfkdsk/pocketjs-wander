@@ -479,10 +479,12 @@ describe("loopback server: pins, invites, far band and emotes", () => {
     expect(await b.nextClose(50)).toBeUndefined();
   }, 20_000);
 
-  test("a player outside the AOI is a far row (octant + band), never an entity; inside it is the reverse", async () => {
+  test("FAR cadence is independent of snapshots and follows STATE4 when both are due", async () => {
     // A dedicated manual server keeps the real socket/broadcast path but
     // advances simulation cadence by frame count, independent of host load.
-    const manual = startServer({ port: 0, seed: SEED, hz: 20, broadcastHz: 10, aoi: 16, simLatency: 0, webRoot: "", allowGuests: true, realmEpoch: 0x1234, manualTick: true });
+    // Twenty ticks and six snapshots per second deliberately do not align:
+    // snapshots are every three frames, while FAR is every twenty.
+    const manual = startServer({ port: 0, seed: SEED, hz: 20, broadcastHz: 6, aoi: 16, simLatency: 0, webRoot: "", allowGuests: true, realmEpoch: 0x1234, manualTick: true });
     const localSockets: TestSocket[] = [];
     const join = async (name: string): Promise<TestSocket> => {
       const socket = await connect(`ws://127.0.0.1:${manual.port}/ws/v4`);
@@ -508,9 +510,9 @@ describe("loopback server: pins, invites, far band and emotes", () => {
       const walker = await join("walker");
       const ww = decodeWelcome4((await nextOfKind(walker, MSG.welcome4))!)!;
 
-      // The first 10 Hz snapshot proves the inside half of the contract.
-      manual.advance(2);
-      const inside = await stateAt(near, 2);
+      // The first snapshot proves the inside half of the contract.
+      manual.advance(3);
+      const inside = await stateAt(near, 3);
       expect(inside.entities.map((e) => e.id)).toEqual([wn.you, ww.you]);
 
       // Positioning is test setup, not movement coverage: guest spawn is
@@ -527,16 +529,35 @@ describe("loopback server: pins, invites, far band and emotes", () => {
       walkerPlayer.buttons = 0;
       walkerPlayer.queue.length = 0;
 
-      // Frame 20 is both a 10 Hz snapshot boundary and the one-second FAR
-      // boundary. The state and far row therefore describe the same frame.
-      manual.advance(18);
-      const outside = await stateAt(near, 20);
+      // Frame 18 proves the walker has left exact AOI before the first FAR
+      // boundary. Frames 20 and 40 are not snapshot boundaries at 6 Hz.
+      manual.advance(15);
+      const outside = await stateAt(near, 18);
       expect(outside.entities.map((e) => e.id)).toEqual([wn.you]);
-      const farWire = await nextOfKind(near, MSG.farPlayers);
-      expect(farWire).not.toBeNull();
-      expect(farWire!.byteLength).toBe(8);
+
+      manual.advance(1);
+      expect(await nextOfKind(near, MSG.farPlayers, 100)).toBeNull();
+      manual.advance(1);
+      const far20 = await nextOfKind(near, MSG.farPlayers);
+      expect(far20).not.toBeNull();
+      expect(far20!.byteLength).toBe(8);
       expect(FAR_PLAYERS_ROW_BYTES).toBe(6);
-      expect(decodeFarPlayers(farWire!)).toEqual([{ id: ww.you, dir: 2, band: 0 }]);
+      expect(decodeFarPlayers(far20!)).toEqual([{ id: ww.you, dir: 2, band: 0 }]);
+
+      manual.advance(19);
+      expect(await nextOfKind(near, MSG.farPlayers, 100)).toBeNull();
+      manual.advance(1);
+      const far40 = await nextOfKind(near, MSG.farPlayers);
+      expect(far40).not.toBeNull();
+      expect(decodeFarPlayers(far40!)).toEqual([{ id: ww.you, dir: 2, band: 0 }]);
+
+      // Frame 60 is the first coincident boundary. STATE4 must be observed
+      // before FAR_PLAYERS; reversing the wire order makes the FAR wait fail.
+      manual.advance(20);
+      expect((await stateAt(near, 60)).frame).toBe(60);
+      const far60 = await nextOfKind(near, MSG.farPlayers);
+      expect(far60).not.toBeNull();
+      expect(decodeFarPlayers(far60!)).toEqual([{ id: ww.you, dir: 2, band: 0 }]);
     } finally {
       for (const socket of localSockets) socket.close();
       manual.close();

@@ -340,8 +340,9 @@ bash examples/wander-online/demo.sh --runs 1    # one mutual-visibility run
 - **Mutual visibility** (repeated 3×): the server, then two headless desktop
   hosts, then a headless chrome tab are started in a fixed order. Each
   client's state is read (not its screenshot): the web client is driven over
-  the DevTools Protocol (`web-check.ts`) and must report `online === 3` with
-  two remote players that move; each desktop log must record `online: 3`.
+  the DevTools Protocol (`web-check.ts`), explicitly opts into auto-walk and
+  must report `online === 3` with two remote players while movement is live;
+  each desktop log must record `online: 3`.
 - **Latency**: a server with `--sim-latency 150` (300 ms RTT) and one desktop
   host: prediction keeps corrections at the join baseline.
 - **Restart**: the server is SIGKILLed under a desktop host and a chrome tab

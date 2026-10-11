@@ -161,32 +161,35 @@ export function startServer(opts: ServerOpts): ServerHandle {
     else send(conn, buf);
   }
 
-  function broadcast(): void {
-    arena.indexPlayers();
-    const online = arena.players.size;
-    for (const p of arena.players.values()) {
-      const conn = conns.get(p.id);
-      if (!conn) continue;
-      stats.snapshots++;
-      // The local Bun server owns one room, so room and service population
-      // are the same. Hosted multi-room servers pass their aggregate second.
-      emit(conn, snapshotFor(arena, p, opts.aoi, online, online));
+  function broadcast(snapshotDue: boolean, farDue: boolean): void {
+    if (snapshotDue) {
+      arena.indexPlayers();
+      const online = arena.players.size;
+      for (const p of arena.players.values()) {
+        const conn = conns.get(p.id);
+        if (!conn) continue;
+        stats.snapshots++;
+        // The local Bun server owns one room, so room and service population
+        // are the same. Hosted multi-room servers pass their aggregate second.
+        emit(conn, snapshotFor(arena, p, opts.aoi, online, online));
+      }
+      realmArena.indexPlayers();
     }
-    realmArena.indexPlayers();
     const realmOnline = realmArena.players.size;
-    const far = realmArena.frame % farMod === 0;
     for (const p of realmArena.players.values()) {
       const conn = realmConns.get(p.id);
       if (!conn) continue;
-      stats.snapshots++;
-      // Reliable WebSocket ordering makes the current region facts visible
-      // before the movement snapshot that was simulated from them.
-      emit(conn, encodeRegionState(realmArena.regionSnapshotFor(p, 0)));
-      flushPrivate(p, conn);
-      emit(conn, snapshotForRealm(realmArena, p, opts.aoi, realmOnline, realmOnline));
+      if (snapshotDue) {
+        stats.snapshots++;
+        // Reliable WebSocket ordering makes the current region facts visible
+        // before the movement snapshot that was simulated from them.
+        emit(conn, encodeRegionState(realmArena.regionSnapshotFor(p, 0)));
+        flushPrivate(p, conn);
+        emit(conn, snapshotForRealm(realmArena, p, opts.aoi, realmOnline, realmOnline));
+      }
       // Once a second: the coarse direction band for everyone out of AOI.
       // Nothing is sent when nobody is far; the client expires stale rows.
-      if (far) {
+      if (farDue) {
         const rows = realmArena.farRowsFor(p, opts.aoi);
         if (rows.length > 0) emit(conn, encodeFarPlayers(rows));
       }
@@ -236,7 +239,9 @@ export function startServer(opts: ServerOpts): ServerHandle {
       realmArena.step();
       stats.ticks++;
       flushChangedRows();
-      if (arena.frame % frameMod === 0) broadcast();
+      const snapshotDue = arena.frame % frameMod === 0;
+      const farDue = realmArena.frame % farMod === 0;
+      if (snapshotDue || farDue) broadcast(snapshotDue, farDue);
     }
   };
   const tickTimer = opts.manualTick ? undefined : setInterval(advance, 1000 / opts.hz);

@@ -14,10 +14,11 @@
 // Recovery model (after open-strike's CROSSPLAY.md):
 //   - onClose: backoff (1s, 2s, 4s, ... 10s cap) and reconnect. A server
 //     restart looks the same: connect retries until the server is back.
-//   - a close carrying a hosted-server reason (1008 + token) changes the
-//     policy: "full"/"rest" retry on a SLOW backoff (the condition clears in
-//     minutes, not seconds); "rate"/"ip"/"origin" do not reconnect at all
-//     (retrying would just be rejected again); "idle" reconnects normally.
+//   - a close carrying a hosted-server reason (1008 + token), or the echoed
+//     client-side upgrade-required close, changes the policy: "full"/"rest"
+//     retry on a SLOW backoff (the condition clears in minutes, not seconds);
+//     "rate"/"ip"/"origin" do not reconnect at all (retrying would just be
+//     rejected again); "idle" reconnects normally.
 //   - 2 s without a STATE snapshot: freeze local gameplay (stop predicting
 //     and sending), then start a fresh join. The server is authoritative;
 //     a frozen client cannot diverge.
@@ -72,6 +73,9 @@ const BACKOFF_MAX_MS = 10_000;
  *  retries (15 s, 30 s, 60 s cap). */
 const SLOW_BACKOFF_START_MS = 15_000;
 const SLOW_BACKOFF_MAX_MS = 60_000;
+/** Private-use code for a client that cannot accept the server's WELCOME4.
+ *  WebSocket clients may initiate only 1000 or 3000..4999 closes. */
+export const UPGRADE_REQUIRED_CLOSE_CODE = 4000;
 /** D-pad bits the arena understands. */
 const DPAD = BTN.up | BTN.right | BTN.down | BTN.left;
 
@@ -216,7 +220,7 @@ export interface OnlineHud {
   /** Distinct towns this player helped (private journey). */
   helpedCount: number;
   /** Hosted-server rejection token ("full", "rate", ...) when the last
-   *  close was a 1008 policy rejection, else null. */
+   *  close was a policy rejection, else null. */
   rejectReason: string | null;
   /** Human-readable rejection text for the HUD, null when not rejected. */
   rejectText: string | null;
@@ -265,7 +269,7 @@ export class OnlineClient {
   grid: Uint8Array | null = null;
   predictor: Predictor | RealmPredictor | null = null;
   readonly interp = new Interpolator();
-  /** Last 1008 rejection token, if any (cleared on a successful join). */
+  /** Last policy rejection token, if any (cleared on a successful join). */
   rejectReason: string | null = null;
   /** id -> name/look from the last ROSTER. */
   roster: Map<number, RosterEntry> = new Map();
@@ -456,10 +460,13 @@ export class OnlineClient {
   }
 
   /** Apply the reconnect policy for a close. A 1008 + token is a hosted
-   *  server's deliberate rejection: capacity/budget retries slowly,
+   *  server's deliberate rejection; 4000 + upgrade-required is the echo of
+   *  our own incompatible-WELCOME close. Capacity/budget retries slowly,
    *  policy violations do not retry, anything else reconnects normally. */
   private handleClose(code: number, reason: string): void {
-    const token = code === 1008 && REJECT_TEXT[reason] ? reason : "";
+    const serverPolicy = code === 1008;
+    const upgradeRequiredEcho = code === UPGRADE_REQUIRED_CLOSE_CODE && reason === "upgrade-required";
+    const token = (serverPolicy || upgradeRequiredEcho) && REJECT_TEXT[reason] ? reason : "";
     if (token) this.rejectReason = token;
     switch (policyFor(token)) {
       case "never":
@@ -578,7 +585,7 @@ export class OnlineClient {
       if (!decoded || decoded.welcome.generatorVersion !== GENERATOR_VERSION) {
         this.rejectReason = "upgrade-required";
         this.status = "rejected";
-        this.socket?.close(1008, "upgrade-required");
+        this.socket?.close(UPGRADE_REQUIRED_CLOSE_CODE, "upgrade-required");
         return;
       }
       const welcome = decoded.welcome;

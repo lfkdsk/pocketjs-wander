@@ -5,7 +5,7 @@
 // plate, plus one frame per size with a 12-code-point CJK local player name
 // (name tag, HUD name line and FIRST suffix) and its English counterpart.
 //
-//   bun tools/wander-online-journey-shots.ts [outdir]
+//   bun tools/wander-online-journey-shots.ts [outdir] [--nameplate-only]
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { bootWorld } from "../vendor/pocket-rpgkit/vendor/pocketjs/hosts/sim/sim.ts";
@@ -20,6 +20,7 @@ import { townErrand } from "../examples/wander/towns.ts";
 import type { OnlinePublished } from "../examples/wander-online/OnlineView.tsx";
 
 const out = process.argv[2] ?? "./wander-online-journey-shots";
+const nameplateOnly = process.argv.includes("--nameplate-only");
 mkdirSync(out, { recursive: true });
 
 /** The journey view test's realm: region (4,0) is West Roserest, hub
@@ -113,6 +114,12 @@ async function enterWorld(w: World): Promise<void> {
   pump(w, 12);
 }
 
+async function enterRealm(w: World): Promise<void> {
+  pump(w, 5);
+  await waitFor(w, () => state()?.status === "joined", "joined");
+  pump(w, 12);
+}
+
 function press(w: World, btn: number): void {
   pump(w, 1, btn);
   pump(w, 1, 0);
@@ -138,10 +145,24 @@ async function shot(name: string, w: number, h: number, fb: Uint8Array): Promise
   console.log(`${name}.${w}x${h}.png`);
 }
 
+async function shot3x(name: string, w: number, h: number, fb: Uint8Array): Promise<void> {
+  writeFileSync(join(out, `${name}.${w}x${h}-3x.png`), encodePNG(scale3(fb, w, h), w * 3, h * 3));
+  console.log(`${name}.${w}x${h}-3x.png`);
+}
+
 async function main() {
   const town = errandTown();
   const hub = regionHub(SEED, town.rx, town.ry);
   for (const [w, h] of [[480, 272], [960, 544]] as const) {
+    if (nameplateOnly) {
+      // The deterministic snow-field fixture is the worst case for a white
+      // local name; capture only the requested 3x acceptance frames.
+      const world = await boot(realm(-358, -396, { name: CJK_LOCAL_NAME }), w, h);
+      await enterRealm(world);
+      await shot3x("snow-nameplate", w, h, world.render());
+      world.frame(0);
+      continue;
+    }
     // (a) The notice board's dialog, read from one tile above it.
     {
       const world = await boot(realm(TOWN.board.x, TOWN.board.y - 1), w, h);
