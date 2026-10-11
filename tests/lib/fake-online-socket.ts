@@ -94,6 +94,9 @@ export interface FakeOnlineOpts {
   deleteReply?:
     | { type: "deletedAll"; v: 1; realms?: string[] }
     | { type: "deleteAllError"; v: 1; reason: string };
+  /** Optional self-service response, including the profile:null shape used by
+   * authenticated legacy accounts that have not created a character. */
+  selfReply?: { type: "selfData"; v: 1; data: Record<string, unknown> };
   /** Replies consumed in order for desktop {"type":"linkr"} attempts. */
   linkReplies?: readonly (
     | { type: "linked"; ticket: string; login?: string }
@@ -249,6 +252,8 @@ export function fakeOnlineSocketFactory(opts: FakeOnlineOpts): (url: string) => 
           } else if (msg.type === "deleteAll") {
             const reply = opts.deleteReply ?? { type: "deleteAllError", v: 1, reason: "delete-unavailable" };
             sock.onMessage?.(JSON.stringify(reply));
+          } else if (msg.type === "selfGet") {
+            if (opts.selfReply) sock.onMessage?.(JSON.stringify(opts.selfReply));
           } else if (msg.type === "linkr") {
             const reply = linkReplies.shift();
             if (reply) sock.onMessage?.(JSON.stringify(reply));

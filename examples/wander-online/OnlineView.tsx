@@ -13,7 +13,7 @@
 //              clock, and the single-player gameplay (talk, notice boards,
 //              plaza errands, the travel log and rumors) runs with the
 //              server as the authority. A SELECT menu links a device,
-//              deletes the profile, and toggles debug and auto-walk.
+//              deletes all account data, and toggles debug and auto-walk.
 //
 // The net client (net/client.ts) owns the socket, prediction and
 // interpolation; this view presents it and drives the auth handshake.
@@ -531,7 +531,7 @@ export function OnlineView() {
       social: socialSnapshot(),
       realms: realmChoices(),
       self: selfData(),
-      currentRealm: client?.realmId || client?.realmPin || null,
+      currentRealm: screen() === "world" ? client?.realmId || client?.realmPin || null : null,
       nearby: [...roster.values()]
         .filter((entry) => entry.id !== client?.myId)
         .map((entry) => ({ playerId: entry.id, name: entry.name })),
@@ -554,6 +554,22 @@ export function OnlineView() {
     setSocialState(createSocialMenuState());
     setSocialOpen(true);
     refreshSocialData();
+  };
+
+  /** A verified account without a character cannot enter the world menu, but
+   * it still owns Auth data. SELECT opens the same bounded My Data/delete UI
+   * directly from character creation so old profileless rows are self-service. */
+  const openProfilelessData = (): void => {
+    pageNameInputEnd();
+    setSocialState({ screen: "my-data", cursor: 0, page: 0 });
+    setSocialOpen(true);
+    sendSocial({ type: "selfGet" });
+  };
+
+  const closeProfilelessData = (): void => {
+    setSocialOpen(false);
+    setSocialState({ screen: "my-data", cursor: 0, page: 0 });
+    pageNameInput();
   };
 
   const requestCompleteDeletion = (): void => {
@@ -668,6 +684,7 @@ export function OnlineView() {
     }
     if (type === "deleteAllError") {
       showNotice(deleteErrorText(String(msg.reason ?? "")));
+      if (screen() === "creating") pageNameInput();
       return true;
     }
     showNotice(msg.reason === "social-rate" ? "Social menu: wait a minute" : "Social data unavailable");
@@ -705,6 +722,10 @@ export function OnlineView() {
         setFocusSig("name");
         setScreen("creating");
         pageNameInput();
+        // The server binds this authenticated, pre-profile socket to the
+        // account identity before needCreate. Fetching immediately makes the
+        // empty summary ready when the player opens it with SELECT.
+        sendSocial({ type: "selfGet" });
       },
       onRoster: (entries) => {
         // OnlineClient publishes its complete current roster. Replace the
@@ -1730,6 +1751,25 @@ export function OnlineView() {
     }
 
     if (screen() === "creating") {
+      if (socialOpen()) {
+        if (edge(buttons, BTN.SELECT) || edge(buttons, BTN.CROSS)) {
+          closeProfilelessData();
+        } else {
+          if (edge(buttons, BTN.UP)) stepSocial("up");
+          if (edge(buttons, BTN.DOWN)) stepSocial("down");
+          if (edge(buttons, BTN.CIRCLE)) stepSocial("confirm");
+          if (edge(buttons, BTN.SQUARE)) stepSocial("delete");
+        }
+        prevButtons = buttons;
+        publish();
+        return;
+      }
+      if (edge(buttons, BTN.SELECT)) {
+        openProfilelessData();
+        prevButtons = buttons;
+        publish();
+        return;
+      }
       // L1/R1 toggles between the name grid and the look preview.
       if (edge(buttons, BTN.LTRIGGER) || edge(buttons, BTN.RTRIGGER)) {
         createFocus = createFocus === "name" ? "look" : "name";
@@ -2044,8 +2084,26 @@ export function OnlineView() {
       <Show when={screen() === "creating"}>
         <View class="absolute" style={{ posType: 1, insetL: 0, insetT: 0, width: viewport().w, height: viewport().h, bgColor: "#0d0f14" }} debugName="online-creating" />
         <CreateCharScene state={nameState() as never} look={lookSel()} focus={focusSig()} width={viewport().w} height={viewport().h} />
+        <Text class="text-2xs" style={{ posType: 1, insetB: 4, insetL: 12, textColor: "#9fd0ff", lineHeight: 10, height: 10 }}>
+          SELECT: MY DATA / DELETE
+        </Text>
         <Show when={createError()}>
           <Text class="text-xs" style={{ posType: 1, insetB: 8, insetL: 12, textColor: "#ff6b6b", lineHeight: 12, height: 12 }}>{createError()}</Text>
+        </Show>
+        <Show when={notice() !== "" && !socialOpen()}>
+          <View class="absolute flex-row justify-center" style={{ posType: 1, insetT: 8, insetL: 0, insetR: 0 }} debugName="creating-notice">
+            <View style={{ bgColor: "#0b1626", paddingL: 10, paddingR: 10, paddingT: 2, paddingB: 2 }}>
+              <Text class="text-sm" style={{ textColor: "#8ad0ff", lineHeight: 18, height: 18 }}>{notice()}</Text>
+            </View>
+          </View>
+        </Show>
+        <Show when={socialOpen()}>
+          <SocialPanel
+            state={socialState()}
+            data={socialMenuData()}
+            width={viewport().w}
+            height={viewport().h}
+          />
         </Show>
       </Show>
     </View>

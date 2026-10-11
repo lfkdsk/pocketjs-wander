@@ -36,6 +36,7 @@ function fixture(): SocialMenuData {
       { realm: "plaza-3", band: "full", joinable: false },
     ],
     self: {
+      login: "alice",
       profile: { login: "alice", name: "Alice", look: 7 },
       friends: 3,
       incoming: 1,
@@ -58,6 +59,19 @@ function inside(inner: SocialRect, outer: SocialRect): boolean {
 }
 
 describe("wander-online social menu model", () => {
+  test("home route summaries use complete single-line copy", () => {
+    const rows = socialMenuRows(screen("home"), fixture());
+    expect(rows.map((row) => row.detail)).toEqual([
+      "REQUESTS",
+      "POPULATION",
+      "PRIVACY",
+    ]);
+    for (const row of rows) {
+      expect(row.detail.endsWith("…")).toBe(false);
+      expect(measureSocialCells(row.detail)).toBeLessThanOrEqual(SOCIAL_DETAIL_CELLS);
+    }
+  });
+
   test("home navigation enters each route and back yields an explicit close action", () => {
     const data = fixture();
     let transition = reduceSocialMenu(createSocialMenuState(), "down", data);
@@ -131,6 +145,26 @@ describe("wander-online social menu model", () => {
     });
   });
 
+  test("legacy self data without a profile renders an explicit safe summary", () => {
+    const data = fixture();
+    Object.assign(data.self!, { profile: null });
+    const rows = socialMenuRows(screen("my-data"), data);
+    expect(rows[0]).toMatchObject({
+      key: "self-profile",
+      kind: "summary",
+      label: "NO PROFILE",
+      detail: "@alice",
+      tone: "muted",
+    });
+    expect(rows.slice(1).map((row) => row.label)).toEqual([
+      "FRIENDS",
+      "INCOMING",
+      "OUTGOING",
+      "PRESENCE",
+      "plaza-2",
+    ]);
+  });
+
   test("long lists are capped and paged without losing absolute selection", () => {
     const data = fixture();
     data.social!.incoming = Array.from({ length: 100 }, (_, i) => ({ githubId: i + 100, name: `Request ${i}` }));
@@ -195,6 +229,20 @@ describe("wander-online social panel layout", () => {
         expect(inside(socialPanelRowRect(layout, row), layout.body), `${width}x${height} row ${row}`).toBe(true);
       }
       expect(layout.labelWidth + layout.detailWidth).toBeLessThan(layout.body.w);
+    }
+  });
+
+  test("phone portrait and landscape reserve an unclipped detail text cell", () => {
+    for (const [width, height] of [[390, 844], [844, 390]] as const) {
+      const viewport = { x: 0, y: 0, w: width, h: height };
+      const layout = socialPanelLayout(width, height);
+      const detailGutter = 8 * layout.scale;
+      expect(layout.scale).toBe(1);
+      expect(inside(layout.panel, viewport), `${width}x${height} panel`).toBe(true);
+      expect(layout.rows).toBe(SOCIAL_PAGE_ROWS);
+      expect(layout.detailWidth - detailGutter, `${width}x${height} detail text width`)
+        .toBeGreaterThanOrEqual(120);
+      expect(layout.labelWidth + layout.detailWidth + detailGutter).toBe(layout.body.w);
     }
   });
 });

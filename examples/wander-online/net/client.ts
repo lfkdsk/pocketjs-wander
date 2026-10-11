@@ -462,6 +462,10 @@ export class OnlineClient {
       this.journeyRevision = 0;
       this.journeyEvent = { seq: 0, kind: 0, rx: 0, ry: 0 };
       this.handleClose(ev?.code ?? 0, ev?.reason ?? "");
+      // clearEpochState removed every identity from this socket epoch. Tell
+      // roster consumers synchronously as well, after handleClose has made
+      // the disconnect state (reconnecting/retrying/rejected) observable.
+      this.onRoster?.([]);
     };
     sock.onError = () => { /* onClose follows; the reconnect lives there */ };
   }

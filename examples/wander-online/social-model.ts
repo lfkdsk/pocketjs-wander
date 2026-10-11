@@ -115,9 +115,12 @@ export interface SocialMenuView {
 }
 
 const HOME_ROWS: readonly SocialMenuRow[] = [
-  row("route-friends", "route", "FRIENDS", "REQUESTS + PRESENCE", "accent"),
+  // Rows are intentionally one line: PocketJS only breaks text at explicit
+  // newlines, while the 24 px row has room for a single 14 px line. Keep the
+  // route summaries short enough to paint in the narrow-screen detail cell.
+  row("route-friends", "route", "FRIENDS", "REQUESTS", "accent"),
   row("route-worlds", "route", "WORLDS", "POPULATION", "accent"),
-  row("route-my-data", "route", "MY DATA", "PRIVACY + DELETE", "accent"),
+  row("route-my-data", "route", "MY DATA", "PRIVACY", "accent"),
 ];
 
 const SCREEN_TITLES: Record<SocialScreen, string> = {
@@ -186,7 +189,9 @@ export function socialPanelLayout(width: number, height: number): SocialPanelLay
     h: footerH,
   };
   const gap = 8 * scale;
-  const detailWidth = Math.min(112 * scale, Math.max(0, body.w));
+  // Reserve a 120 px text cell after the 8 px leading gutter at 1x. The old
+  // 104 px cell clipped otherwise-valid detail copy on narrow live viewports.
+  const detailWidth = Math.min(128 * scale, Math.max(0, body.w));
   const labelWidth = Math.max(0, body.w - detailWidth - gap);
   return { scale, panel, header, body, footer, rowHeight, rows, labelWidth, detailWidth };
 }
@@ -314,7 +319,9 @@ function worldRows(data: SocialMenuData): SocialMenuRow[] {
 function selfRows(summary: SelfDataSummary | null): SocialMenuRow[] {
   if (!summary) return [row("self-loading", "empty", "SELF DATA UNAVAILABLE", "", "muted")];
   const rows: SocialMenuRow[] = [
-    row("self-profile", "summary", summary.profile.name, `@${summary.profile.login}`, "accent"),
+    summary.profile
+      ? row("self-profile", "summary", summary.profile.name, `@${summary.profile.login}`, "accent")
+      : row("self-profile", "summary", "NO PROFILE", `@${summary.login}`, "muted"),
     row("self-friends", "summary", "FRIENDS", String(summary.friends)),
     row("self-incoming", "summary", "INCOMING", String(summary.incoming)),
     row("self-outgoing", "summary", "OUTGOING", String(summary.outgoing)),

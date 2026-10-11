@@ -61,6 +61,31 @@ describe("social wire contract", () => {
     expect(parsed?.realms[0]).toEqual({ realm: "plaza-1", discoveries: 12, helped: 3, updatedAt: 1234 });
     expect(parsed?.realms[0]).not.toHaveProperty("x");
     expect(parseSelfData({
+      login: "legacy-user",
+      profile: null,
+      friends: 0,
+      incoming: 0,
+      outgoing: 0,
+      visible: true,
+      realms: [],
+    })).toEqual({
+      login: "legacy-user",
+      profile: null,
+      friends: 0,
+      incoming: 0,
+      outgoing: 0,
+      visible: true,
+      realms: [],
+    });
+    expect(parseSelfData({
+      profile: null,
+      friends: 0,
+      incoming: 0,
+      outgoing: 0,
+      visible: true,
+      realms: [],
+    })).toBeNull();
+    expect(parseSelfData({
       profile: { login: "alice", name: "Alice", look: 64 },
       friends: 0,
       incoming: 0,

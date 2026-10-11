@@ -212,6 +212,58 @@ simDescribe("wander-online auth: first login -> create -> world", () => {
     w.frame(0);
   });
 
+  test("a verified account without a profile can view its empty data and delete without creating", async () => {
+    const values = new Map<string, string>();
+    const sent: Record<string, unknown>[] = [];
+    const fake = fakeOnlineSocketFactory({
+      mode: "needCreate4",
+      login: "legacy-user",
+      ticket: "legacy-ticket",
+      sent,
+      selfReply: {
+        type: "selfData",
+        v: 1,
+        data: {
+          login: "legacy-user",
+          profile: null,
+          friends: 0,
+          incoming: 0,
+          outgoing: 0,
+          visible: true,
+          realms: [],
+        },
+      },
+      deleteReply: { type: "deletedAll", v: 1, realms: ["plaza-1"] },
+    });
+    const w = await boot(
+      { kind: "github", token: "gho_legacy" },
+      fake,
+      480,
+      272,
+      { __pocketWeb: true, __pocketWebStore: webStore(values) },
+    );
+    await waitFor(w, () => state()?.screen === "creating", "profileless creation screen");
+    await waitFor(w, () => sent.some((msg) => msg.type === "selfGet"), "automatic empty-data request");
+    expect(sent.some((msg) => msg.type === "create")).toBe(false);
+    expect(values.get(WEB_TICKET_KEY)).toBe(JSON.stringify({ ticket: "legacy-ticket" }));
+
+    press(w, BTN.SELECT);
+    expect(state()?.social).toBe(true);
+    expect(state()?.socialScreen).toBe("my-data");
+    expect(treeHasText(w.getTree(), "NO PROFILE")).toBe(true);
+    expect(treeHasText(w.getTree(), "@legacy-user")).toBe(true);
+
+    press(w, BTN.SQUARE);
+    expect(state()?.socialScreen).toBe("delete-confirm");
+    expect(treeHasText(w.getTree(), "PRESS DELETE AGAIN")).toBe(true);
+    press(w, BTN.SQUARE);
+    await waitFor(w, () => sent.some((msg) => msg.type === "deleteAll"), "profileless delete request");
+    expect(sent.some((msg) => msg.type === "create")).toBe(false);
+    await waitFor(w, () => state()?.screen === "gate", "profileless account signed out");
+    expect(values.has(WEB_TICKET_KEY)).toBe(false);
+    w.frame(0);
+  });
+
   test("a returning player with a ticket goes straight to the world", async () => {
     const fake = fakeOnlineSocketFactory({ mode: "welcome", name: "Returner", look: 3, ticket: "dev-ticket" });
     const w = await boot({ kind: "ticket", ticket: "dev-ticket" }, fake);

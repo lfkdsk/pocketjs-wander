@@ -53,7 +53,10 @@ export interface RealmJourneySummary {
 }
 
 export interface SelfDataSummary {
-  profile: { login: string; name: string; look: number };
+  /** Stable account login remains visible when an old account has no
+   * character profile, so the empty self-service view is still attributable. */
+  login: string;
+  profile: { login: string; name: string; look: number } | null;
   friends: number;
   incoming: number;
   outgoing: number;
@@ -92,9 +95,21 @@ export function parseRealmChoices(value: unknown): RealmChoice[] | null {
 }
 
 export function parseSelfData(value: unknown): SelfDataSummary | null {
-  if (!record(value) || !record(value.profile)) return null;
-  const profile = value.profile;
-  if (typeof profile.login !== "string" || !displayName(profile.name) || !integer(profile.look, 0, 63)) return null;
+  if (!record(value)) return null;
+  let profile: SelfDataSummary["profile"];
+  let login: string;
+  if (value.profile === null) {
+    if (!displayName(value.login)) return null;
+    profile = null;
+    login = value.login;
+  } else {
+    if (!record(value.profile)) return null;
+    const source = value.profile;
+    if (!displayName(source.login) || !displayName(source.name) || !integer(source.look, 0, 63)) return null;
+    if (value.login !== undefined && value.login !== source.login) return null;
+    login = source.login;
+    profile = { login, name: source.name, look: source.look };
+  }
   if (!integer(value.friends, 0, SOCIAL_MAX_FRIENDS)
     || !integer(value.incoming, 0, SOCIAL_MAX_PENDING)
     || !integer(value.outgoing, 0, SOCIAL_MAX_PENDING)
@@ -113,7 +128,8 @@ export function parseSelfData(value: unknown): SelfDataSummary | null {
   });
   if (!realms) return null;
   return {
-    profile: { login: profile.login, name: profile.name, look: profile.look },
+    login,
+    profile,
     friends: value.friends,
     incoming: value.incoming,
     outgoing: value.outgoing,

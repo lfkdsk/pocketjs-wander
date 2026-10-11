@@ -237,6 +237,50 @@ describe("wander-online client core", () => {
     client.stop();
   });
 
+  test("a passive close publishes an empty roster with reconnect state before retrying", () => {
+    const first = socketHarness(), second = socketHarness();
+    const factories = [first.factory, second.factory];
+    let connectionCount = 0;
+    let now = 1_000;
+    const updates: { ids: number[]; status: string }[] = [];
+    let client!: OnlineClient;
+    client = new OnlineClient("ws://unit.test/ws", {
+      now: () => now,
+      socketFactory: (url, opts) => factories[connectionCount++]!(url, opts),
+      onRoster: (entries) => updates.push({
+        ids: entries.map((entry) => entry.id),
+        status: client.status,
+      }),
+    });
+    first.open();
+    readyRealm(first);
+    first.message(encodeRoster([
+      { id: 7, name: "Self", look: 0 },
+      { id: 8, name: "Nearby", look: 1 },
+    ]));
+    expect(updates).toEqual([{ ids: [7, 8], status: "joined" }]);
+
+    first.close(1006, "abnormal drop");
+    expect(client.roster.size).toBe(0);
+    expect(updates).toEqual([
+      { ids: [7, 8], status: "joined" },
+      { ids: [], status: "reconnecting" },
+    ]);
+    expect(client.hud()).toMatchObject({ status: "reconnecting", retryIn: 1_000 });
+
+    now += 999;
+    client.onFrame(0, 60, 0);
+    expect(connectionCount).toBe(1);
+    now += 1;
+    client.onFrame(0, 60, 0);
+    expect(connectionCount).toBe(2);
+    expect(client.status).toBe("connecting");
+    second.open();
+    readyRealm(second, realmWelcome(20));
+    expect(client.status).toBe("joined");
+    client.stop();
+  });
+
   test("gameplay sends still surface non-closed socket failures", () => {
     const harness = socketHarness();
     const client = new OnlineClient("ws://unit.test/ws", {
@@ -613,7 +657,11 @@ describe("wander-online client core", () => {
 
   test("a strict BYE removes only the named roster entry", () => {
     const harness = socketHarness();
-    const client = new OnlineClient("ws://unit.test/ws", { socketFactory: harness.factory });
+    const updates: number[][] = [];
+    const client = new OnlineClient("ws://unit.test/ws", {
+      socketFactory: harness.factory,
+      onRoster: (entries) => updates.push(entries.map((entry) => entry.id)),
+    });
     harness.open();
     readyRealm(harness);
     harness.message(encodeRoster([
@@ -623,14 +671,17 @@ describe("wander-online client core", () => {
     client.far.set(8, { dir: 2, band: 1, at: 1_000 });
     client.emotes.set(8, { emote: 1, until: 6_000 });
     expect([...client.roster.keys()]).toEqual([7, 8]);
+    expect(updates).toEqual([[7, 8]]);
 
     const trailing = new Uint8Array(6);
     trailing.set(new Uint8Array(encodeBye(8)));
     harness.message(trailing.buffer);
     expect(client.roster.has(8)).toBe(true);
+    expect(updates).toEqual([[7, 8]]);
 
     harness.message(encodeBye(8));
     expect([...client.roster.keys()]).toEqual([7]);
+    expect(updates).toEqual([[7, 8], [7]]);
     expect(client.far.has(8)).toBe(false);
     expect(client.emotes.has(8)).toBe(false);
     client.stop();

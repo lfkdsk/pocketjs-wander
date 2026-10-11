@@ -108,7 +108,9 @@ hosted social records.
   accept/remove actions use the stable account id from the authenticated
   snapshot. A friendship exists only after the recipient accepts it. Redeeming
   an invite creates the issuer's pending request for the arriving player; it
-  never accepts on either player's behalf.
+  never accepts on either player's behalf. Removal is deliberately idempotent:
+  removing an account that has no edge returns the same successful `removed`
+  result as a repeated removal, performs no write and reveals no relationship.
 - **Presence privacy.** Only mutual friends receive presence. With sharing on,
   they see `online` plus the exact realm or `offline`; with sharing off they see
   `hidden` and no realm. Other accounts cannot query either value. On My Data,
@@ -125,11 +127,17 @@ hosted social records.
   The server first fences the account, removes social/session/link data and
   purges every known/configured realm, then confirms success; only then does
   the client clear its ticket and return to sign-in. A partial failure leaves
-  the player signed in so the idempotent deletion can be retried.
+  the player signed in so the idempotent deletion can be retried. An older
+  account with no character profile can press SELECT on the creation screen to
+  view an explicit `NO PROFILE` summary and use the same two-press deletion;
+  creating a throwaway character is not required.
 
-The social panel has bounded 480x272 and 960x544 layouts. After building the
-bundle and simulator core, capture Friends, Worlds, My Data and delete-confirm
-screens at both sizes, together with nearest-neighbour 3x review copies:
+The social panel has bounded responsive layouts. Its row details are deliberate
+single-line short labels (`REQUESTS`, `POPULATION`, `PRIVACY`) because PocketJS
+text wraps only at explicit newlines; the detail column retains a 120 px text
+cell at both 390x844 portrait and 844x390 landscape. After building the bundle
+and simulator core, capture Friends, Worlds, My Data and delete-confirm screens
+at 480x272 and 960x544, together with nearest-neighbour 3x review copies:
 
 ```sh
 bun run build:wasm
@@ -258,7 +266,9 @@ PLAYER_PROGRESS(revision, landmarks) ◄─ recipient-only private history
   ([`net/interpolate.ts`](net/interpolate.ts)). One dropped packet costs
   nothing; snapshots are idempotent.
 - **Recovery.** A socket close reconnects with exponential backoff (1 s →
-  10 s cap) and re-joins; a server restart looks the same. Two seconds
+  10 s cap) and re-joins; a server restart looks the same. The close callback
+  publishes an empty roster after setting the reconnect status, so the social
+  panel cannot offer departed nearby players during the retry window. Two seconds
   without a snapshot freezes local gameplay and starts a fresh join, so a
   stalled client cannot diverge from the server. WELCOME4 and STATE4 carry a
   connection epoch; a new epoch clears prediction and interpolation history
