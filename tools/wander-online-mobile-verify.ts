@@ -7,7 +7,8 @@
 //
 // The verifier starts loopback web, GitHub-stub and game servers. Each phone
 // orientation signs a fresh account in through the real OAuth callback,
-// creates its character through the page text box, opens the social panel and
+// creates its character through the page text box, opens the social home and
+// Friends panels and
 // emote picker, mints/copies/closes an invite, and signs out. Landscape additionally uses
 // immersive play and proves the floating game controls clear the game's status,
 // log, errand and help HUD rectangles plus the open social panel. PNGs and
@@ -411,6 +412,20 @@ async function main(): Promise<void> {
     check(`${phase}: social panel opens at home`, socialScreen === "home", socialScreen);
     const socialLayout = await layoutReport(true);
     const socialShot = await screenshot(`${label}-${width}x${height}-social`);
+    await touch('[data-button="CIRCLE"]', 140);
+    await waitFor<boolean>(
+      "Friends social panel",
+      'globalThis.__onlineState?.socialScreen === "friends"',
+      Boolean,
+    );
+    const socialFriendsLayout = await layoutReport(true);
+    const socialFriendsShot = await screenshot(`${label}-${width}x${height}-social-friends`);
+    await touch('[data-button="CROSS"]', 140);
+    await waitFor<boolean>(
+      "social home panel",
+      'globalThis.__onlineState?.socialScreen === "home"',
+      Boolean,
+    );
     await touch('[data-button="CROSS"]', 140);
     await waitFor<boolean>("social panel closed", "globalThis.__onlineState?.social === false", Boolean);
 
@@ -463,7 +478,10 @@ async function main(): Promise<void> {
       controls,
       socialPanel: socialLayout.socialPanel,
       socialOverlaps: socialLayout.socialOverlaps,
-      screenshots: [nameShot, socialShot, emoteShot, inviteShot, signedOutShot].map((path) => path.split("/").at(-1)),
+      socialFriendsPanel: socialFriendsLayout.socialPanel,
+      socialFriendsOverlaps: socialFriendsLayout.socialOverlaps,
+      screenshots: [nameShot, socialShot, socialFriendsShot, emoteShot, inviteShot, signedOutShot]
+        .map((path) => path.split("/").at(-1)),
     };
   };
 

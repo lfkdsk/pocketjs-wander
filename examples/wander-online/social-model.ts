@@ -212,12 +212,12 @@ export function socialPanelRowRect(layout: SocialPanelLayout, index: number): So
   };
 }
 
-/** The proportional UI font is conservatively seven pixels per display cell
+/** The proportional UI font is conservatively eight pixels per display cell
  * at 1x. Compact phone panels apply a second presentation-only fit so a name
  * accepted by the model cannot paint under the detail column. */
 export function socialPanelLabelCells(layout: SocialPanelLayout): number {
   const textWidth = Math.max(0, layout.labelWidth - 6 * layout.scale);
-  return Math.max(1, Math.min(SOCIAL_LABEL_CELLS, Math.floor(textWidth / (7 * layout.scale))));
+  return Math.max(1, Math.min(SOCIAL_LABEL_CELLS, Math.floor(textWidth / (8 * layout.scale))));
 }
 
 function row(
@@ -465,7 +465,7 @@ export function socialMenuView(state: SocialMenuState, data: SocialMenuData): So
   const footer = normalized.screen === "home"
     ? "CIRCLE OPEN · CROSS CLOSE"
     : normalized.screen === "friends"
-      ? "CIRCLE ACCEPT/JOIN/ADD · SQUARE REMOVE · CROSS BACK"
+      ? "CIRCLE ACT · SQUARE REMOVE · CROSS BACK"
       : normalized.screen === "worlds"
         ? "CIRCLE JOIN · CROSS BACK"
         : normalized.screen === "my-data"

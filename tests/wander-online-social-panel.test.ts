@@ -115,6 +115,11 @@ describe("wander-online social menu model", () => {
     expect(reduceSocialMenu(screen("friends", 2), "confirm", data).action).toBeNull();
   });
 
+  test("the friends footer keeps complete controller copy inside the narrow panel", () => {
+    expect(socialMenuView(screen("friends"), fixture()).footer)
+      .toBe("CIRCLE ACT · SQUARE REMOVE · CROSS BACK");
+  });
+
   test("worlds expose coarse bands, friend candidates and refuse non-joinable rows", () => {
     const data = fixture();
     expect(friendRealmCandidates(data)).toEqual([
@@ -271,7 +276,7 @@ describe("wander-online social panel layout", () => {
       expect(inside(socialPanelRowRect(layout, row), layout.body), `row ${row}`).toBe(true);
     }
     expect(layout.detailWidth - 8).toBeGreaterThanOrEqual(120);
-    expect(socialPanelLabelCells(layout)).toBe(27);
+    expect(socialPanelLabelCells(layout)).toBe(24);
 
     // The immersive pad has a 152 CSS-px d-pad after 12 px padding, and a
     // 164 CSS-px action cluster before the same right padding. Project the
