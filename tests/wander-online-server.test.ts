@@ -217,8 +217,8 @@ describe("wander-online server", () => {
     expect(greeting?.generatorVersion).toBe(1);
     const until = Date.now() + 2000;
     while (Date.now() < until) {
-      const msg = (await c.nextMessage(500)) as ArrayBuffer | undefined;
-      if (!msg || new DataView(msg).getUint8(0) !== MSG.state4) continue;
+      const msg = await c.nextMessage(500);
+      if (!(msg instanceof ArrayBuffer) || new DataView(msg).getUint8(0) !== MSG.state4) continue;
       const state = decodeState4(msg);
       expect(state?.epoch).toBe(greeting?.epoch);
       expect(state?.entities[0]?.id).toBe(greeting?.you);

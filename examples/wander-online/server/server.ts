@@ -24,7 +24,7 @@
 import { join } from "node:path";
 import { type ServerWebSocket } from "bun";
 import { Arena } from "./area.ts";
-import { REALM_PLAYER_CAP, RealmArena, type RealmPlayer } from "./realm-area.ts";
+import { REALM_PLAYER_CAP, RealmArena, type CoopStatus, type RealmPlayer } from "./realm-area.ts";
 import { DevAuth } from "./dev-auth.ts";
 import { entityFor, snapshotFor, snapshotForRealm } from "../shared/snapshot.ts";
 import {
@@ -48,6 +48,7 @@ import {
   gridFromWindow,
 } from "../net/protocol.ts";
 import { AUTH_PROTOCOL_VERSION } from "../shared/auth.ts";
+import { SOCIAL_PROTOCOL_VERSION } from "../shared/social.ts";
 import { SlidingWindow } from "../shared/limits.ts";
 import { FAR_INTERVAL_SEC } from "../net/far.ts";
 import {
@@ -221,6 +222,15 @@ export function startServer(opts: ServerOpts): ServerHandle {
     }
   }
 
+  /** Recipient-only cooperative state. The local demo is ephemeral, but it
+   * uses the same aggregate/privacy-safe JSON contract as the hosted Room. */
+  function flushCoopStatuses(): void {
+    for (const pending of realmArena.drainCoopStatuses()) {
+      const conn = realmConns.get(pending.playerId);
+      if (conn?.ws.readyState === 1) conn.ws.send(JSON.stringify(coopErrandMessage(realmArena.realmId, pending.status)));
+    }
+  }
+
   /** Shared rows a journey changed (improvements, landmark firsts) go to
    *  everyone at once rather than waiting for the periodic snapshot. */
   function flushChangedRows(): void {
@@ -239,6 +249,7 @@ export function startServer(opts: ServerOpts): ServerHandle {
       realmArena.step();
       stats.ticks++;
       flushChangedRows();
+      flushCoopStatuses();
       const snapshotDue = arena.frame % frameMod === 0;
       const farDue = realmArena.frame % farMod === 0;
       if (snapshotDue || farDue) broadcast(snapshotDue, farDue);
@@ -293,6 +304,7 @@ export function startServer(opts: ServerOpts): ServerHandle {
         realmArena.applyCommand(p, cmd);
         flushChangedRows();
         flushPrivate(p, conn);
+        flushCoopStatuses();
         flushEmotes();
       }
     } else if (kind === MSG.ping) {
@@ -476,6 +488,15 @@ export function startServer(opts: ServerOpts): ServerHandle {
       rp.journeyDirty = false;
       emit(conn, encodePlayerProgress(realmArena.progressMessage(rp)));
       emit(conn, encodePlayerJourney(realmArena.journeyMessage(rp)));
+      conn.ws.send(JSON.stringify({
+        type: "realmFeatures",
+        v: SOCIAL_PROTOCOL_VERSION,
+        realm: realmArena.realmId,
+        coopErrands: true,
+        discoveryLeaderboard: false,
+      }));
+      rp.coopDirty = false;
+      conn.ws.send(JSON.stringify(coopErrandMessage(realmArena.realmId, realmArena.coopStatusFor(rp))));
     } else {
       emit(conn, encodeWelcome(p.id, arena.seed, arena.x0, arena.y0, grid));
     }
@@ -547,6 +568,7 @@ export function startServer(opts: ServerOpts): ServerHandle {
         const activeConns = conn.realm ? realmConns : conns;
         activeArena.remove(id);
         activeConns.delete(id);
+        if (conn.realm) flushCoopStatuses();
         if (conn.githubId > 0 && auth) auth.sessionRelease(conn.githubId, conn.realm ? "v4:local" : "local", conn.sid);
         for (const other of activeConns.values()) emit(other, encodeBye(id));
       },
@@ -575,6 +597,24 @@ export function startServer(opts: ServerOpts): ServerHandle {
 
   console.log(`wander-online server on ${handle.hostname}:${server.port} (seed 0x${(opts.seed >>> 0).toString(16)}, hz ${opts.hz}, aoi ${opts.aoi}, sim-latency ${opts.simLatency}ms)`);
   return handle;
+}
+
+function coopErrandMessage(realm: string, status: CoopStatus): Record<string, unknown> {
+  return {
+    type: "coopErrand",
+    v: SOCIAL_PROTOCOL_VERSION,
+    realm,
+    revision: status.revision,
+    status: status.status === "inactive" ? "none"
+      : status.status === "traveling" ? "travel"
+        : "waiting",
+    cooperative: status.cooperative,
+    ready: status.ready,
+    savedReady: status.savedReady ? 1 : 0,
+    presentReady: status.presentReady,
+    required: status.required,
+    expiresAt: status.expiresAt ?? 0,
+  };
 }
 
 // CLI entry.
