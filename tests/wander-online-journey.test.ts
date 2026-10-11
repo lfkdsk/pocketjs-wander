@@ -15,9 +15,12 @@ import {
   fitJourney,
   HELP_CAP,
   HELPED_COUNT_MAX,
+  isCooperativeErrand,
   journeyAccept,
   journeyComplete,
   journeyEventText,
+  journeyEventTextEn,
+  journeyEventTextZh,
   journeyIsHelped,
   journeyTalk,
   JOURNEY_EVENT,
@@ -55,7 +58,14 @@ import {
 } from "../examples/wander-online/net/protocol.ts";
 import { RealmPredictor } from "../examples/wander-online/net/realm-predict.ts";
 import { REALM_LANDMARK_HALF_H, REALM_LANDMARK_HALF_W } from "../examples/wander-online/net/realm-state.ts";
-import { RealmArena, TALK_TOLERANCE, type RealmPlayer } from "../examples/wander-online/server/realm-area.ts";
+import {
+  COOP_READY_TTL_MS,
+  COOP_REQUIRED_PLAYERS,
+  RealmArena,
+  TALK_TOLERANCE,
+  type CoopReady,
+  type RealmPlayer,
+} from "../examples/wander-online/server/realm-area.ts";
 import { entityFor, snapshotForRealm } from "../examples/wander-online/shared/snapshot.ts";
 import { GROWTH_TICK_FRAMES } from "../examples/wander/region.ts";
 
@@ -88,6 +98,21 @@ describe("journey model", () => {
     expect(PLAZA_RADIUS).toBe(SIM_PLAZA_RADIUS);
     expect(VISIT_ARRIVE).toBe(SIM_VISIT_ARRIVE);
     expect(TALK_CAP).toBe(24);
+  });
+
+  test("cooperative eligibility is deterministic and limited to a stable subset of deliveries", () => {
+    const eligible = townErrand(SEED, 0, 0)!;
+    expect(eligible.kind).toBe("deliver");
+    expect(isCooperativeErrand(SEED, eligible)).toBe(true);
+    expect(isCooperativeErrand(SEED, { ...eligible })).toBe(true);
+    const visit = townErrand(VISIT_SEED, -1, -1)!;
+    expect(visit.kind).toBe("visit");
+    expect(isCooperativeErrand(VISIT_SEED, visit)).toBe(false);
+    const ordinaryDelivery = farOffers(SEED, 0, 0, 8).find(({ errand }) => errand.kind === "deliver" && !isCooperativeErrand(SEED, errand))!;
+    expect(ordinaryDelivery).toBeDefined();
+    expect(journeyAccept(SEED, emptyJourney(), ordinaryDelivery.rx, ordinaryDelivery.ry, true)).toBeNull();
+    expect(journeyAccept(SEED, emptyJourney(), ordinaryDelivery.rx, ordinaryDelivery.ry, false)?.journey.cooperative).toBe(false);
+    expect(journeyAccept(SEED, emptyJourney(), 0, 0, true)?.journey.cooperative).toBe(true);
   });
 
   test("accept, complete (idempotent help), talk, serialize and restore within the save bound", () => {
@@ -303,6 +328,10 @@ describe("journey model", () => {
     const theirs = journeyAccept(SEED, base, 0, 0)!.journey;
     const mine = { ...base, errand: { rx: 9, ry: 9 } };
     expect(mergeJourney(base, theirs, mine).errand).toEqual({ rx: 0, ry: 0 });
+    const coop = journeyAccept(SEED, base, 0, 0, true)!.journey;
+    expect(sameJourney(theirs, coop)).toBe(false);
+    expect(mergeJourney(base, coop, base).cooperative).toBe(true);
+    expect(mergeJourney(base, base, coop).cooperative).toBe(true);
     // Caps hold after a union.
     const big = fillJourney(SEED, farOffers(SEED, 100_000_000, -100_000_000, 40));
     const other = journeyTalk(base, 1, 1).journey;
@@ -315,8 +344,16 @@ describe("journey model", () => {
   test("restore accepts the pre-journey placeholder and refuses malformed rows", () => {
     expect(parseJourney("")).toEqual(emptyJourney());
     expect(parseJourney(JSON.stringify({ v: 1, active: [] }))).toEqual(emptyJourney());
+    const v2 = { v: 2, e: [0, 0], h: [], b: [], t: [], hc: 0 };
+    expect(parseJourney(JSON.stringify(v2)).cooperative).toBe(false);
+    const coop = journeyAccept(SEED, emptyJourney(), 0, 0, true)!.journey;
+    const stored = JSON.parse(serializeJourney(coop));
+    expect(stored).toMatchObject({ v: 3, c: true, e: [0, 0] });
+    expect(parseJourney(JSON.stringify(stored))).toEqual(coop);
+    expect(journeyComplete(SEED, coop, townErrand(SEED, 0, 0)!).journey.cooperative).toBe(false);
     expect(() => parseJourney("{")).toThrow();
     expect(() => parseJourney(JSON.stringify({ v: 3 }))).toThrow();
+    expect(() => parseJourney(JSON.stringify({ v: 4 }))).toThrow();
     expect(() => parseJourney(JSON.stringify({ v: 2, h: [[1]] }))).toThrow();
     expect(() => parseJourney(JSON.stringify({ v: 2, h: Array.from({ length: 33 }, (_, i) => [i, 0]) }))).toThrow();
     expect(() => parseJourney(JSON.stringify({ v: 2, b: [-1] }))).toThrow();
@@ -335,6 +372,12 @@ describe("journey model", () => {
     const visit = townErrand(VISIT_SEED, -1, -1)!;
     expect(visit.kind).toBe("visit");
     expect(errandHudText(visit, 2)).toBe(`ERRAND: ${visit.what} -> ${visit.targetName}   HELPED 2`);
+    const waiting = { seq: 5, kind: JOURNEY_EVENT.coopWaiting, rx: 0, ry: -1 } as const;
+    const delivered = { seq: 6, kind: JOURNEY_EVENT.coopDelivered, rx: 0, ry: -1 } as const;
+    expect(journeyEventTextEn(SEED, waiting)).toBe("CO-OP: waiting for another traveler");
+    expect(journeyEventText(SEED, delivered)).toBe(`CO-OP: delivered together: ${regionName(SEED, 0, -1)}`);
+    expect(journeyEventTextZh(SEED, waiting)).toBe("等待另一位旅人");
+    expect(journeyEventText(SEED, delivered, "zh")).toBe(`合作送达: ${regionName(SEED, 0, -1)}`);
   });
 });
 
@@ -387,6 +430,10 @@ describe("COMMAND and PLAYER_JOURNEY codecs", () => {
     expect(decodeCommand(zeroKind)).toBeNull();
     expect(() => encodeCommand({ kind: 0, rx: 0, ry: 0, extra: 0 })).toThrow();
     expect(() => encodeCommand({ kind: 1, rx: 2 ** 31, ry: 0, extra: 0 })).toThrow();
+    for (const kind of [COMMAND.acceptCoopErrand, COMMAND.readyCoopErrand]) {
+      expect(encodeCommand({ kind, rx: 1, ry: -1, extra: 0 }).byteLength).toBe(COMMAND_BYTES);
+      expect(decodeCommand(encodeCommand({ kind, rx: 1, ry: -1, extra: 0 }))?.kind).toBe(kind);
+    }
   });
 
   test("PLAYER_JOURNEY round-trips and rejects truncation, trailing bytes, bad flags and duplicates", () => {
@@ -397,6 +444,7 @@ describe("COMMAND and PLAYER_JOURNEY codecs", () => {
       eventRx: -5,
       eventRy: 9,
       fast: true,
+      cooperative: true,
       errand: { rx: 3, ry: -4 },
       helpedCount: 1000,
       bloom: Array.from({ length: 32 }, (_, i) => (i * 0x9e3779b9) >>> 0),
@@ -410,6 +458,7 @@ describe("COMMAND and PLAYER_JOURNEY codecs", () => {
     const none = encodePlayerJourney({ ...message, errand: null, fast: false, helped: [], talked: [] });
     expect(none.byteLength).toBe(PLAYER_JOURNEY_FIXED_BYTES);
     expect(decodePlayerJourney(none)?.errand).toBeNull();
+    expect(decodePlayerJourney(buf)?.cooperative).toBe(true);
     expect(decodePlayerJourney(new Uint8Array(buf).subarray(0, buf.byteLength - 1))).toBeNull();
     const trailing = new Uint8Array(buf.byteLength + 1);
     trailing.set(new Uint8Array(buf));
@@ -508,6 +557,189 @@ describe("authoritative arena rules", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.improvementLevel).toBe(1);
     expect(arena.drainChangedRows()).toHaveLength(0);
+  });
+
+  test("solo and cooperative completion commands cannot cross modes", () => {
+    const clock = { now: 1_500_000 };
+    const arena = arenaAt(SEED, clock);
+    const origin = regionHub(SEED, 0, 0);
+    const errand = townErrand(SEED, 0, 0)!;
+    expect(isCooperativeErrand(SEED, errand)).toBe(true);
+    const solo = arena.add("Solo", 1, 0, { tx: origin.x, ty: origin.y }, { coopIdentity: "solo" });
+    expect(arena.applyCommand(solo, { kind: COMMAND.acceptErrand, rx: 0, ry: 0, extra: 0 }, clock.now)).toBe(JOURNEY_EVENT.accepted);
+    expect(solo.journey.cooperative).toBe(false);
+    teleport(solo, errand.tx, errand.ty);
+    expect(arena.applyCommand(solo, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now)).toBeNull();
+    expect(arena.applyCommand(solo, { kind: COMMAND.deliverErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now)).toBe(JOURNEY_EVENT.delivered);
+
+    const coop = arena.add("Coop", 2, 0, { tx: origin.x, ty: origin.y }, { coopIdentity: "coop" });
+    expect(arena.applyCommand(coop, { kind: COMMAND.acceptCoopErrand, rx: 0, ry: 0, extra: 0 }, clock.now)).toBe(JOURNEY_EVENT.accepted);
+    expect(coop.journey.cooperative).toBe(true);
+    teleport(coop, errand.tx, errand.ty);
+    expect(arena.applyCommand(coop, { kind: COMMAND.deliverErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now)).toBeNull();
+    expect(coop.journey.errand).toEqual({ rx: 0, ry: 0 });
+  });
+
+  test("two distinct ready identities complete once at the authoritative plaza", () => {
+    const clock = { now: 2_500_000 };
+    const writes: { id: number; ready: CoopReady | null }[] = [];
+    let improvements = 0;
+    const arena = new RealmArena({
+      seed: SEED,
+      hz: 60,
+      now: () => clock.now,
+      hooks: {
+        persistCoopReady: (player, ready) => writes.push({ id: player.id, ready: ready ? { ...ready } : null }),
+        improveRegion: () => { improvements++; return null; },
+      },
+    });
+    const origin = regionHub(SEED, 0, 0);
+    const errand = townErrand(SEED, 0, 0)!;
+    const a = arena.add("A", 1, 0, { tx: origin.x, ty: origin.y }, { coopIdentity: "account-a" });
+    const b = arena.add("B", 2, 0, { tx: origin.x, ty: origin.y }, { coopIdentity: "account-b" });
+    arena.drainCoopStatuses(clock.now);
+    for (const p of [a, b]) {
+      expect(arena.applyCommand(p, { kind: COMMAND.acceptCoopErrand, rx: 0, ry: 0, extra: 0 }, clock.now)).toBe(JOURNEY_EVENT.accepted);
+    }
+    teleport(a, errand.tx + PLAZA_RADIUS + 1, errand.ty);
+    expect(arena.applyCommand(a, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now), "position is authoritative").toBeNull();
+    expect(writes).toHaveLength(0);
+    teleport(a, errand.tx, errand.ty);
+    teleport(b, errand.tx, errand.ty);
+    expect(arena.applyCommand(a, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now)).toBe(JOURNEY_EVENT.coopWaiting);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]!.ready).toEqual({
+      offerRx: 0,
+      offerRy: 0,
+      targetRx: errand.trx,
+      targetRy: errand.try,
+      readyAtMs: clock.now,
+      expiresAtMs: clock.now + COOP_READY_TTL_MS,
+    });
+    const waiting = arena.coopStatusFor(a, clock.now);
+    expect(waiting).toMatchObject({
+      status: "waiting",
+      cooperative: true,
+      ready: true,
+      savedReady: true,
+      presentReady: 1,
+      required: COOP_REQUIRED_PLAYERS,
+      expiresAt: clock.now + COOP_READY_TTL_MS,
+    });
+    const safe = JSON.stringify(waiting);
+    expect(safe).not.toContain("account-a");
+    expect(safe).not.toContain("account-b");
+    expect(safe).not.toContain("targetRx");
+
+    expect(arena.applyCommand(b, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now)).toBe(JOURNEY_EVENT.coopDelivered);
+    expect(a.journey.errand).toBeNull();
+    expect(b.journey.errand).toBeNull();
+    expect(a.journey.cooperative).toBe(false);
+    expect(b.journey.cooperative).toBe(false);
+    expect(a.journey.helpedCount).toBe(1);
+    expect(b.journey.helpedCount).toBe(1);
+    expect(a.coopReady).toBeNull();
+    expect(b.coopReady).toBeNull();
+    expect(a.event.kind).toBe(JOURNEY_EVENT.coopDelivered);
+    expect(b.event.kind).toBe(JOURNEY_EVENT.coopDelivered);
+    expect(writes.map((w) => w.ready === null)).toEqual([false, false, true, true]);
+    expect(improvements).toBe(1);
+    // Replayed and crossed legacy commands see completed journeys and cannot
+    // create another shared improvement.
+    expect(arena.applyCommand(b, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now)).toBeNull();
+    expect(arena.applyCommand(a, { kind: COMMAND.deliverErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now)).toBeNull();
+    expect(improvements).toBe(1);
+    const dirty = arena.drainCoopStatuses(clock.now);
+    expect(dirty.map((entry) => entry.playerId).sort()).toEqual([a.id, b.id]);
+    expect(dirty.every((entry) => entry.status.status === "inactive")).toBe(true);
+  });
+
+  test("two sessions of one identity cannot satisfy a cooperative errand", () => {
+    const clock = { now: 2_600_000 };
+    let improvements = 0;
+    const arena = new RealmArena({
+      seed: SEED,
+      hz: 60,
+      now: () => clock.now,
+      hooks: { improveRegion: () => { improvements++; return null; } },
+    });
+    const origin = regionHub(SEED, 0, 0), errand = townErrand(SEED, 0, 0)!;
+    const a = arena.add("A1", 1, 0, { tx: origin.x, ty: origin.y }, { coopIdentity: "same-account" });
+    const b = arena.add("A2", 2, 0, { tx: origin.x, ty: origin.y }, { coopIdentity: "same-account" });
+    for (const p of [a, b]) {
+      arena.applyCommand(p, { kind: COMMAND.acceptCoopErrand, rx: 0, ry: 0, extra: 0 }, clock.now);
+      teleport(p, errand.tx, errand.ty);
+      expect(arena.applyCommand(p, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now)).toBe(JOURNEY_EVENT.coopWaiting);
+    }
+    expect(a.journey.errand).not.toBeNull();
+    expect(b.journey.errand).not.toBeNull();
+    expect(arena.coopStatusFor(a, clock.now).presentReady).toBe(1);
+    expect(arena.coopStatusFor(b, clock.now).presentReady).toBe(1);
+    expect(improvements).toBe(0);
+    const c = arena.add("B", 3, 0, { tx: origin.x, ty: origin.y }, { coopIdentity: "different-account" });
+    arena.applyCommand(c, { kind: COMMAND.acceptCoopErrand, rx: 0, ry: 0, extra: 0 }, clock.now);
+    teleport(c, errand.tx, errand.ty);
+    expect(arena.applyCommand(c, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now)).toBe(JOURNEY_EVENT.coopDelivered);
+    expect(a.journey.errand, "the earliest ready session is selected").toBeNull();
+    expect(c.journey.errand).toBeNull();
+    expect(b.journey.errand, "only the selected two settle").not.toBeNull();
+    expect(b.coopReady).not.toBeNull();
+    expect(improvements).toBe(1);
+  });
+
+  test("readiness survives restore until its exact expiry and clears through the hook", () => {
+    const clock = { now: 2_700_000 };
+    const origin = regionHub(SEED, 0, 0), errand = townErrand(SEED, 0, 0)!;
+    const first = arenaAt(SEED, clock);
+    const p = first.add("R1", 1, 0, { tx: origin.x, ty: origin.y }, { coopIdentity: "restore-account" });
+    first.applyCommand(p, { kind: COMMAND.acceptCoopErrand, rx: 0, ry: 0, extra: 0 }, clock.now);
+    teleport(p, errand.tx, errand.ty);
+    expect(first.applyCommand(p, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now)).toBe(JOURNEY_EVENT.coopWaiting);
+    const savedJourney = p.journey;
+    const savedReady = { ...p.coopReady! };
+    first.remove(p.id);
+    expect(p.coopReady).toEqual(savedReady); // disconnect does not erase durable readiness
+
+    const clears: (CoopReady | null)[] = [];
+    clock.now = savedReady.expiresAtMs - 1;
+    const restoredArena = new RealmArena({
+      seed: SEED,
+      hz: 60,
+      now: () => clock.now,
+      hooks: { persistCoopReady: (_player, ready) => clears.push(ready) },
+    });
+    const restored = restoredArena.add("R2", 1, 0, { tx: errand.tx, ty: errand.ty }, {
+      journey: savedJourney,
+      coopIdentity: "restore-account",
+      coopReady: savedReady,
+    });
+    expect(restored.coopReady).toEqual(savedReady);
+    expect(restoredArena.coopStatusFor(restored, clock.now)).toMatchObject({ ready: true, savedReady: true, presentReady: 1 });
+    expect(clears).toEqual([]);
+    restored.coopDirty = false;
+    clock.now = savedReady.expiresAtMs;
+    expect(restoredArena.expireCoopReadiness(clock.now)).toBe(1);
+    expect(restored.coopReady).toBeNull();
+    expect(clears).toEqual([null]);
+    expect(restored.coopDirty).toBe(true);
+    expect(restoredArena.coopStatusFor(restored, clock.now)).toMatchObject({ status: "traveling", ready: false, savedReady: false, presentReady: 0, expiresAt: null });
+  });
+
+  test("removing a ready player dirties remaining participants whose visible count changes", () => {
+    const clock = { now: 2_800_000 };
+    const arena = arenaAt(SEED, clock);
+    const origin = regionHub(SEED, 0, 0), errand = townErrand(SEED, 0, 0)!;
+    const a = arena.add("A", 1, 0, { tx: origin.x, ty: origin.y }, { coopIdentity: "remove-a" });
+    const b = arena.add("B", 2, 0, { tx: origin.x, ty: origin.y }, { coopIdentity: "remove-b" });
+    for (const p of [a, b]) arena.applyCommand(p, { kind: COMMAND.acceptCoopErrand, rx: 0, ry: 0, extra: 0 }, clock.now);
+    teleport(a, errand.tx, errand.ty);
+    arena.applyCommand(a, { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 }, clock.now);
+    expect(arena.coopStatusFor(b, clock.now).presentReady).toBe(1);
+    arena.drainCoopStatuses(clock.now);
+    arena.remove(a.id);
+    expect(a.coopReady).not.toBeNull();
+    expect(b.coopDirty).toBe(true);
+    expect(arena.coopStatusFor(b, clock.now).presentReady).toBe(0);
   });
 
   test("two players completing the same errand in the same tick raise the shared improvement once", () => {

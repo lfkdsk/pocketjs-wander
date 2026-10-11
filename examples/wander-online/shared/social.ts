@@ -13,6 +13,48 @@ export const SOCIAL_MAX_PENDING = 64;
  * retain every realm the Auth DO can track. */
 export const SOCIAL_MAX_WORLD_CHOICES = 16;
 export const SOCIAL_MAX_REALM_HISTORY = 256;
+export const SOCIAL_MAX_LEADERBOARD_ROWS = 20;
+/** Co-op parties are deliberately small enough to fit in one compact HUD
+ * counter and to keep every snapshot bounded independently of room size. */
+export const SOCIAL_MAX_COOP_REQUIRED = 8;
+
+export interface RealmFeatures {
+  realm: string;
+  coopErrands: boolean;
+  discoveryLeaderboard: boolean;
+}
+
+export type CoopErrandStatus = "none" | "travel" | "waiting" | "completed" | "expired";
+
+/** Private co-op state for the authenticated caller. It contains only
+ * aggregate readiness: never another player's identity or location. */
+export interface CoopErrandSnapshot {
+  realm: string;
+  revision: number;
+  status: CoopErrandStatus;
+  cooperative: boolean;
+  ready: boolean;
+  savedReady: number;
+  presentReady: number;
+  required: number;
+  expiresAt: number;
+}
+
+export interface DiscoveryLeaderboardRow {
+  rank: number;
+  name: string;
+  firsts: number;
+}
+
+export interface DiscoveryLeaderboard {
+  realm: string;
+  revision: number;
+  listed: boolean;
+  /** The caller always receives their private rank, listed or not. */
+  mine: { rank: number; firsts: number };
+  /** Public opt-in rows only. The client never infers missing identities. */
+  leaders: DiscoveryLeaderboardRow[];
+}
 
 export type FriendPresence = "online" | "offline" | "hidden";
 
@@ -92,6 +134,64 @@ export function parseRealmChoices(value: unknown): RealmChoice[] | null {
     if (!record(row) || !realmId(row.realm) || !population(row.band) || typeof row.joinable !== "boolean") return null;
     return { realm: row.realm, band: row.band, joinable: row.joinable };
   });
+}
+
+export function parseRealmFeatures(value: unknown): RealmFeatures | null {
+  if (!record(value) || !realmId(value.realm)
+    || typeof value.coopErrands !== "boolean"
+    || typeof value.discoveryLeaderboard !== "boolean") return null;
+  return {
+    realm: value.realm,
+    coopErrands: value.coopErrands,
+    discoveryLeaderboard: value.discoveryLeaderboard,
+  };
+}
+
+export function parseCoopErrandSnapshot(value: unknown): CoopErrandSnapshot | null {
+  if (!record(value) || !realmId(value.realm)
+    || !integer(value.revision, 0, 0xffff_ffff)
+    || !coopStatus(value.status)
+    || typeof value.cooperative !== "boolean"
+    || typeof value.ready !== "boolean"
+    || !integer(value.required, 2, SOCIAL_MAX_COOP_REQUIRED)
+    || !integer(value.savedReady, 0, value.required)
+    || !integer(value.presentReady, 0, value.required)
+    || !integer(value.expiresAt, 0, Number.MAX_SAFE_INTEGER)) return null;
+  return {
+    realm: value.realm,
+    revision: value.revision,
+    status: value.status,
+    cooperative: value.cooperative,
+    ready: value.ready,
+    savedReady: value.savedReady,
+    presentReady: value.presentReady,
+    required: value.required,
+    expiresAt: value.expiresAt,
+  };
+}
+
+export function parseDiscoveryLeaderboard(value: unknown): DiscoveryLeaderboard | null {
+  if (!record(value) || !realmId(value.realm)
+    || !integer(value.revision, 0, 0xffff_ffff)
+    || typeof value.listed !== "boolean"
+    || !record(value.mine)
+    || !integer(value.mine.rank, 1, Number.MAX_SAFE_INTEGER)
+    || !integer(value.mine.firsts, 0, Number.MAX_SAFE_INTEGER)) return null;
+  const leaders = boundedArray(value.leaders, SOCIAL_MAX_LEADERBOARD_ROWS, (item) => {
+    if (!record(item)
+      || !integer(item.rank, 1, Number.MAX_SAFE_INTEGER)
+      || !displayName(item.name)
+      || !integer(item.firsts, 0, Number.MAX_SAFE_INTEGER)) return null;
+    return { rank: item.rank, name: item.name, firsts: item.firsts };
+  });
+  if (!leaders) return null;
+  return {
+    realm: value.realm,
+    revision: value.revision,
+    listed: value.listed,
+    mine: { rank: value.mine.rank, firsts: value.mine.firsts },
+    leaders,
+  };
 }
 
 export function parseSelfData(value: unknown): SelfDataSummary | null {
@@ -184,4 +284,8 @@ function presence(value: unknown): value is FriendPresence {
 
 function population(value: unknown): value is RealmPopulationBand {
   return value === "empty" || value === "quiet" || value === "lively" || value === "busy" || value === "full";
+}
+
+function coopStatus(value: unknown): value is CoopErrandStatus {
+  return value === "none" || value === "travel" || value === "waiting" || value === "completed" || value === "expired";
 }

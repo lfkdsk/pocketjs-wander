@@ -54,6 +54,7 @@ import {
   createSocialMenuState,
   normalizeSocialMenuState,
   reduceSocialMenu,
+  resolveOnlineLocale,
   type SocialAction,
   type SocialInput,
   type SocialMenuData,
@@ -87,7 +88,7 @@ import { RealmWorld, realmRegionKey } from "./net/realm-world.ts";
 import { RealmPredictor } from "./net/realm-predict.ts";
 import { OnlineClient, type AuthCredential, type SocketFactory } from "./net/client.ts";
 import { COMMAND, type RosterEntry } from "./net/protocol.ts";
-import { JOURNEY_EVENT, PLAZA_RADIUS, errandHudText, journeyEventText, journeyIsHelped, resolveErrand } from "./net/journey.ts";
+import { JOURNEY_EVENT, PLAZA_RADIUS, errandHudText, isCooperativeErrand, journeyEventText, journeyIsHelped, resolveErrand } from "./net/journey.ts";
 import { frontTile, plaqueOf, talkTarget, ticksSinceDiscovery, townResidentsAt, type NpcPose } from "./net/npc.ts";
 import { loadTicket, saveTicket, clearTicket, loadRealm, saveRealm, clearRealm } from "./auth-store.ts";
 import { EMOTE_TABLE, emoteGlyph } from "./net/emote.ts";
@@ -96,10 +97,16 @@ import { INVITE_TTL_SEC, parseInviteToken } from "./shared/invite.ts";
 import { AUTH_PROTOCOL_VERSION, NAME_MAX, validateName } from "./shared/auth.ts";
 import {
   SOCIAL_PROTOCOL_VERSION,
+  parseCoopErrandSnapshot,
+  parseDiscoveryLeaderboard,
   parseRealmChoices,
+  parseRealmFeatures,
   parseSelfData,
   parseSocialSnapshot,
+  type CoopErrandSnapshot,
+  type DiscoveryLeaderboard,
   type RealmChoice,
+  type RealmFeatures,
   type SelfDataSummary,
   type SocialSnapshot,
 } from "./shared/social.ts";
@@ -217,6 +224,9 @@ declare global {
    *  token then shows in the published state and the ONLINE log line). */
   // eslint-disable-next-line no-var
   var __onlineAutoInvite: boolean | undefined;
+  /** Test/demo hook for the small bilingual social/co-op surface. */
+  // eslint-disable-next-line no-var
+  var __onlineLocale: string | undefined;
 }
 
 export interface OnlinePublished {
@@ -369,11 +379,16 @@ export function OnlineView() {
     __onlineInvite?: string;
     __onlineRealm?: string;
     __onlineAutoInvite?: boolean;
+    __onlineLocale?: string;
     __pocketAuth?: { token?: string };
     __pocketInvite?: string;
     __pocketWeb?: boolean;
   };
   const url = resolveUrl(g.__onlineUrl);
+  const locale = resolveOnlineLocale(
+    g.__onlineLocale,
+    (globalThis as { navigator?: { language?: unknown } }).navigator?.language,
+  );
   // The realm to ask for: an invite token (from the page's URL fragment or
   // a host hook) names the realm and brings the code; otherwise the pin of
   // the last admission, persisted beside the ticket. Nothing: any realm.
@@ -411,6 +426,9 @@ export function OnlineView() {
   const [socialSnapshot, setSocialSnapshot] = createSignal<SocialSnapshot | null>(null);
   const [realmChoices, setRealmChoices] = createSignal<RealmChoice[]>([]);
   const [selfData, setSelfData] = createSignal<SelfDataSummary | null>(null);
+  const [realmFeatures, setRealmFeatures] = createSignal<RealmFeatures | null>(null);
+  const [coopErrand, setCoopErrand] = createSignal<CoopErrandSnapshot | null>(null);
+  const [discoveryLeaderboard, setDiscoveryLeaderboard] = createSignal<DiscoveryLeaderboard | null>(null);
   const [rosterRevision, setRosterRevision] = createSignal(0);
   /** Delete-profile confirmation: the first SQUARE arms it, the second
    *  (within the window) sends the delete. Destructive, so never one press. */
@@ -441,6 +459,36 @@ export function OnlineView() {
   let createFocus: CreateFocus = "name";
   const roster = new Map<number, RosterEntry>();
   const publishedRoster: Record<number, { name: string; look: number }> = {};
+  /** JSON additions are scoped to one admitted realm. The maps make the key
+   * explicit; epoch changes clear them, so a reconnect or switch cannot
+   * revive a response from the previous socket. */
+  const featureCache = new Map<string, RealmFeatures>();
+  const coopCache = new Map<string, CoopErrandSnapshot>();
+  const leaderboardCache = new Map<string, DiscoveryLeaderboard>();
+  let jsonRealm = "";
+
+  const clearRealmJson = (nextRealm = ""): void => {
+    featureCache.clear();
+    coopCache.clear();
+    leaderboardCache.clear();
+    jsonRealm = nextRealm;
+    batch(() => {
+      setRealmFeatures(null);
+      setCoopErrand(null);
+      setDiscoveryLeaderboard(null);
+      setSocialState((state) => state.screen === "discovery" ? createSocialMenuState() : state);
+    });
+  };
+
+  const currentJsonRealm = (): string => {
+    const realm = client?.realmId ?? "";
+    return realm && realm === jsonRealm ? realm : "";
+  };
+
+  const han = (...points: number[]): string => String.fromCodePoint(...points);
+  const coopLabel = () => locale === "zh" ? han(0x534f, 0x4f5c) : "COOP";
+  const coopReadiness = (snapshot: CoopErrandSnapshot): string =>
+    `${coopLabel()} ${snapshot.presentReady}/${snapshot.required}`;
 
   const showNotice = (text: string, ms = 3000) => {
     setNotice(text);
@@ -486,6 +534,7 @@ export function OnlineView() {
     }
     client?.stop();
     client = null;
+    clearRealmJson();
     roster.clear();
     setRosterRevision((value) => value + 1);
     for (const id in publishedRoster) delete publishedRoster[id];
@@ -531,6 +580,9 @@ export function OnlineView() {
       social: socialSnapshot(),
       realms: realmChoices(),
       self: selfData(),
+      features: realmFeatures(),
+      leaderboard: discoveryLeaderboard(),
+      locale,
       currentRealm: screen() === "world" ? client?.realmId || client?.realmPin || null : null,
       nearby: [...roster.values()]
         .filter((entry) => entry.id !== client?.myId)
@@ -546,6 +598,7 @@ export function OnlineView() {
     sendSocial({ type: "socialGet" });
     sendSocial({ type: "worldsGet" });
     sendSocial({ type: "selfGet" });
+    if (realmFeatures()?.discoveryLeaderboard === true) sendSocial({ type: "leaderboardGet" });
   };
 
   const openSocialPanel = (): void => {
@@ -602,6 +655,7 @@ export function OnlineView() {
           showNotice("World unavailable");
           return;
         }
+        clearRealmJson();
         roster.clear();
         for (const id in publishedRoster) delete publishedRoster[id];
         setSocialOpen(false);
@@ -609,6 +663,11 @@ export function OnlineView() {
         return;
       case "set-visibility":
         sendSocial({ type: "privacySet", visible: action.visible });
+        return;
+      case "set-discovery-listing":
+        if (realmFeatures()?.discoveryLeaderboard === true) {
+          sendSocial({ type: "leaderboardSet", listed: action.listed });
+        }
         return;
       case "delete-profile":
         requestCompleteDeletion();
@@ -627,10 +686,65 @@ export function OnlineView() {
   const handleSocialMessage = (msg: Record<string, unknown>): boolean => {
     const type = String(msg.type ?? "");
     const socialType = type === "socialSnapshot" || type === "worlds" || type === "selfData"
+      || type === "realmFeatures" || type === "coopErrand" || type === "discoveryLeaderboard"
       || type === "friendResult" || type === "privacyResult" || type === "socialError"
       || type === "deletedAll" || type === "deleteAllError";
     if (!socialType) return false;
     if (msg.v !== SOCIAL_PROTOCOL_VERSION) return true;
+    if (type === "realmFeatures") {
+      const parsed = parseRealmFeatures(msg);
+      const realm = currentJsonRealm();
+      if (!parsed || !realm || parsed.realm !== realm) return true;
+      const previous = featureCache.get(realm);
+      featureCache.set(realm, parsed);
+      setRealmFeatures(parsed);
+      if (!parsed.coopErrands) {
+        coopCache.delete(realm);
+        setCoopErrand(null);
+      }
+      if (!parsed.discoveryLeaderboard) {
+        leaderboardCache.delete(realm);
+        setDiscoveryLeaderboard(null);
+      }
+      setSocialState((state) => state.screen === "discovery" && !parsed.discoveryLeaderboard
+        ? createSocialMenuState()
+        : normalizeSocialMenuState(state, socialMenuData()));
+      if (!previous?.discoveryLeaderboard && parsed.discoveryLeaderboard && socialOpen()) {
+        sendSocial({ type: "leaderboardGet" });
+      }
+      return true;
+    }
+    if (type === "coopErrand") {
+      const parsed = parseCoopErrandSnapshot(msg);
+      const realm = currentJsonRealm();
+      if (!parsed || !realm || parsed.realm !== realm || realmFeatures()?.coopErrands !== true) return true;
+      const previous = coopCache.get(realm);
+      if (previous && parsed.revision < previous.revision) return true;
+      coopCache.set(realm, parsed);
+      setCoopErrand(parsed);
+      if (parsed.cooperative && parsed.status === "waiting") {
+        const suffix = locale === "zh" ? han(0x5c31, 0x7eea) : "READY";
+        showNotice(`${coopReadiness(parsed)} · ${suffix}`, NOTICE_EVENT_MS);
+      } else if (parsed.cooperative && parsed.status === "completed") {
+        const suffix = locale === "zh" ? han(0x5b8c, 0x6210) : "COMPLETE";
+        showNotice(`${coopLabel()} · ${suffix}`, NOTICE_EVENT_MS);
+      } else if (parsed.cooperative && parsed.status === "expired") {
+        const suffix = locale === "zh" ? han(0x8fc7, 0x671f) : "EXPIRED";
+        showNotice(`${coopLabel()} · ${suffix}`, NOTICE_EVENT_MS);
+      }
+      return true;
+    }
+    if (type === "discoveryLeaderboard") {
+      const parsed = parseDiscoveryLeaderboard(msg);
+      const realm = currentJsonRealm();
+      if (!parsed || !realm || parsed.realm !== realm || realmFeatures()?.discoveryLeaderboard !== true) return true;
+      const previous = leaderboardCache.get(realm);
+      if (previous && parsed.revision < previous.revision) return true;
+      leaderboardCache.set(realm, parsed);
+      setDiscoveryLeaderboard(parsed);
+      setSocialState((state) => normalizeSocialMenuState(state, socialMenuData()));
+      return true;
+    }
     if (type === "socialSnapshot") {
       const parsed = parseSocialSnapshot(msg);
       if (parsed) {
@@ -693,6 +807,7 @@ export function OnlineView() {
 
   const startClient = (auth: AuthCredential) => {
     client?.stop();
+    clearRealmJson();
     client = new OnlineClient(url, {
       auth,
       name: auth.kind === "guest" ? auth.name : undefined,
@@ -705,6 +820,7 @@ export function OnlineView() {
         // Admitted: this is the realm to come back to. An invite that got
         // us in has done its job; the page may forget it.
         saveRealm(realmId);
+        clearRealmJson(realmId);
         roster.clear();
         for (const id in publishedRoster) delete publishedRoster[id];
         setRosterRevision((value) => value + 1);
@@ -728,6 +844,7 @@ export function OnlineView() {
         sendSocial({ type: "selfGet" });
       },
       onRoster: (entries) => {
+        if (jsonRealm && !client?.realmId) clearRealmJson();
         // OnlineClient publishes its complete current roster. Replace the
         // view copy so a BYE removes identity-backed UI immediately while a
         // later incremental ROSTER still preserves everyone known this epoch.
@@ -1473,9 +1590,17 @@ export function OnlineView() {
     }
     const errand = resolveErrand(seed, c.journey);
     if (!errand) {
-      if (townErrand(seed, rx, ry)) c.sendCommand({ kind: COMMAND.acceptErrand, rx, ry, extra: 0 });
+      const offer = townErrand(seed, rx, ry);
+      if (!offer) return;
+      const cooperative = realmFeatures()?.coopErrands === true && isCooperativeErrand(seed, offer);
+      c.sendCommand({ kind: cooperative ? COMMAND.acceptCoopErrand : COMMAND.acceptErrand, rx, ry, extra: 0 });
     } else if (errand.kind === "deliver" && errand.trx === rx && errand.try === ry) {
-      c.sendCommand({ kind: COMMAND.deliverErrand, rx, ry, extra: 0 });
+      // A legacy server never advertises co-op, so deterministic co-op-
+      // eligible errands remain ordinary solo errands there. Once advertised
+      // (or confirmed by a snapshot), however, never fall back to DELIVER:
+      // only the aggregate READY command can complete this task.
+      const cooperative = c.journey.cooperative === true || coopErrand()?.cooperative === true;
+      c.sendCommand({ kind: cooperative ? COMMAND.readyCoopErrand : COMMAND.deliverErrand, rx, ry, extra: 0 });
     }
   };
 
@@ -1491,7 +1616,7 @@ export function OnlineView() {
     if (ev.seq !== lastEventSeq) {
       lastEventSeq = ev.seq;
       if (ev.kind !== JOURNEY_EVENT.talked) {
-        const text = journeyEventText(seed, ev);
+        const text = journeyEventText(seed, ev, locale);
         if (text) showNotice(text, NOTICE_EVENT_MS);
       }
     }
@@ -1588,7 +1713,10 @@ export function OnlineView() {
         }
         const rumor = nearestRumor(c, seed, cam.tx, cam.ty);
         setLogText(`LOG ${keys.length} · ${latestKind}    ${rumor ? `RUMOR: ${rumor.kind} ${rumor.dir} ${rumor.dist}` : "RUMOR: nothing nearby"}`);
-        setErrandText(errandHudText(resolveErrand(seed, c.journey), c.journey.helpedCount));
+        const base = errandHudText(resolveErrand(seed, c.journey), c.journey.helpedCount);
+        const coop = coopErrand();
+        const activeCoop = coop?.cooperative === true && (coop.status === "travel" || coop.status === "waiting");
+        setErrandText(activeCoop ? `${base}   ${coopReadiness(coop)}` : base);
       }
     });
   };
@@ -1929,6 +2057,7 @@ export function OnlineView() {
         // "Any world": drop the realm pin (and any invite) and reconnect
         // wherever the service has room. The way out of a full world.
         c.leaveRealm();
+        clearRealmJson();
         showNotice("Joining any world…");
         setMenuOpen(false);
         setDeleteArmed(false);

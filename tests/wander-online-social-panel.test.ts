@@ -6,8 +6,10 @@ import {
   SOCIAL_WIDE_PHONE_PANEL_W,
   createSocialMenuState,
   friendRealmCandidates,
+  fitSocialText,
   measureSocialCells,
   reduceSocialMenu,
+  resolveOnlineLocale,
   socialPanelLayout,
   socialPanelLabelCells,
   socialPanelRowRect,
@@ -87,6 +89,85 @@ describe("wander-online social menu model", () => {
 
     const myData = reduceSocialMenu(screen("home", 2), "confirm", data);
     expect(myData.state).toEqual(screen("my-data"));
+  });
+
+  test("Discovery route is capability-gated and toggles public listing without hiding private YOU", () => {
+    const legacy = fixture();
+    expect(socialMenuRows(screen("home"), legacy).map((row) => row.key)).toEqual([
+      "route-friends", "route-worlds", "route-my-data",
+    ]);
+    legacy.features = { realm: "plaza-2", coopErrands: true, discoveryLeaderboard: false };
+    expect(socialMenuRows(screen("home"), legacy).map((row) => row.key)).not.toContain("route-discovery");
+
+    const data = fixture();
+    data.features = { realm: "plaza-2", coopErrands: true, discoveryLeaderboard: true };
+    data.leaderboard = {
+      realm: "plaza-2",
+      revision: 4,
+      listed: false,
+      mine: { rank: 31, firsts: 7 },
+      leaders: [
+        { rank: 1, name: "Public One", firsts: 80 },
+        { rank: 4, name: "Public Four", firsts: 44 },
+      ],
+    };
+    expect(socialMenuRows(screen("home"), data).map((row) => row.key)).toEqual([
+      "route-friends", "route-worlds", "route-discovery", "route-my-data",
+    ]);
+    const opened = reduceSocialMenu(screen("home", 2), "confirm", data);
+    expect(opened).toEqual({ state: screen("discovery"), action: null });
+    expect(socialMenuRows(opened.state, data).map((row) => [row.label, row.detail])).toEqual([
+      ["YOU · #31", "7 FIRSTS"],
+      ["#1 Public One", "80 FIRSTS"],
+      ["#4 Public Four", "44 FIRSTS"],
+    ]);
+    expect(reduceSocialMenu(opened.state, "privacy", data).action)
+      .toEqual({ type: "set-discovery-listing", listed: true });
+    data.leaderboard = { ...data.leaderboard, listed: true };
+    expect(reduceSocialMenu(opened.state, "privacy", data).action)
+      .toEqual({ type: "set-discovery-listing", listed: false });
+  });
+
+  test("Discovery keeps twenty public leaders in normal seven-row paging", () => {
+    const data = fixture();
+    data.features = { realm: "plaza-2", coopErrands: false, discoveryLeaderboard: true };
+    data.leaderboard = {
+      realm: "plaza-2",
+      revision: 1,
+      listed: false,
+      mine: { rank: 99, firsts: 0 },
+      leaders: Array.from({ length: 20 }, (_, i) => ({ rank: i + 1, name: `Finder ${i}`, firsts: 20 - i })),
+    };
+    const rows = socialMenuRows(screen("discovery"), data);
+    expect(rows).toHaveLength(21);
+    expect(rows[0]?.key).toBe("discovery-mine");
+    expect(rows.slice(1).every((row) => row.key.startsWith("discovery-leader-"))).toBe(true);
+    expect(socialMenuView(screen("discovery"), data).rows).toHaveLength(SOCIAL_PAGE_ROWS);
+    expect(socialMenuView(screen("discovery", 14), data)).toMatchObject({ page: 2, pages: 3 });
+  });
+
+  test("locale hook selects concise Chinese Discovery copy from codepoints", () => {
+    const data = fixture();
+    data.features = { realm: "plaza-2", coopErrands: true, discoveryLeaderboard: true };
+    data.leaderboard = {
+      realm: "plaza-2", revision: 1, listed: false,
+      mine: { rank: 3, firsts: 7 }, leaders: [{ rank: 1, name: "Alice", firsts: 9 }],
+    };
+    data.locale = resolveOnlineLocale(undefined, "zh-CN");
+    const discovery = String.fromCodePoint(0x53d1, 0x73b0, 0x699c);
+    const firstFinders = String.fromCodePoint(0x9996, 0x6b21, 0x53d1, 0x73b0);
+    const you = String.fromCodePoint(0x4f60);
+    expect(resolveOnlineLocale("ZH-hans", "en-US")).toBe("zh");
+    expect(resolveOnlineLocale("en", "zh-CN")).toBe("en");
+    expect(resolveOnlineLocale(undefined, "fr")).toBe("en");
+    expect(socialMenuRows(screen("home"), data)[2]).toMatchObject({ label: discovery, detail: firstFinders });
+    const view = socialMenuView(screen("discovery"), data);
+    expect(view.title).toBe("FIRST FINDERS");
+    expect([...`${view.title}${view.footer}`].every((ch) => {
+      const cp = ch.codePointAt(0) ?? 0;
+      return cp < 0x3400 || cp > 0x9fff;
+    })).toBe(true);
+    expect(view.rows[0]?.label).toBe(`${you} · #3`);
   });
 
   test("friends are grouped incoming, online, hidden, offline and outgoing with typed actions", () => {
@@ -286,5 +367,35 @@ describe("wander-online social panel layout", () => {
     const panelRight = (layout.panel.x + layout.panel.w) * cssPerLogical;
     expect(panelLeft).toBeGreaterThan(164);
     expect(panelRight).toBeLessThan(668);
+  });
+
+  test("English and Chinese Discovery cells fit at every supported phone viewport", () => {
+    for (const locale of ["en", "zh"] as const) {
+      const data = fixture();
+      data.locale = locale;
+      data.features = { realm: "plaza-2", coopErrands: true, discoveryLeaderboard: true };
+      data.leaderboard = {
+        realm: "plaza-2", revision: 1, listed: true,
+        mine: { rank: Number.MAX_SAFE_INTEGER, firsts: Number.MAX_SAFE_INTEGER },
+        leaders: [{
+          rank: Number.MAX_SAFE_INTEGER,
+          name: String.fromCodePoint(0x4e00).repeat(48),
+          firsts: Number.MAX_SAFE_INTEGER,
+        }],
+      };
+      for (const [width, height] of [[390, 844], [844, 390], [633, 292]] as const) {
+        const layout = socialPanelLayout(width, height);
+        const view = socialMenuView(screen("discovery"), data);
+        expect(view.rows.length).toBeLessThanOrEqual(SOCIAL_PAGE_ROWS);
+        for (const item of view.rows) {
+          expect(measureSocialCells(item.label), `${locale} ${width}x${height} label`)
+            .toBeLessThanOrEqual(SOCIAL_LABEL_CELLS);
+          expect(measureSocialCells(item.detail), `${locale} ${width}x${height} detail`)
+            .toBeLessThanOrEqual(SOCIAL_DETAIL_CELLS);
+          expect(measureSocialCells(fitSocialText(item.label, socialPanelLabelCells(layout))), `${locale} ${width}x${height} painted label`)
+            .toBeLessThanOrEqual(socialPanelLabelCells(layout));
+        }
+      }
+    }
   });
 });

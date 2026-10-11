@@ -12,6 +12,7 @@ import {
 import {
   BTN,
   MSG,
+  PLAYER_JOURNEY_BLOOM_WORDS,
   REGION_STATE_FLAG_INITIAL,
   WELCOME4_FLAG_INPUT_BATCH_6,
   WORLD_PROTOCOL_VERSION,
@@ -19,6 +20,7 @@ import {
   decodeInputBatch,
   decodeWelcome4Capabilities,
   encodeBye,
+  encodePlayerJourney,
   encodePlayerProgress,
   encodeRegionState,
   encodeRoster,
@@ -473,6 +475,32 @@ describe("wander-online client core", () => {
     harness.message(encodeState4(1, 0, 19, [{ ...entity(7), tx: -700, ty: 800 }], { roomOnline: 2, allOnline: 5 }));
     expect(client.hud().online).toBe(2);
     expect(client.hud().allOnline).toBe(5);
+    client.stop();
+  });
+
+  test("PLAYER_JOURNEY applies the authoritative cooperative mode", () => {
+    const harness = socketHarness();
+    const client = new OnlineClient("ws://unit.test/ws", { socketFactory: harness.factory });
+    harness.open();
+    readyRealm(harness);
+    const message = {
+      revision: 1,
+      eventSeq: 0,
+      eventKind: 0,
+      eventRx: 0,
+      eventRy: 0,
+      fast: false,
+      cooperative: true,
+      errand: { rx: 3, ry: -4 },
+      helpedCount: 0,
+      bloom: new Array<number>(PLAYER_JOURNEY_BLOOM_WORDS).fill(0),
+      helped: [],
+      talked: [],
+    };
+    harness.message(encodePlayerJourney(message));
+    expect(client.journey).toMatchObject({ errand: { rx: 3, ry: -4 }, cooperative: true });
+    harness.message(encodePlayerJourney({ ...message, revision: 2, cooperative: false }));
+    expect(client.journey.cooperative).toBe(false);
     client.stop();
   });
 

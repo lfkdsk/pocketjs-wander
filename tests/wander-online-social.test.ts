@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
+  SOCIAL_MAX_COOP_REQUIRED,
+  SOCIAL_MAX_LEADERBOARD_ROWS,
+  parseCoopErrandSnapshot,
+  parseDiscoveryLeaderboard,
   parseRealmChoices,
+  parseRealmFeatures,
   parseSelfData,
   parseSocialSnapshot,
   populationBand,
@@ -47,6 +52,82 @@ describe("social wire contract", () => {
     ])).toHaveLength(2);
     expect(parseRealmChoices([{ realm: "../private", band: "quiet", joinable: true }])).toBeNull();
     expect(parseRealmChoices([{ realm: "plaza-1", band: "quiet", joinable: true, count: 7 }])?.[0]).not.toHaveProperty("count");
+  });
+
+  test("realm feature flags are strict and discard unrelated fields", () => {
+    expect(parseRealmFeatures({
+      realm: "plaza-1",
+      coopErrands: true,
+      discoveryLeaderboard: false,
+      privateRoster: [{ id: 7, x: 12, y: 4 }],
+    })).toEqual({ realm: "plaza-1", coopErrands: true, discoveryLeaderboard: false });
+    expect(parseRealmFeatures({ realm: "../secret", coopErrands: true, discoveryLeaderboard: true })).toBeNull();
+    expect(parseRealmFeatures({ realm: "plaza-1", coopErrands: 1, discoveryLeaderboard: true })).toBeNull();
+  });
+
+  test("co-op snapshots bound revisions, party counts and timestamps without exposing players", () => {
+    const parsed = parseCoopErrandSnapshot({
+      realm: "plaza-1",
+      revision: 0xffff_ffff,
+      status: "waiting",
+      cooperative: true,
+      ready: true,
+      savedReady: 1,
+      presentReady: 1,
+      required: 2,
+      expiresAt: Number.MAX_SAFE_INTEGER,
+      playerIds: [4, 8],
+      positions: [{ x: 1, y: 2 }],
+    });
+    expect(parsed).toEqual({
+      realm: "plaza-1",
+      revision: 0xffff_ffff,
+      status: "waiting",
+      cooperative: true,
+      ready: true,
+      savedReady: 1,
+      presentReady: 1,
+      required: 2,
+      expiresAt: Number.MAX_SAFE_INTEGER,
+    });
+    expect(parsed).not.toHaveProperty("playerIds");
+    expect(parsed).not.toHaveProperty("positions");
+    expect(parseCoopErrandSnapshot({ ...parsed!, realm: "bad/realm" })).toBeNull();
+    expect(parseCoopErrandSnapshot({ ...parsed!, revision: 0x1_0000_0000 })).toBeNull();
+    expect(parseCoopErrandSnapshot({ ...parsed!, status: "secret" })).toBeNull();
+    expect(parseCoopErrandSnapshot({ ...parsed!, required: 1 })).toBeNull();
+    expect(parseCoopErrandSnapshot({ ...parsed!, required: SOCIAL_MAX_COOP_REQUIRED + 1 })).toBeNull();
+    expect(parseCoopErrandSnapshot({ ...parsed!, presentReady: 3 })).toBeNull();
+    expect(parseCoopErrandSnapshot({ ...parsed!, expiresAt: Number.MAX_SAFE_INTEGER + 1 })).toBeNull();
+  });
+
+  test("discovery leaderboard bounds ranks and public rows and strips sensitive fields", () => {
+    const source = {
+      realm: "plaza-1",
+      revision: 9,
+      listed: false,
+      mine: { rank: 21, firsts: 4, githubId: 99, x: 3, y: 7 },
+      leaders: [{ rank: 1, name: "Alice", firsts: 80, githubId: 1, realm: "private" }],
+      presence: [{ id: 1, x: 3, y: 7 }],
+    };
+    expect(parseDiscoveryLeaderboard(source)).toEqual({
+      realm: "plaza-1",
+      revision: 9,
+      listed: false,
+      mine: { rank: 21, firsts: 4 },
+      leaders: [{ rank: 1, name: "Alice", firsts: 80 }],
+    });
+    const max = Array.from({ length: SOCIAL_MAX_LEADERBOARD_ROWS }, (_, i) => ({
+      rank: i + 1, name: `Finder ${i}`, firsts: 100 - i,
+    }));
+    expect(parseDiscoveryLeaderboard({ ...source, leaders: max })?.leaders).toHaveLength(SOCIAL_MAX_LEADERBOARD_ROWS);
+    expect(parseDiscoveryLeaderboard({ ...source, leaders: [...max, max[0]] })).toBeNull();
+    expect(parseDiscoveryLeaderboard({ ...source, realm: "no spaces" })).toBeNull();
+    expect(parseDiscoveryLeaderboard({ ...source, mine: { rank: 0, firsts: 4 } })).toBeNull();
+    expect(parseDiscoveryLeaderboard({ ...source, mine: { rank: 2, firsts: -1 } })).toBeNull();
+    expect(parseDiscoveryLeaderboard({ ...source, mine: { rank: Number.MAX_SAFE_INTEGER + 1, firsts: 4 } })).toBeNull();
+    expect(parseDiscoveryLeaderboard({ ...source, leaders: [{ rank: 0, name: "Alice", firsts: 1 }] })).toBeNull();
+    expect(parseDiscoveryLeaderboard({ ...source, leaders: [{ rank: 1, name: "", firsts: 1 }] })).toBeNull();
   });
 
   test("self-data summary is bounded and contains no position", () => {

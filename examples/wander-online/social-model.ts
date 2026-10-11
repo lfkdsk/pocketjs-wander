@@ -7,8 +7,10 @@ import {
   SOCIAL_MAX_PENDING,
   SOCIAL_MAX_REALM_HISTORY,
   SOCIAL_MAX_WORLD_CHOICES,
+  type DiscoveryLeaderboard,
   type FriendPresence,
   type RealmChoice,
+  type RealmFeatures,
   type SelfDataSummary,
   type SocialSnapshot,
 } from "./shared/social.ts";
@@ -23,7 +25,8 @@ export const SOCIAL_DETAIL_CELLS = 14;
  * lane; wider/2x hosts have no persistent overlay and retain the full panel. */
 export const SOCIAL_WIDE_PHONE_PANEL_W = 360;
 
-export type SocialScreen = "home" | "friends" | "worlds" | "my-data" | "delete-confirm";
+export type OnlineLocale = "en" | "zh";
+export type SocialScreen = "home" | "friends" | "worlds" | "discovery" | "my-data" | "delete-confirm";
 export type SocialInput = "up" | "down" | "confirm" | "back" | "delete" | "privacy";
 
 export interface SocialMenuState {
@@ -37,6 +40,9 @@ export interface SocialMenuData {
   social: SocialSnapshot | null;
   realms: readonly RealmChoice[];
   self: SelfDataSummary | null;
+  features?: RealmFeatures | null;
+  leaderboard?: DiscoveryLeaderboard | null;
+  locale?: OnlineLocale;
   /** Temporary ids from the current realm roster. They are never durable
    * GitHub ids; the server resolves them inside the joined Room. */
   nearby?: readonly { playerId: number; name: string }[];
@@ -71,6 +77,7 @@ export type SocialAction =
   | { type: "remove-friend"; githubId: number }
   | { type: "join-realm"; realm: string }
   | { type: "set-visibility"; visible: boolean }
+  | { type: "set-discovery-listing"; listed: boolean }
   | { type: "delete-profile" };
 
 export type SocialRowKind =
@@ -80,6 +87,7 @@ export type SocialRowKind =
   | "friend"
   | "nearby"
   | "realm"
+  | "leaderboard"
   | "summary"
   | "warning"
   | "empty";
@@ -118,22 +126,64 @@ export interface SocialMenuView {
   footer: string;
 }
 
-const HOME_ROWS: readonly SocialMenuRow[] = [
-  // Rows are intentionally one line: PocketJS only breaks text at explicit
-  // newlines, while the 24 px row has room for a single 14 px line. Keep the
-  // route summaries short enough to paint in the narrow-screen detail cell.
-  row("route-friends", "route", "FRIENDS", "REQUESTS", "accent"),
-  row("route-worlds", "route", "WORLDS", "POPULATION", "accent"),
-  row("route-my-data", "route", "MY DATA", "PRIVACY", "accent"),
-];
-
-const SCREEN_TITLES: Record<SocialScreen, string> = {
+const SCREEN_TITLES: Record<Exclude<SocialScreen, "discovery">, string> = {
   home: "SOCIAL",
   friends: "FRIENDS",
   worlds: "WORLDS",
   "my-data": "MY DATA",
   "delete-confirm": "DELETE ALL DATA?",
 };
+
+/** The locale hook accepts BCP-47-style Chinese tags and deliberately falls
+ * back to English for every other or malformed value. */
+export function resolveOnlineLocale(injected?: unknown, navigatorLanguage?: unknown): OnlineLocale {
+  const value = typeof injected === "string"
+    ? injected
+    : typeof navigatorLanguage === "string" ? navigatorLanguage : "";
+  return /^zh(?:-|$)/i.test(value.trim()) ? "zh" : "en";
+}
+
+/** Keep Han out of source literals: the app's font scan sees these values at
+ * runtime in the same 12 px slot used by all social-panel rows. */
+function han(...points: number[]): string {
+  return String.fromCodePoint(...points);
+}
+
+const ZH = {
+  discovery: han(0x53d1, 0x73b0, 0x699c),
+  firstFinders: han(0x9996, 0x6b21, 0x53d1, 0x73b0),
+  you: han(0x4f60),
+  count: han(0x6b21),
+  unavailable: han(0x6682, 0x65e0, 0x6392, 0x884c),
+} as const;
+
+function discoveryAvailable(data: SocialMenuData): boolean {
+  return typeof data.currentRealm === "string"
+    && data.features?.realm === data.currentRealm
+    && data.features.discoveryLeaderboard;
+}
+
+function currentDiscoveryLeaderboard(data: SocialMenuData): DiscoveryLeaderboard | null {
+  return discoveryAvailable(data) && data.leaderboard?.realm === data.currentRealm
+    ? data.leaderboard ?? null
+    : null;
+}
+
+function homeRows(data: SocialMenuData): SocialMenuRow[] {
+  // Rows are intentionally one line: PocketJS only breaks text at explicit
+  // newlines, while the 24 px row has room for a single 14 px line.
+  const rows = [
+    row("route-friends", "route", "FRIENDS", "REQUESTS", "accent"),
+    row("route-worlds", "route", "WORLDS", "POPULATION", "accent"),
+  ];
+  if (discoveryAvailable(data)) {
+    rows.push(data.locale === "zh"
+      ? row("route-discovery", "route", ZH.discovery, ZH.firstFinders, "accent")
+      : row("route-discovery", "route", "DISCOVERY", "FIRST FINDERS", "accent"));
+  }
+  rows.push(row("route-my-data", "route", "MY DATA", "PRIVACY", "accent"));
+  return rows;
+}
 
 /** One display cell for ASCII, two for non-ASCII. This deliberately
  * overestimates the bundled proportional font so a fitted line stays safe. */
@@ -354,6 +404,33 @@ function selfRows(summary: SelfDataSummary | null): SocialMenuRow[] {
   return rows;
 }
 
+function discoveryRows(data: SocialMenuData): SocialMenuRow[] {
+  const board = currentDiscoveryLeaderboard(data);
+  if (!board) {
+    return [data.locale === "zh"
+      ? row("discovery-loading", "empty", ZH.unavailable, "", "muted")
+      : row("discovery-loading", "empty", "LEADERBOARD UNAVAILABLE", "", "muted")];
+  }
+  const zh = data.locale === "zh";
+  const rows: SocialMenuRow[] = [row(
+    "discovery-mine",
+    "leaderboard",
+    `${zh ? ZH.you : "YOU"} · #${board.mine.rank}`,
+    zh ? `${board.mine.firsts} ${ZH.count}` : `${board.mine.firsts} FIRSTS`,
+    "accent",
+  )];
+  for (let i = 0; i < board.leaders.length; i++) {
+    const leader = board.leaders[i]!;
+    rows.push(row(
+      `discovery-leader-${i}`,
+      "leaderboard",
+      `#${leader.rank} ${leader.name}`,
+      zh ? `${leader.firsts} ${ZH.count}` : `${leader.firsts} FIRSTS`,
+    ));
+  }
+  return rows;
+}
+
 function deleteRows(): SocialMenuRow[] {
   return [
     row("delete-warning", "warning", "PROFILE + FRIENDS + JOURNEYS", "", "danger"),
@@ -363,9 +440,10 @@ function deleteRows(): SocialMenuRow[] {
 
 export function socialMenuRows(state: SocialMenuState, data: SocialMenuData): SocialMenuRow[] {
   switch (state.screen) {
-    case "home": return [...HOME_ROWS];
+    case "home": return homeRows(data);
     case "friends": return friendRows(data.social, data.nearby);
     case "worlds": return worldRows(data);
+    case "discovery": return discoveryRows(data);
     case "my-data": return selfRows(data.self);
     case "delete-confirm": return deleteRows();
   }
@@ -409,6 +487,12 @@ export function reduceSocialMenu(
       : { state: enter(current.screen === "delete-confirm" ? "my-data" : "home"), action: null };
   }
   if (input === "privacy") {
+    if (current.screen === "discovery") {
+      const board = currentDiscoveryLeaderboard(data);
+      return board
+        ? { state: current, action: { type: "set-discovery-listing", listed: !board.listed } }
+        : { state: current, action: null };
+    }
     if (current.screen !== "my-data") return { state: current, action: null };
     const visible = data.social?.visible ?? data.self?.visible;
     return visible === undefined
@@ -437,8 +521,11 @@ export function reduceSocialMenu(
   if (input !== "confirm") return { state: current, action: null };
   const selected = selectedRow(current, data);
   if (current.screen === "home") {
-    const screen = (["friends", "worlds", "my-data"] as const)[current.cursor];
-    return screen ? { state: enter(screen), action: null } : { state: current, action: null };
+    const destination = selected?.key === "route-friends" ? "friends"
+      : selected?.key === "route-worlds" ? "worlds"
+        : selected?.key === "route-discovery" ? "discovery"
+          : selected?.key === "route-my-data" ? "my-data" : null;
+    return destination ? { state: enter(destination), action: null } : { state: current, action: null };
   }
   if (current.screen === "friends") {
     if (selected?.kind === "incoming" && selected.githubId !== undefined) {
@@ -462,18 +549,24 @@ export function socialMenuView(state: SocialMenuState, data: SocialMenuData): So
   const allRows = socialMenuRows(normalized, data);
   const pages = Math.max(1, Math.ceil(allRows.length / SOCIAL_PAGE_ROWS));
   const start = normalized.page * SOCIAL_PAGE_ROWS;
+  const leaderboard = currentDiscoveryLeaderboard(data);
   const footer = normalized.screen === "home"
     ? "CIRCLE OPEN · CROSS CLOSE"
     : normalized.screen === "friends"
       ? "CIRCLE ACT · SQUARE REMOVE · CROSS BACK"
       : normalized.screen === "worlds"
         ? "CIRCLE JOIN · CROSS BACK"
+        : normalized.screen === "discovery"
+          ? `TRIANGLE ${leaderboard?.listed ? "UNLIST" : "LIST"} · CROSS BACK`
         : normalized.screen === "my-data"
           ? "TRIANGLE PRIVACY · SQUARE DELETE · CROSS BACK"
           : "SQUARE DELETE FOREVER · CROSS CANCEL";
   return {
     state: normalized,
-    title: SCREEN_TITLES[normalized.screen],
+    // The heading/footer use larger/smaller font slots. Keep them ASCII;
+    // localized Han is deliberately confined to the panel's text-xs rows,
+    // the only slot backed by the bundled CJK subset.
+    title: normalized.screen === "discovery" ? "FIRST FINDERS" : SCREEN_TITLES[normalized.screen],
     rows: allRows.slice(start, start + SOCIAL_PAGE_ROWS),
     page: normalized.page,
     pages,

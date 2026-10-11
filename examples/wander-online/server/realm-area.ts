@@ -10,6 +10,7 @@ import { purePlacedLandmark, type Errand } from "../../wander/towns.ts";
 import type { Landmark } from "../../wander/landmarks.ts";
 import {
   emptyJourney,
+  isCooperativeErrand,
   journeyAccept,
   journeyComplete,
   journeyTalk,
@@ -54,6 +55,48 @@ export const REALM_REF_TICK_BUDGET = REALM_FRAME_BUDGET / 3;
  * chunk and region-plan residency caps. Admission must stop here instead of
  * letting MultiFocusWorld.setFocuses fail after the player was inserted. */
 export const REALM_PLAYER_CAP = 32;
+/** A cooperative delivery needs two different account identities. */
+export const COOP_REQUIRED_PLAYERS = 2 as const;
+/** A readiness claim is intentionally short-lived: enough for a second
+ *  courier to press ready, but not a durable claim on a plaza. */
+export const COOP_READY_TTL_MS = 30_000;
+/** Spelling retained for storage/host code that calls it readiness. */
+export const COOP_READINESS_TTL_MS = COOP_READY_TTL_MS;
+export const COOP_IDENTITY_MAX = 128;
+
+/** Persisted server-private readiness. Coordinates describe this player's
+ *  own active offer and target; they are never included in public status. */
+export interface CoopReady {
+  offerRx: number;
+  offerRy: number;
+  targetRx: number;
+  targetRy: number;
+  readyAtMs: number;
+  expiresAtMs: number;
+}
+
+export type CoopStatusKind = "inactive" | "traveling" | "waiting";
+export type CoopReadyCount = 0 | 1 | typeof COOP_REQUIRED_PLAYERS;
+
+/** JSON-safe recipient-only status. It exposes neither account identities
+ *  nor another player's coordinates. `ready` additionally requires current
+ *  authoritative presence; `savedReady` may survive a disconnect/move. */
+export interface CoopStatus {
+  status: CoopStatusKind;
+  cooperative: boolean;
+  ready: boolean;
+  savedReady: boolean;
+  presentReady: CoopReadyCount;
+  required: typeof COOP_REQUIRED_PLAYERS;
+  expiresAt: number | null;
+  revision: number;
+}
+
+export interface PendingCoopStatus {
+  /** Ephemeral arena id used only to route this private status. */
+  playerId: number;
+  status: CoopStatus;
+}
 
 export interface RealmPlayer {
   id: number;
@@ -74,6 +117,14 @@ export interface RealmPlayer {
   journeyRevision: number;
   /** The journey changed since the host last persisted/sent it. */
   journeyDirty: boolean;
+  /** Opaque account/session owner used only for distinct-player matching. */
+  coopIdentity: string;
+  /** Persistable readiness for the active cooperative delivery. */
+  coopReady: CoopReady | null;
+  /** The recipient-only cooperative JSON status needs sending. */
+  coopDirty: boolean;
+  /** Monotonic recipient-only cooperative status revision. */
+  coopRevision: number;
   /** Latest confirmed journey event (seq 0 = none yet). */
   event: JourneyEvent;
   /** Private landmark sightings, oldest first, exact, at most PLAYER_PROGRESS_MAX. */
@@ -101,15 +152,19 @@ export interface RealmPlayerRestore {
   journeyRevision?: number;
   landmarks?: readonly JourneyPair[];
   progressRevision?: number;
+  coopIdentity?: string;
+  coopReady?: CoopReady | null;
 }
 
-/** Storage-backed hosts intercept the two shared facts a journey can
- *  create. Each returns the authoritative row after its compare-and-set (or
- *  the unchanged row), or null to refuse; the arena then applies and queues
- *  it for broadcast. Without hooks the arena keeps the facts in memory. */
+/** Storage-backed hosts intercept the shared facts a journey can create and
+ *  the private cooperative readiness it can change. Region hooks return the
+ *  authoritative row after compare-and-set (or null to refuse); readiness
+ *  is a synchronous write-through. */
 export interface RealmArenaHooks {
   improveRegion?(rx: number, ry: number, level: number, nowMs: number): RealmRegionState | null;
   landmarkFirst?(rx: number, ry: number, player: RealmPlayer, nowMs: number): RealmRegionState | null;
+  /** Synchronous write-through for every readiness write or clear. */
+  persistCoopReady?(player: RealmPlayer, ready: CoopReady | null): void;
 }
 
 export interface RealmArenaConfig {
@@ -133,6 +188,40 @@ const TOWN_PLAN_CAP = 64;
  *  judged adjacency at its estimated clock, so the resident may have taken
  *  one more step by the time the command arrives. */
 export const TALK_TOLERANCE = 2;
+
+function coopInt32(value: number, label: string): number {
+  if (!Number.isInteger(value) || value < -0x8000_0000 || value > 0x7fff_ffff) {
+    throw new RangeError(`${label} must be an int32`);
+  }
+  return value;
+}
+
+function coopTime(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value < 0) throw new RangeError(`${label} must be a non-negative safe integer`);
+  return value;
+}
+
+function checkedCoopReady(value: CoopReady): CoopReady {
+  const readyAtMs = coopTime(value.readyAtMs, "coop readyAtMs");
+  const expiresAtMs = coopTime(value.expiresAtMs, "coop expiresAtMs");
+  const lifetime = expiresAtMs - readyAtMs;
+  if (lifetime <= 0 || lifetime > COOP_READY_TTL_MS) throw new RangeError("coop readiness exceeds the fixed TTL");
+  return {
+    offerRx: coopInt32(value.offerRx, "coop offer rx"),
+    offerRy: coopInt32(value.offerRy, "coop offer ry"),
+    targetRx: coopInt32(value.targetRx, "coop target rx"),
+    targetRy: coopInt32(value.targetRy, "coop target ry"),
+    readyAtMs,
+    expiresAtMs,
+  };
+}
+
+function checkedCoopIdentity(value: string): string {
+  if (typeof value !== "string" || value.length < 1 || value.length > COOP_IDENTITY_MAX) {
+    throw new RangeError(`coop identity must contain 1..${COOP_IDENTITY_MAX} code units`);
+  }
+  return value;
+}
 
 function heading(p: RealmPlayer): Pick<RealmFocus, "hx" | "hy"> {
   const dir = p.state.move.moving ? p.state.move.stepDir : p.state.move.facing;
@@ -282,6 +371,8 @@ export class RealmArena {
     // Collision at the anchor needs its chunks and the growth phase of its
     // regions; the admission clock is advanced before either is read.
     const nowMs = this.now();
+    this.expireCoopReadiness(nowMs);
+    const coopBefore = this.captureCoopStatus(nowMs);
     this.world.setWorldTime(nowMs);
     this.world.prime([...this.focuses(), { x: anchor.tx, y: anchor.ty }], this.refTicks);
     const hash = spawnHash(spawnKey);
@@ -310,6 +401,10 @@ export class RealmArena {
         walking: false,
       },
     };
+    const coopIdentity = restore?.coopIdentity !== undefined
+      ? checkedCoopIdentity(restore.coopIdentity)
+      : spawnKey.length >= 1 && spawnKey.length <= COOP_IDENTITY_MAX ? spawnKey : `player:${id}`;
+    const restoredCoopReady = restore?.coopReady ? checkedCoopReady(restore.coopReady) : null;
     const player: RealmPlayer = {
       id,
       name,
@@ -324,6 +419,10 @@ export class RealmArena {
       journey: restore?.journey ?? emptyJourney(),
       journeyRevision: restore?.journeyRevision ?? 0,
       journeyDirty: false,
+      coopIdentity,
+      coopReady: restoredCoopReady,
+      coopDirty: false,
+      coopRevision: 0,
       event: { seq: 0, kind: JOURNEY_EVENT.none, rx: 0, ry: 0 },
       landmarks: [...(restore?.landmarks ?? [])],
       progressRevision: restore?.progressRevision ?? 0,
@@ -334,6 +433,12 @@ export class RealmArena {
       spawn,
     };
     this.players.set(id, player);
+    if (player.coopReady && (player.coopReady.readyAtMs > nowMs || player.coopReady.expiresAtMs <= nowMs || !this.coopReadyMatchesJourney(player, player.coopReady))) {
+      this.writeCoopReady(player, null);
+    } else if (player.coopReady) {
+      this.settleCoopIfReady(player, nowMs);
+    }
+    this.finishCoopStatusChange(coopBefore, nowMs);
     this.discoverRegions(nowMs);
     // Admission is rare and must leave the spawn's full authoritative ring
     // ready before WELCOME; steady movement stays on the per-frame budget.
@@ -349,7 +454,11 @@ export class RealmArena {
   }
 
   remove(id: number): void {
+    const nowMs = this.now();
+    this.expireCoopReadiness(nowMs);
+    const coopBefore = this.captureCoopStatus(nowMs);
     this.players.delete(id);
+    this.finishCoopStatusChange(coopBefore, nowMs);
     this.world.setFocuses(this.focuses(), this.refTicks);
     if (this.players.size === 0) this.world.clearCache();
   }
@@ -372,6 +481,9 @@ export class RealmArena {
 
   stepRefTick(): void {
     const nowMs = this.now();
+    this.expireCoopReadiness(nowMs);
+    const trackCoopPresence = [...this.players.values()].some((p) => p.coopReady !== null);
+    const coopBefore = trackCoopPresence ? this.captureCoopStatus(nowMs) : null;
     this.discoverRegions(nowMs);
     this.world.setWorldTime(nowMs);
     this.refreshWorld();
@@ -385,6 +497,12 @@ export class RealmArena {
       p.state = { ...p.state, move: stepRealmMovement(this.world, p.state.move, p.buttons) };
       this.scanLandmarks(p, nowMs);
       this.checkVisit(p, nowMs);
+    }
+    // A restored/temporarily absent readiness becomes countable again only
+    // after its owner is authoritatively back on the target plaza.
+    if (coopBefore) {
+      for (const p of [...this.players.values()].sort((a, b) => a.id - b.id)) this.settleCoopIfReady(p, nowMs);
+      this.finishCoopStatusChange(coopBefore, nowMs);
     }
     this.refTicks++;
   }
@@ -413,11 +531,175 @@ export class RealmArena {
     p.journeyDirty = true;
   }
 
+  /** Resolve a valid active cooperative delivery. Persisted flags are never
+   *  trusted without recomputing the deterministic offer. */
+  private cooperativeDelivery(p: RealmPlayer): Errand | null {
+    if (p.journey.cooperative !== true) return null;
+    const errand = resolveErrand(this.seed, p.journey);
+    return errand?.kind === "deliver" && isCooperativeErrand(this.seed, errand) ? errand : null;
+  }
+
+  private coopReadyMatchesJourney(p: RealmPlayer, ready: CoopReady): boolean {
+    const errand = this.cooperativeDelivery(p);
+    return !!errand
+      && ready.offerRx === errand.orx
+      && ready.offerRy === errand.ory
+      && ready.targetRx === errand.trx
+      && ready.targetRy === errand.try;
+  }
+
+  private savedCoopReady(p: RealmPlayer, nowMs: number): CoopReady | null {
+    const ready = p.coopReady;
+    return ready && ready.expiresAtMs > nowMs && this.coopReadyMatchesJourney(p, ready) ? ready : null;
+  }
+
+  private presentForCoop(p: RealmPlayer, ready: CoopReady, nowMs: number): boolean {
+    if (this.players.get(p.id) !== p || !this.savedCoopReady(p, nowMs)) return false;
+    const here = this.playerRegion(p);
+    if (here.rx !== ready.targetRx || here.ry !== ready.targetRy) return false;
+    return this.onPlaza(p, this.townPlan(ready.targetRx, ready.targetRy));
+  }
+
+  private writeCoopReady(p: RealmPlayer, ready: CoopReady | null): void {
+    p.coopReady = ready ? checkedCoopReady(ready) : null;
+    this.hooks.persistCoopReady?.(p, p.coopReady ? { ...p.coopReady } : null);
+  }
+
+  private rawCoopStatusFor(p: RealmPlayer, nowMs: number): CoopStatus {
+    const errand = this.cooperativeDelivery(p);
+    const saved = errand ? this.savedCoopReady(p, nowMs) : null;
+    const ready = !!saved && this.presentForCoop(p, saved, nowMs);
+    const identities = new Set<string>();
+    if (errand) {
+      for (const other of this.players.values()) {
+        const otherReady = this.savedCoopReady(other, nowMs);
+        if (!otherReady || otherReady.targetRx !== errand.trx || otherReady.targetRy !== errand.try) continue;
+        if (this.presentForCoop(other, otherReady, nowMs)) identities.add(other.coopIdentity);
+      }
+    }
+    const presentReady = Math.min(COOP_REQUIRED_PLAYERS, identities.size) as CoopReadyCount;
+    return {
+      status: !errand ? "inactive" : ready ? "waiting" : "traveling",
+      cooperative: !!errand,
+      ready,
+      savedReady: !!saved,
+      presentReady,
+      required: COOP_REQUIRED_PLAYERS,
+      expiresAt: saved?.expiresAtMs ?? null,
+      revision: p.coopRevision >>> 0,
+    };
+  }
+
+  private coopStatusKey(p: RealmPlayer, nowMs: number): string {
+    const { revision: _revision, ...status } = this.rawCoopStatusFor(p, nowMs);
+    return JSON.stringify(status);
+  }
+
+  private captureCoopStatus(nowMs: number): Map<number, string> {
+    const before = new Map<number, string>();
+    for (const p of this.players.values()) before.set(p.id, this.coopStatusKey(p, nowMs));
+    return before;
+  }
+
+  /** Mark every still-present recipient whose privacy-safe view changed. */
+  private finishCoopStatusChange(before: ReadonlyMap<number, string>, nowMs: number): void {
+    for (const p of this.players.values()) {
+      if (before.get(p.id) === this.coopStatusKey(p, nowMs)) continue;
+      p.coopRevision = (p.coopRevision + 1) >>> 0;
+      p.coopDirty = true;
+    }
+  }
+
+  /** Clear expired readiness using the injected arena clock. Every clear is
+   *  synchronously written through to persistence. */
+  expireCoopReadiness(nowMs = this.now()): number {
+    const owners = new Set<number>();
+    const targets = new Set<string>();
+    let expired = 0;
+    for (const p of this.players.values()) {
+      if (!p.coopReady || p.coopReady.expiresAtMs > nowMs) continue;
+      owners.add(p.id);
+      targets.add(`${p.coopReady.targetRx},${p.coopReady.targetRy}`);
+      this.writeCoopReady(p, null);
+      expired++;
+    }
+    if (expired > 0) {
+      for (const p of this.players.values()) {
+        const errand = this.cooperativeDelivery(p);
+        if (!owners.has(p.id) && (!errand || !targets.has(`${errand.trx},${errand.try}`))) continue;
+        p.coopRevision = (p.coopRevision + 1) >>> 0;
+        p.coopDirty = true;
+      }
+    }
+    return expired;
+  }
+
+  /** Recipient-only JSON status. Expiry is processed first so callers can
+   *  never publish a stale ready bit. */
+  coopStatusFor(p: RealmPlayer, nowMs = this.now()): CoopStatus {
+    this.expireCoopReadiness(nowMs);
+    return this.rawCoopStatusFor(p, nowMs);
+  }
+
+  /** Dirty recipient statuses for a host to JSON-encode and route by arena
+   *  id. Draining acknowledges only the status flag, not persistence. */
+  drainCoopStatuses(nowMs = this.now()): PendingCoopStatus[] {
+    this.expireCoopReadiness(nowMs);
+    const out: PendingCoopStatus[] = [];
+    for (const p of this.players.values()) {
+      if (!p.coopDirty) continue;
+      out.push({ playerId: p.id, status: this.rawCoopStatusFor(p, nowMs) });
+      p.coopDirty = false;
+    }
+    return out;
+  }
+
+  /** Settle one deterministic pair containing `player`, if two distinct
+   *  identities are valid and physically present now. */
+  private settleCoopIfReady(player: RealmPlayer, nowMs: number): boolean {
+    const mine = this.savedCoopReady(player, nowMs);
+    if (!mine || !this.presentForCoop(player, mine, nowMs)) return false;
+    const candidates = [...this.players.values()]
+      .filter((other) => {
+        if (other === player || other.coopIdentity === player.coopIdentity) return false;
+        const ready = this.savedCoopReady(other, nowMs);
+        return !!ready
+          && ready.targetRx === mine.targetRx
+          && ready.targetRy === mine.targetRy
+          && this.presentForCoop(other, ready, nowMs);
+      })
+      .sort((a, b) => {
+        const at = a.coopReady!.readyAtMs - b.coopReady!.readyAtMs;
+        return at || a.id - b.id;
+      });
+    const partner = candidates[0];
+    if (!partner) return false;
+    const mineErrand = this.cooperativeDelivery(player);
+    const partnerErrand = this.cooperativeDelivery(partner);
+    if (!mineErrand || !partnerErrand) return false;
+
+    // Clear both durable claims before changing either journey. A replay can
+    // then observe neither an active cooperative errand nor a ready pair.
+    this.writeCoopReady(partner, null);
+    this.writeCoopReady(player, null);
+    const partnerDone = journeyComplete(this.seed, partner.journey, partnerErrand);
+    const mineDone = journeyComplete(this.seed, player.journey, mineErrand);
+    this.setJourney(partner, partnerDone.journey);
+    this.setJourney(player, mineDone.journey);
+    this.confirm(partner, JOURNEY_EVENT.coopDelivered, mine.targetRx, mine.targetRy);
+    this.confirm(player, JOURNEY_EVENT.coopDelivered, mine.targetRx, mine.targetRy);
+    // The pair creates one shared fact, regardless of whether one participant
+    // had helped this town before. The storage CAS still owns idempotence.
+    this.improve(mine.targetRx, mine.targetRy, 1, nowMs);
+    return true;
+  }
+
   /** Validate and apply a client command against the authoritative mover
    *  and clock. Returns the confirmed event kind, or null when refused. An
    *  accepted emote is not a journey event: it is queued for the host
    *  (drainEmotes) and the call returns null like a refusal. */
   applyCommand(p: RealmPlayer, cmd: CommandMessage, nowMs = this.now()): JourneyEventKind | null {
+    this.expireCoopReadiness(nowMs);
     const here = this.playerRegion(p);
     if (cmd.rx !== here.rx || cmd.ry !== here.ry) return null;
     if (cmd.kind === COMMAND.emote) {
@@ -432,11 +714,43 @@ export class RealmArena {
       this.setJourney(p, accepted.journey);
       return this.confirm(p, JOURNEY_EVENT.accepted, here.rx, here.ry);
     }
+    if (cmd.kind === COMMAND.acceptCoopErrand) {
+      if (!this.onPlaza(p, plan)) return null;
+      const before = this.captureCoopStatus(nowMs);
+      const accepted = journeyAccept(this.seed, p.journey, here.rx, here.ry, true);
+      if (!accepted) return null;
+      if (p.coopReady) this.writeCoopReady(p, null);
+      this.setJourney(p, accepted.journey);
+      const event = this.confirm(p, JOURNEY_EVENT.accepted, here.rx, here.ry);
+      this.finishCoopStatusChange(before, nowMs);
+      return event;
+    }
     if (cmd.kind === COMMAND.deliverErrand) {
       if (!this.onPlaza(p, plan)) return null;
       const errand = resolveErrand(this.seed, p.journey);
-      if (!errand || errand.kind !== "deliver" || errand.trx !== here.rx || errand.try !== here.ry) return null;
+      if (p.journey.cooperative === true || !errand || errand.kind !== "deliver" || errand.trx !== here.rx || errand.try !== here.ry) return null;
       return this.complete(p, errand, JOURNEY_EVENT.delivered, nowMs);
+    }
+    if (cmd.kind === COMMAND.readyCoopErrand) {
+      if (this.players.get(p.id) !== p) return null;
+      const errand = this.cooperativeDelivery(p);
+      if (!errand || errand.trx !== here.rx || errand.try !== here.ry || !this.onPlaza(p, plan)) return null;
+      const before = this.captureCoopStatus(nowMs);
+      const expiresAtMs = Math.min(Number.MAX_SAFE_INTEGER, nowMs + COOP_READY_TTL_MS);
+      this.writeCoopReady(p, {
+        offerRx: errand.orx,
+        offerRy: errand.ory,
+        targetRx: errand.trx,
+        targetRy: errand.try,
+        readyAtMs: expiresAtMs - COOP_READY_TTL_MS,
+        expiresAtMs,
+      });
+      const settled = this.settleCoopIfReady(p, nowMs);
+      const event = settled
+        ? JOURNEY_EVENT.coopDelivered
+        : this.confirm(p, JOURNEY_EVENT.coopWaiting, here.rx, here.ry);
+      this.finishCoopStatusChange(before, nowMs);
+      return event;
     }
     if (cmd.kind === COMMAND.talk) {
       if (plan.empty || !plan.hub.town) return null;
@@ -586,6 +900,7 @@ export class RealmArena {
       eventRx: p.event.rx,
       eventRy: p.event.ry,
       fast: p.fast,
+      cooperative: p.journey.cooperative === true,
       errand: p.journey.errand ? { rx: p.journey.errand.rx, ry: p.journey.errand.ry } : null,
       helpedCount: p.journey.helpedCount,
       bloom: p.journey.bloom,

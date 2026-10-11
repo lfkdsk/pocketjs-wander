@@ -882,6 +882,7 @@ export class OnlineClient {
     this.journeyRevision = message.revision;
     this.journey = {
       errand: message.errand ? { rx: message.errand.rx, ry: message.errand.ry } : null,
+      cooperative: message.cooperative === true,
       helped: message.helped.map((p) => ({ rx: p.rx, ry: p.ry })),
       bloom: [...message.bloom],
       talked: message.talked.map((p) => ({ rx: p.rx, ry: p.ry })),

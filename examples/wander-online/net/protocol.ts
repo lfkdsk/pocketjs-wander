@@ -161,7 +161,14 @@ export const PLAYER_PROGRESS_MAX = 1024;
 export const COMMAND_BYTES = 11;
 /** Client -> server realm commands; the server validates every one against
  *  its authoritative mover and clock. */
-export const COMMAND = { acceptErrand: 1, deliverErrand: 2, talk: 3, emote: 4 } as const;
+export const COMMAND = {
+  acceptErrand: 1,
+  deliverErrand: 2,
+  talk: 3,
+  emote: 4,
+  acceptCoopErrand: 5,
+  readyCoopErrand: 6,
+} as const;
 export const FAR_PLAYERS_HEADER_BYTES = 2;
 export const FAR_PLAYERS_ROW_BYTES = 6;
 export const FAR_PLAYERS_MAX = 255;
@@ -215,6 +222,10 @@ export interface PlayerJourneyMessage {
   eventRx: number;
   eventRy: number;
   fast: boolean;
+  /** Encoded in the previously unused bit 2 of the existing flags byte;
+   *  this does not change PLAYER_JOURNEY's length. Optional keeps older
+   *  frame producers source-compatible and means false when absent. */
+  cooperative?: boolean;
   errand: PlayerProgressLandmark | null;
   helpedCount: number;
   bloom: readonly number[];
@@ -432,7 +443,7 @@ export function encodePlayerJourney(message: PlayerJourneyMessage): ArrayBuffer 
   v.setUint8(9, message.eventKind);
   v.setInt32(10, int32(message.eventRx, "journey event rx"), true);
   v.setInt32(14, int32(message.eventRy, "journey event ry"), true);
-  v.setUint8(18, (message.errand ? 1 : 0) | (message.fast ? 2 : 0));
+  v.setUint8(18, (message.errand ? 1 : 0) | (message.fast ? 2 : 0) | (message.cooperative ? 4 : 0));
   v.setInt32(19, message.errand ? int32(message.errand.rx, "journey errand rx") : 0, true);
   v.setInt32(23, message.errand ? int32(message.errand.ry, "journey errand ry") : 0, true);
   v.setUint16(27, message.helpedCount, true);
@@ -455,7 +466,7 @@ export function decodePlayerJourney(buf: ArrayBuffer | Uint8Array): PlayerJourne
   const v = viewOf(buf);
   if (v.getUint8(0) !== MSG.playerJourney) return null;
   const flags = v.getUint8(18);
-  if ((flags & ~3) !== 0) return null;
+  if ((flags & ~7) !== 0) return null;
   const helpedCount = v.getUint8(157), talkedCount = v.getUint8(158);
   if (helpedCount > PLAYER_JOURNEY_HELPED_MAX || talkedCount > PLAYER_JOURNEY_TALKED_MAX) return null;
   if (buf.byteLength !== PLAYER_JOURNEY_FIXED_BYTES + (helpedCount + talkedCount) * PLAYER_JOURNEY_PAIR_BYTES) return null;
@@ -472,6 +483,7 @@ export function decodePlayerJourney(buf: ArrayBuffer | Uint8Array): PlayerJourne
     eventRx: v.getInt32(10, true),
     eventRy: v.getInt32(14, true),
     fast: (flags & 2) !== 0,
+    cooperative: (flags & 4) !== 0,
     errand: (flags & 1) !== 0 ? { rx: v.getInt32(19, true), ry: v.getInt32(23, true) } : null,
     helpedCount: v.getUint16(27, true),
     bloom,

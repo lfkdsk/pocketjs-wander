@@ -13,6 +13,7 @@
 import { HelpedBloom, HELPED_BLOOM_WORDS } from "../../wander/helped-bloom.ts";
 import { regionName } from "../../wander/region.ts";
 import { townErrand, type Errand } from "../../wander/towns.ts";
+import { growHash } from "../../wander/world.ts";
 
 // The single-player sim's bounds, restated here so the hosted server does
 // not bundle the whole WanderSim graph; tests pin them to the sim's exports.
@@ -26,9 +27,9 @@ export const VISIT_ARRIVE = 6;
 export const TALK_CAP = 24;
 /** Saturation point of the distinct-helped counter (stored as u16). */
 export const HELPED_COUNT_MAX = 0xffff;
-/** Hard bound on a serialized journey. The v2 JSON row's worst case is
+/** Hard bound on a serialized journey. The v3 JSON row's worst case is
  *  fully determined by the caps above and the int32 coordinate range
- *  (`JOURNEY_SAVE_WORST_CASE`, 1874 bytes), so every state the model can
+ *  (`JOURNEY_SAVE_WORST_CASE`, 1884 bytes), so every state the model can
  *  reach serializes below this bound; `fitJourney` is the proven-unreachable
  *  degradation for a row that still would not fit. */
 export const JOURNEY_SAVE_MAX = 2048;
@@ -38,10 +39,11 @@ const COORD_TEXT_MAX = 11;
 const PAIR_TEXT_MAX = 2 + 2 * COORD_TEXT_MAX + 1;
 /** `[a,b,...]` of n items each at most `item` bytes, plus a trailing comma. */
 const listTextMax = (n: number, item: number): number => (n === 0 ? 2 : 2 + n * item + (n - 1)) + 1;
-/** Worst-case byte length of a v2 row: `{"v":2,` + `"e":` pair + `"h":` list
- *  + `"b":` list of 32 u32 (10 digits) + `"t":` list + `"hc":65535}`. */
+/** Worst-case byte length of a v3 row: `{"v":3,"c":false,` + `"e":` pair +
+ *  `"h":` list + `"b":` list of 32 u32 (10 digits) + `"t":` list +
+ *  `"hc":65535}`. */
 export const JOURNEY_SAVE_WORST_CASE =
-  7
+  7 + 10
   + 4 + PAIR_TEXT_MAX + 1
   + 4 + listTextMax(HELP_CAP, PAIR_TEXT_MAX)
   + 4 + listTextMax(HELPED_BLOOM_WORDS, 10)
@@ -56,6 +58,10 @@ export interface JourneyPair {
 export interface PlayerJourney {
   /** Offering region of the active errand; null when none is active. */
   errand: JourneyPair | null;
+  /** Whether the active errand requires two distinct players. Older
+   *  in-memory callers may omit it; all model outputs normalize it to a
+   *  boolean so legacy clients remain source-compatible. */
+  cooperative?: boolean;
   /** Exact helped towns, oldest first, at most HELP_CAP. */
   helped: readonly JourneyPair[];
   /** HELPED_BLOOM_WORDS u32 words: towns helped at any time. */
@@ -74,6 +80,8 @@ export const JOURNEY_EVENT = {
   delivered: 2,
   visited: 3,
   talked: 4,
+  coopWaiting: 5,
+  coopDelivered: 6,
 } as const;
 export type JourneyEventKind = (typeof JOURNEY_EVENT)[keyof typeof JOURNEY_EVENT];
 
@@ -85,7 +93,7 @@ export interface JourneyEvent {
 }
 
 export function emptyJourney(): PlayerJourney {
-  return { errand: null, helped: [], bloom: new Array<number>(HELPED_BLOOM_WORDS).fill(0), talked: [], helpedCount: 0 };
+  return { errand: null, cooperative: false, helped: [], bloom: new Array<number>(HELPED_BLOOM_WORDS).fill(0), talked: [], helpedCount: 0 };
 }
 
 function samePair(a: JourneyPair, b: JourneyPair): boolean {
@@ -117,13 +125,27 @@ export function resolveErrand(seed: number, journey: PlayerJourney): Errand | nu
   return townErrand(seed, journey.errand.rx, journey.errand.ry);
 }
 
+/** A stable one-in-three subset of delivery offers is cooperative. The
+ *  decision is made from the world seed and offering region only: it never
+ *  depends on process state, player order or the generated text. Visits are
+ *  deliberately never cooperative. */
+export function isCooperativeErrand(seed: number, errand: Errand): boolean {
+  return errand.kind === "deliver" && growHash(seed, errand.orx, errand.ory, 0xc001) % 3 === 0;
+}
+
 /** Accept a town's offer. Returns null when no errand can be accepted
  *  (one is already active, or the town offers nothing). */
-export function journeyAccept(seed: number, journey: PlayerJourney, rx: number, ry: number): { journey: PlayerJourney; errand: Errand } | null {
+export function journeyAccept(
+  seed: number,
+  journey: PlayerJourney,
+  rx: number,
+  ry: number,
+  cooperative = false,
+): { journey: PlayerJourney; errand: Errand } | null {
   if (journey.errand) return null;
   const errand = townErrand(seed, rx, ry);
-  if (!errand) return null;
-  return { journey: { ...journey, errand: { rx, ry } }, errand };
+  if (!errand || (cooperative && !isCooperativeErrand(seed, errand))) return null;
+  return { journey: { ...journey, errand: { rx, ry }, cooperative }, errand };
 }
 
 /** Finish the active errand. The helped town is the target (deliver) or the
@@ -137,7 +159,7 @@ export function journeyComplete(seed: number, journey: PlayerJourney, errand: Er
   const hrx = errand.kind === "deliver" ? errand.trx : errand.orx;
   const hry = errand.kind === "deliver" ? errand.try : errand.ory;
   if (journeyIsHelped(seed, journey, hrx, hry)) {
-    return { journey: { ...journey, errand: null }, newlyHelped: false, hrx, hry };
+    return { journey: { ...journey, errand: null, cooperative: false }, newlyHelped: false, hrx, hry };
   }
   const helped = journey.helped.length >= HELP_CAP ? journey.helped.slice(1) : [...journey.helped];
   helped.push({ rx: hrx, ry: hry });
@@ -147,6 +169,7 @@ export function journeyComplete(seed: number, journey: PlayerJourney, errand: Er
     journey: {
       ...journey,
       errand: null,
+      cooperative: false,
       helped,
       bloom: bloom.toJSON(),
       helpedCount: Math.min(HELPED_COUNT_MAX, journey.helpedCount + 1),
@@ -165,8 +188,26 @@ export function journeyTalk(journey: PlayerJourney, rx: number, ry: number): { j
   return { journey: { ...journey, talked }, changed: true };
 }
 
-/** The single-player notice line for a confirmed journey event. */
-export function journeyEventText(seed: number, event: JourneyEvent): string {
+/** Decode Chinese copy from code points so build-time literal scanning does
+ *  not put these Han glyphs in every font slot (the 12 px CJK slot owns
+ *  them, as in create-text.ts). */
+function han(hex: string): string {
+  return String.fromCodePoint(...hex.split(" ").map((h) => parseInt(h, 16)));
+}
+
+export const COOP_EVENT_TEXT_EN = {
+  waiting: "CO-OP: waiting for another traveler",
+  delivered: "CO-OP: delivered together",
+} as const;
+
+export const COOP_EVENT_TEXT_ZH = {
+  waiting: han("7b49 5f85 53e6 4e00 4f4d 65c5 4eba"),
+  delivered: han("5408 4f5c 9001 8fbe"),
+} as const;
+
+/** English notice text. Kept as the historical helper's implementation so
+ *  all existing callers and strings remain unchanged. */
+export function journeyEventTextEn(seed: number, event: JourneyEvent): string {
   switch (event.kind) {
     case JOURNEY_EVENT.accepted: {
       const e = townErrand(seed, event.rx, event.ry);
@@ -177,9 +218,30 @@ export function journeyEventText(seed: number, event: JourneyEvent): string {
       return `DELIVERED: ${regionName(seed, event.rx, event.ry)} thanks you — flowers on the plaza`;
     case JOURNEY_EVENT.visited:
       return `DONE: ${regionName(seed, event.rx, event.ry)} thanks you — flowers on their plaza`;
+    case JOURNEY_EVENT.coopWaiting:
+      return COOP_EVENT_TEXT_EN.waiting;
+    case JOURNEY_EVENT.coopDelivered:
+      return `${COOP_EVENT_TEXT_EN.delivered}: ${regionName(seed, event.rx, event.ry)}`;
     default:
       return "";
   }
+}
+
+/** Chinese cooperative notices. Legacy event kinds intentionally fall back
+ *  to the generator's established English strings until they have native
+ *  translations. */
+export function journeyEventTextZh(seed: number, event: JourneyEvent): string {
+  if (event.kind === JOURNEY_EVENT.coopWaiting) return COOP_EVENT_TEXT_ZH.waiting;
+  if (event.kind === JOURNEY_EVENT.coopDelivered) {
+    return `${COOP_EVENT_TEXT_ZH.delivered}: ${regionName(seed, event.rx, event.ry)}`;
+  }
+  return journeyEventTextEn(seed, event);
+}
+
+/** The single-player-compatible notice helper, with an additive locale for
+ *  cooperative notices. */
+export function journeyEventText(seed: number, event: JourneyEvent, language: "en" | "zh" = "en"): string {
+  return language === "zh" ? journeyEventTextZh(seed, event) : journeyEventTextEn(seed, event);
 }
 
 /** The single-player errand HUD line. */
@@ -192,7 +254,8 @@ export function errandHudText(errand: Errand | null, helpedCount: number): strin
 // -- persistence --------------------------------------------------------------
 
 interface SerializedJourney {
-  v: 2;
+  v: 3;
+  c: boolean;
   e: [number, number] | null;
   h: [number, number][];
   b: number[];
@@ -210,7 +273,8 @@ function pairs(list: readonly JourneyPair[]): [number, number][] {
 
 function journeyJson(journey: PlayerJourney): string {
   const s: SerializedJourney = {
-    v: 2,
+    v: 3,
+    c: journey.cooperative === true,
     e: journey.errand ? [journey.errand.rx, journey.errand.ry] : null,
     h: pairs(journey.helped.slice(-HELP_CAP)),
     b: journey.bloom.map((w) => w >>> 0),
@@ -285,12 +349,15 @@ export function parseJourney(text: string): PlayerJourney {
   if (typeof parsed !== "object" || parsed === null) throw new TypeError("journey must be an object");
   const r = parsed as Record<string, unknown>;
   if (r.v === 1) return emptyJourney();
-  if (r.v !== 2) throw new RangeError("journey has an unsupported version");
+  if (r.v !== 2 && r.v !== 3) throw new RangeError("journey has an unsupported version");
   let errand: JourneyPair | null = null;
   if (r.e !== null && r.e !== undefined) {
     if (!Array.isArray(r.e) || r.e.length !== 2) throw new TypeError("journey errand must be [rx, ry]");
     errand = { rx: coordinate(r.e[0], "errand rx"), ry: coordinate(r.e[1], "errand ry") };
   }
+  if (r.v === 3 && typeof r.c !== "boolean") throw new TypeError("journey cooperative flag must be a boolean");
+  const cooperative = r.v === 3 ? r.c === true : false;
+  if (cooperative && !errand) throw new TypeError("a cooperative journey must have an active errand");
   const helped = pairList(r.h ?? [], "helped", HELP_CAP);
   const talked = pairList(r.t ?? [], "talked", TALK_CAP);
   const bloomSource = r.b ?? [];
@@ -302,12 +369,13 @@ export function parseJourney(text: string): PlayerJourney {
     bloom[i] = w;
   }
   const hc = typeof r.hc === "number" && Number.isInteger(r.hc) && r.hc >= 0 ? Math.min(r.hc, HELPED_COUNT_MAX) : helped.length;
-  return { errand, helped, bloom, talked, helpedCount: hc };
+  return { errand, cooperative, helped, bloom, talked, helpedCount: hc };
 }
 
 export function sameJourney(a: PlayerJourney, b: PlayerJourney): boolean {
   if ((a.errand === null) !== (b.errand === null)) return false;
   if (a.errand && b.errand && !samePair(a.errand, b.errand)) return false;
+  if ((a.cooperative === true) !== (b.cooperative === true)) return false;
   if (a.helpedCount !== b.helpedCount || a.helped.length !== b.helped.length || a.talked.length !== b.talked.length) return false;
   for (let i = 0; i < a.helped.length; i++) if (!samePair(a.helped[i]!, b.helped[i]!)) return false;
   for (let i = 0; i < a.talked.length; i++) if (!samePair(a.talked[i]!, b.talked[i]!)) return false;
@@ -337,8 +405,8 @@ function mergePairs(base: readonly JourneyPair[], theirs: readonly JourneyPair[]
  *  errand follows whichever side changed it, the stored side when both did.
  *  With either side unchanged the result is exactly the other side. */
 export function mergeJourney(base: PlayerJourney, theirs: PlayerJourney, mine: PlayerJourney): PlayerJourney {
-  if (sameJourney(theirs, base)) return mine;
-  if (sameJourney(mine, base)) return theirs;
+  if (sameJourney(theirs, base)) return { ...mine, cooperative: !!mine.errand && mine.cooperative === true };
+  if (sameJourney(mine, base)) return { ...theirs, cooperative: !!theirs.errand && theirs.cooperative === true };
   const bloom = new Array<number>(HELPED_BLOOM_WORDS);
   for (let i = 0; i < HELPED_BLOOM_WORDS; i++) bloom[i] = ((theirs.bloom[i] ?? 0) | (mine.bloom[i] ?? 0)) >>> 0;
   const helped = mergePairs(base.helped, theirs.helped, mine.helped, HELP_CAP);
@@ -346,8 +414,11 @@ export function mergeJourney(base: PlayerJourney, theirs: PlayerJourney, mine: P
   const fresh = pairsNotIn(theirs.helped, base.helped);
   for (const p of pairsNotIn(mine.helped, base.helped)) if (!hasPair(fresh, p.rx, p.ry)) fresh.push(p);
   const helpedCount = Math.min(HELPED_COUNT_MAX, Math.max(theirs.helpedCount, mine.helpedCount, base.helpedCount + fresh.length));
-  const mineChanged = (mine.errand === null) !== (base.errand === null) || (mine.errand && base.errand && !samePair(mine.errand, base.errand));
-  const theirsChanged = (theirs.errand === null) !== (base.errand === null) || (theirs.errand && base.errand && !samePair(theirs.errand, base.errand));
+  const mineChanged = (mine.errand === null) !== (base.errand === null) || (mine.errand && base.errand && !samePair(mine.errand, base.errand))
+    || (mine.cooperative === true) !== (base.cooperative === true);
+  const theirsChanged = (theirs.errand === null) !== (base.errand === null) || (theirs.errand && base.errand && !samePair(theirs.errand, base.errand))
+    || (theirs.cooperative === true) !== (base.cooperative === true);
   const errand = theirsChanged ? theirs.errand : mineChanged ? mine.errand : base.errand;
-  return { errand: errand ? { ...errand } : null, helped, bloom, talked, helpedCount };
+  const cooperative = errand ? (theirsChanged ? theirs.cooperative === true : mineChanged ? mine.cooperative === true : base.cooperative === true) : false;
+  return { errand: errand ? { ...errand } : null, cooperative, helped, bloom, talked, helpedCount };
 }
