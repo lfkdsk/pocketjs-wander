@@ -303,10 +303,12 @@ function differingOutside(a: Uint8Array, b: Uint8Array, stride: number, y0: numb
  *  NAME_LABEL_W label is centred on the sprite 14 px above it, and the
  *  text is centred in the label. Returns the label box and the text's
  *  left edge / line top. */
-function nameTag(W: number, H: number, text: string): { x0: number; x1: number; y0: number; textX: number } {
+function nameTag(W: number, H: number, text: string): { x0: number; x1: number; y0: number; textX: number; textX1: number } {
   const spriteX = Math.floor(W / 2) - TILE / 2, spriteY = Math.floor(H / 2) - TILE / 2;
   const x0 = spriteX + TILE / 2 - NAME_LABEL_W / 2;
-  return { x0, x1: x0 + NAME_LABEL_W, y0: spriteY - 14, textX: x0 + Math.floor((NAME_LABEL_W - measure(text)) / 2) };
+  const textW = measure(text);
+  const textX = x0 + Math.floor((NAME_LABEL_W - textW) / 2);
+  return { x0, x1: x0 + NAME_LABEL_W, y0: spriteY - 14, textX, textX1: textX + textW };
 }
 
 /** Count fully dark outline pixels one pixel to a given side of a fully
@@ -321,11 +323,10 @@ function directionalOutlinePixels(
   dy: number,
 ): number {
   let n = 0;
+  const foregroundInk = inkCoveredOver(named, blank, stride, 0.5);
   for (let y = tag.y0 - 1; y < tag.y0 + CELL_ROWS; y++) {
-    for (let x = tag.x0; x < tag.x1; x++) {
-      const fi = (y * stride + x) * 4;
-      const foreground = named[fi]! + named[fi + 1]! + named[fi + 2]! >= 660;
-      if (!foreground) continue;
+    for (let x = tag.textX; x < tag.textX1; x++) {
+      if (!foregroundInk(x, y)) continue;
       const ox = x + dx, oy = y + dy;
       if (ox < 0 || ox >= stride || oy < 0) continue;
       const oi = (oy * stride + ox) * 4;
@@ -333,6 +334,31 @@ function directionalOutlinePixels(
       const blankLuma = blank[oi]! + blank[oi + 1]! + blank[oi + 2]!;
       if (namedLuma <= 300 && blankLuma - namedLuma >= 36) n++;
     }
+  }
+  return n;
+}
+
+/** Count dark pixels in the one-pixel band produced by exactly one shifted
+ *  copy of a replacement ring. Corners are excluded: along the middle of a
+ *  ring edge, none of the other three shifts can paint the same target. */
+function isolatedTofuOutlinePixels(
+  named: Uint8Array,
+  blank: Uint8Array,
+  stride: number,
+  box: CellInk,
+  dx: number,
+  dy: number,
+): number {
+  const x0 = dx < 0 ? box.x0 - 1 : dx > 0 ? box.x1 + 1 : box.x0 + 1;
+  const x1 = dx === 0 ? box.x1 : x0 + 1;
+  const y0 = dy < 0 ? box.y0 - 1 : dy > 0 ? box.y1 + 1 : box.y0 + 1;
+  const y1 = dy === 0 ? box.y1 : y0 + 1;
+  let n = 0;
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+    const i = (y * stride + x) * 4;
+    const namedLuma = named[i]! + named[i + 1]! + named[i + 2]!;
+    const blankLuma = blank[i]! + blank[i + 1]! + blank[i + 2]!;
+    if (namedLuma <= 300 && blankLuma - namedLuma >= 36) n++;
   }
   return n;
 }
@@ -730,10 +756,17 @@ simDescribe("wander-online journey view: text fits", () => {
       const tofuInk = inkCoveredOver(fbTofu, fbBlank, W, 0.5);
       const cjkInk = inkCoveredOver(fbCjk, fbBlank, W, 0.5);
       for (let i = 0; i < 12; i++) {
+        const tofuBox = cellInk(tofuInk, tag.textX + i * 12, tag.y0);
         expect(cellLooksLikeTofu(tofuInk, tag.textX + i * 12, tag.y0), `tag cell ${i} of the missing name is the replacement ring`).toBe(true);
         expect(cellIsGlyph(tofuInk, tag.textX + i * 12, tag.y0), `tag cell ${i} of the missing name is not a glyph`).toBe(false);
         expect(cellLooksLikeTofu(cjkInk, tag.textX + i * 12, tag.y0), `tag cell ${i} (${CJK_NAME[i]}) is the replacement ring`).toBe(false);
         expect(cellIsGlyph(cjkInk, tag.textX + i * 12, tag.y0), `tag cell ${i} (${CJK_NAME[i]}) paints a glyph`).toBe(true);
+        for (const [side, dx, dy] of [["left", -1, 0], ["right", 1, 0], ["up", 0, -1], ["down", 0, 1]] as const) {
+          expect(
+            isolatedTofuOutlinePixels(fbTofu, fbBlank, W, tofuBox, dx, dy),
+            `tag cell ${i}: isolated ${side} outline pixels`,
+          ).toBeGreaterThan(0);
+        }
       }
       unmount(w);
     }, 40_000);
