@@ -56,6 +56,13 @@ automatic friendship, and hidden friends reveal neither online state nor
 realm. The detailed controls and screenshot verification commands are in the
 [Wander Online guide](examples/wander-online/README.md#friends-worlds-and-account-data).
 
+Capability-enabled realms also turn a deterministic subset of delivery
+errands into two-player jobs: two distinct accounts must bring their matching
+journeys to the target plaza within the same 30-second readiness window. The
+same panel exposes a per-realm FIRST-finder board that is private by default;
+every player sees their own rank, while names appear publicly only after an
+explicit opt-in. Neither view exposes another player's position or presence.
+
 For local development, start the loopback-only Bun server with its explicit
 guest switch, then launch clients with matching guest credentials:
 

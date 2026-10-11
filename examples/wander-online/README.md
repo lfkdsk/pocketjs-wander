@@ -42,7 +42,7 @@ the same words.
 | --- | --- |
 | D-pad | walk (takes over from auto-walk) |
 | CIRCLE | talk to the resident in front (the server records the conversation), read the notice board in front, page/close the open dialog |
-| CROSS | near a town hub: accept the town's errand, or deliver the one it targets; elsewhere: page the travel log |
+| CROSS | near a town hub: accept its errand, deliver a solo errand, or mark this courier ready for a cooperative delivery; elsewhere: page the travel log |
 | TRIANGLE | request fast mode; the HUD says `FAST` once a snapshot confirms it |
 | R | the emote picker: LEFT/RIGHT choose one of five presets, CIRCLE sends it, CROSS or R closes |
 | SELECT | open/close the menu: CIRCLE links a device, SQUARE twice deletes all account data, TRIANGLE toggles debug, START toggles auto-walk, L mints an invite to this world, R leaves for any world, DOWN opens friends/worlds/my data |
@@ -59,6 +59,33 @@ Auto-walk is opt-in online: it starts only with the menu's START toggle or
 when the page sets `globalThis.__onlineAutoWalk = true` before boot
 (`web-check.ts --auto-walk` does that), and nothing resumes it after a
 d-pad press.
+
+### Cooperative delivery errands
+
+A server advertises co-op explicitly in `realmFeatures`; older servers keep
+every offer solo. When enabled, a stable one-in-three subset of delivery
+offers is cooperative (pure in world seed and offering region, so every
+client sees the same choice). Each courier accepts the offer normally and
+travels with their own recipient-only journey. At the target plaza, CROSS
+sends READY instead of a solo delivery.
+
+One courier cannot finish alone, and two sessions of the same account still
+count as one identity. Two distinct matching couriers must both be physically
+present at that plaza while their READY records are live. READY lasts 30
+seconds, keeps its original deadline across disconnect and hosted Room
+reconstruction, and is cleared on expiry or settlement. The server serializes
+competing frames, clears both durable records before changing either journey,
+records completion for both participants and raises the target's shared plaza
+improvement exactly once. The private status contains only aggregate
+`saved/present/required` counts; it never names or locates the other courier.
+Waiting and completion notices are available in English and Chinese.
+
+The loopback server supports the same live two-player flow in memory. For a
+deterministic real-WebSocket check with two couriers and one observer, run:
+
+```sh
+bun tools/wander-online-coop-demo.ts
+```
 
 ### Meeting others: spawn slots, invites, far markers and emotes
 
@@ -121,6 +148,16 @@ hosted social records.
   stale choice or friend join that has filled in the meantime is refused as
   `WORLD FULL`; the client keeps the exact realm pin and retries slowly until
   the player uses the old menu's R action to choose any world.
+- **FIRST-finder board.** When the current realm advertises the capability,
+  the home page gains Discovery. It always shows the authenticated player's
+  private `YOU` rank and landmark-FIRST count. Public rows contain at most 20
+  opted-in display names, ranks and counts; players who have not opted in still
+  affect ranking but never appear by name. TRIANGLE toggles listing immediately.
+  The board is per realm and carries no account id, friend state, online state,
+  exact realm presence or coordinates. Complete deletion removes both consent
+  and identifying FIRST attribution, so the name disappears from subsequent
+  boards. The loopback server leaves this capability off because it has no
+  durable account store.
 - **My Data.** This page shows the profile, friend/request totals, visibility
   and each known realm's discovery/helped journey summary. SQUARE opens a
   destructive confirmation and a second SQUARE requests complete deletion.
@@ -299,7 +336,8 @@ Little-endian, single source in [`net/protocol.ts`](net/protocol.ts):
 | STATE4 | 14 + 18n [+ 4] | `0x21` frame u32, ackSeq u32, epoch u32, n u8, signed-coordinate entities, optional population |
 | REGION_STATE | variable | `0x22` flags, realm revision, server time, signed region rows with discovery time, improvement, row revision and first-discoverer display name |
 | PLAYER_PROGRESS | variable | `0x23` private revision and signed landmark-region pairs; sent only to its account's socket |
-| COMMAND | 11 | `0x04` kind u8 (accept/deliver/talk/emote), rx i32, ry i32, extra u8 (resident index or emote id) |
+| PLAYER_JOURNEY | variable | `0x24` private journey revision, errand/help/talk state, cooperative flag and one confirmed event; sent only to its account's socket |
+| COMMAND | 11 | `0x04` kind u8 (accept/deliver/talk/emote/co-op accept/co-op ready), rx i32, ry i32, extra u8 (resident index or emote id) |
 | FAR_PLAYERS | 2 + 6n | `0x25` n u8, rows of id u32, octant u8, band u8; once a second, only players outside the AOI |
 | EMOTE | 6 | `0x26` id u32, emote u8; to every AOI that holds the sender, never stored |
 | PONG | 9 | `0x30` id u32, t u32 |
@@ -347,6 +385,7 @@ migrate or reinterpret a legacy room.
 | [`net/emote.ts`](net/emote.ts) | the five preset emotes and their limits |
 | [`shared/invite.ts`](shared/invite.ts) | invite tokens, lifetimes and the realm pin query |
 | [`shared/social.ts`](shared/social.ts) | bounded social snapshots, world choices and self-data parsers |
+| [`net/journey.ts`](net/journey.ts) | private journey v3, deterministic co-op eligibility and bilingual confirmations |
 | [`social-model.ts`](social-model.ts) | controller navigation, pagination and typed social actions |
 | [`SocialPanel.tsx`](SocialPanel.tsx) | the responsive friends/worlds/my-data overlay |
 | [`net/client.ts`](net/client.ts) | the PocketJS net client (socket, reconnect, freeze, rejection policy) |
@@ -396,8 +435,13 @@ migrate or reinterpret a legacy room.
   bubbles, the invite notice and page events, the realm pin at boot, modal
   input capture, social wire identities and exact-realm selection.
 - `tests/wander-online-social-panel.test.ts` — friend/world/self-data rows,
-  stable-versus-temporary identity actions, destructive confirmation,
-  bounded pagination and 480x272/960x544 geometry.
+  FIRST-finder consent/ranks, stable-versus-temporary identity actions,
+  destructive confirmation, bounded pagination and 480x272/960x544 geometry.
+- `tests/wander-online-journey.test.ts` — private journey bounds and merge,
+  deterministic cooperative eligibility, distinct-identity quorum,
+  once-only competing completion and READY restore/expiry.
+- `tests/wander-online-coop-client.test.ts` — mounted capability negotiation,
+  aggregate co-op status and leaderboard request/toggle wiring.
 - `tests/wander-online-auth-sim.test.ts` — account entry, persistence and
   complete-delete failure/success behavior through the rendered client.
 - `tests/wander-online-shared.test.ts` — the shared hosted-server logic
