@@ -707,10 +707,10 @@ export function OnlineView() {
         pageNameInput();
       },
       onRoster: (entries) => {
-        // A ROSTER after the welcome carries only the players it announces,
-        // so the published copy mirrors the whole map (every name known this
-        // epoch), not the last message: a later join must not hide our own
-        // entry from the diagnostics the demo reads.
+        // OnlineClient publishes its complete current roster. Replace the
+        // view copy so a BYE removes identity-backed UI immediately while a
+        // later incremental ROSTER still preserves everyone known this epoch.
+        roster.clear();
         for (const e of entries) {
           roster.set(e.id, e);
           if (e.id === client?.myId) publishLogin(e.name);

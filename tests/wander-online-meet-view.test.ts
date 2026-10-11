@@ -25,6 +25,7 @@ import {
 import type { OnlinePublished, PageAuthEvent } from "../examples/wander-online/OnlineView.tsx";
 import {
   COMMAND,
+  encodeBye,
   encodeEmote,
   encodeFarPlayers,
   encodeRoster,
@@ -407,6 +408,16 @@ simDescribe("wander-online social panel wiring", () => {
     expect(state()!.socialScreen).toBe("friends");
     expect(treeHasText(w.getTree(), "Stable Friend")).toBe(true);
     expect(treeHasText(w.getTree(), "Wrong Version")).toBe(false);
+    expect(treeHasText(w.getTree(), "Nearby Walker")).toBe(true);
+
+    push(f, encodeBye(2));
+    pump(w, 2);
+    expect(treeHasText(w.getTree(), "Nearby Walker")).toBe(false);
+
+    // Reannounce the nearby player so the identity boundary assertions below
+    // still exercise a live roster row after the removal regression check.
+    push(f, encodeRoster([{ id: 2, name: "Nearby Walker", look: 5 }]));
+    pump(w, 2);
     expect(treeHasText(w.getTree(), "Nearby Walker")).toBe(true);
 
     press(w, BTN.CIRCLE);

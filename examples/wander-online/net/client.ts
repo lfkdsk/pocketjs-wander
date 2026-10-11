@@ -673,7 +673,7 @@ export class OnlineClient {
       const entries = decodeRoster(data);
       if (entries) {
         for (const e of entries) this.roster.set(e.id, e);
-        this.onRoster?.(entries);
+        this.onRoster?.([...this.roster.values()]);
       }
       return;
     }
@@ -775,6 +775,7 @@ export class OnlineClient {
       this.roster.delete(id);
       this.far.delete(id);
       this.emotes.delete(id);
+      this.onRoster?.([...this.roster.values()]);
     }
   }
 
