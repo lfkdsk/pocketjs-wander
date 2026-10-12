@@ -34,6 +34,8 @@ export interface RealmFeatures {
   /** Additive request-id deduplication. The parser normalizes an absent legacy
    * wire field to false. */
   postcardIdempotency?: boolean;
+  /** Additive low-frequency self/friend player-card surface. */
+  playerProfiles?: boolean;
 }
 
 export type CoopErrandStatus = "none" | "travel" | "waiting" | "completed" | "cancelled" | "expired";
@@ -184,13 +186,15 @@ export function parseRealmFeatures(value: unknown): RealmFeatures | null {
     || (value.dailyGoals !== undefined && typeof value.dailyGoals !== "boolean")
     || (value.postcards !== undefined && typeof value.postcards !== "boolean")
     || (value.postcardReplies !== undefined && typeof value.postcardReplies !== "boolean")
-    || (value.postcardIdempotency !== undefined && typeof value.postcardIdempotency !== "boolean")) return null;
+    || (value.postcardIdempotency !== undefined && typeof value.postcardIdempotency !== "boolean")
+    || (value.playerProfiles !== undefined && typeof value.playerProfiles !== "boolean")) return null;
   const parsed: RealmFeatures = {
     realm: value.realm,
     coopErrands: value.coopErrands,
     discoveryLeaderboard: value.discoveryLeaderboard,
     postcardReplies: value.postcardReplies === true,
     postcardIdempotency: value.postcardIdempotency === true,
+    playerProfiles: value.playerProfiles === true,
   };
   if (value.coopPartnerFinding !== undefined) parsed.coopPartnerFinding = value.coopPartnerFinding;
   if (value.dailyGoals !== undefined) parsed.dailyGoals = value.dailyGoals;

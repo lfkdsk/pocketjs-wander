@@ -68,6 +68,7 @@ describe("social wire contract", () => {
       discoveryLeaderboard: false,
       postcardReplies: false,
       postcardIdempotency: false,
+      playerProfiles: false,
     });
     expect(parseRealmFeatures({ realm: "../secret", coopErrands: true, discoveryLeaderboard: true })).toBeNull();
     expect(parseRealmFeatures({ realm: "plaza-1", coopErrands: 1, discoveryLeaderboard: true })).toBeNull();
@@ -83,6 +84,7 @@ describe("social wire contract", () => {
       discoveryLeaderboard: false,
       postcardReplies: false,
       postcardIdempotency: false,
+      playerProfiles: false,
     });
     expect(parseRealmFeatures({
       realm: "plaza-1",
@@ -92,6 +94,7 @@ describe("social wire contract", () => {
       postcards: true,
       postcardReplies: true,
       postcardIdempotency: true,
+      playerProfiles: true,
     })).toEqual({
       realm: "plaza-1",
       coopErrands: true,
@@ -100,6 +103,7 @@ describe("social wire contract", () => {
       postcards: true,
       postcardReplies: true,
       postcardIdempotency: true,
+      playerProfiles: true,
     });
     expect(parseRealmFeatures({
       realm: "plaza-1",
@@ -130,6 +134,12 @@ describe("social wire contract", () => {
       coopErrands: false,
       discoveryLeaderboard: false,
       postcardIdempotency: "yes",
+    })).toBeNull();
+    expect(parseRealmFeatures({
+      realm: "plaza-1",
+      coopErrands: false,
+      discoveryLeaderboard: false,
+      playerProfiles: 1,
     })).toBeNull();
   });
 
