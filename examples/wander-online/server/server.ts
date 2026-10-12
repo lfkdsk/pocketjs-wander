@@ -144,7 +144,7 @@ interface LocalDailyState {
 }
 
 export function startServer(opts: ServerOpts): ServerHandle {
-  const now = opts.now ?? Date.now;
+  const now = opts.now ?? (() => Date.now());
   const arena = new Arena({ seed: opts.seed, hz: opts.hz });
   const initialNowMs = now();
   let daily: LocalDailyState = {
