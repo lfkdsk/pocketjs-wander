@@ -1,0 +1,375 @@
+{
+  "schema": "wander-component-bump-performance/v2",
+  "revisions": {
+    "baselineWander": "526d518b559e2b28a3fd4361a6afe6bf9cfe717a",
+    "candidateWander": "a724613cd4b149566191412fc5ca7fdebb513338",
+    "baselinePocketRpgKit": "a4dc4e72341ae6aa7373623f83dbd07124316a6d",
+    "candidatePocketRpgKit": "2a37b9aa5c6f464087cc5d97a815a38d2000acbd",
+    "pocketJs": "862040bd77edc49b1f815beff63952b6616a14c6"
+  },
+  "method": {
+    "runtime": "PocketJS desktop QuickJS host",
+    "cpu": 15,
+    "kernelIsolatedCpuList": "",
+    "serialRun": true,
+    "order": "baseline-candidate-candidate-baseline",
+    "rounds": 3,
+    "coldWarmupProcessesPerSlot": 1,
+    "coldMeasuredProcessesPerSlot": 7,
+    "coldFreshProcessPerSample": true,
+    "coldAggregation": "mean of six per-revision slot medians",
+    "coldThresholdPercent": 3,
+    "frameTicksPerSlot": 480,
+    "frameWarmupTicks": 120,
+    "frameMeasuredTicksPerSlot": 360,
+    "onlinePlayers": 32,
+    "frameGate": "Candidate mean must not exceed baseline; mean per-slot p95 delta must remain within the inherited 3% benchmark tolerance.",
+    "helper": {
+      "source": "vendor/pocket-rpgkit/tools/kp1-quickjs-bench.rs",
+      "compiledOnce": true,
+      "shimRequired": false,
+      "binarySha256": "cc85da9b5789c68d8fefb44ab8e47865a98bb1eba79bed801e50750eaf971770"
+    }
+  },
+  "frames": {
+    "wander": {
+      "baseline": {
+        "slots": 6,
+        "samples": 2160,
+        "meanUs": 1277.817,
+        "p95Us": 2035.167,
+        "processToFirstTickUs": 124668.333,
+        "slotMeanUs": [
+          1233.8,
+          1335.4,
+          1332.6,
+          1210.6,
+          1237.0,
+          1317.5
+        ],
+        "slotP95Us": [
+          1989,
+          2103,
+          2011,
+          2026,
+          2020,
+          2062
+        ]
+      },
+      "candidate": {
+        "slots": 6,
+        "samples": 2160,
+        "meanUs": 1273.433,
+        "p95Us": 2044.167,
+        "processToFirstTickUs": 123405.333,
+        "slotMeanUs": [
+          1405.8,
+          1137.6,
+          1305.7,
+          1221.6,
+          1242.8,
+          1327.1
+        ],
+        "slotP95Us": [
+          2111,
+          1995,
+          2090,
+          1987,
+          2020,
+          2062
+        ]
+      },
+      "deltaPercent": {
+        "mean": -0.343,
+        "p95": 0.442,
+        "processToFirstTick": -1.013
+      },
+      "meanNoRegression": true,
+      "p95WithinThreePercent": true,
+      "frameGatePass": true
+    },
+    "wander-online": {
+      "baseline": {
+        "slots": 6,
+        "samples": 2160,
+        "meanUs": 1268.750,
+        "p95Us": 1953.333,
+        "processToFirstTickUs": 71092.833,
+        "slotMeanUs": [
+          1263.8,
+          1268.9,
+          1396.5,
+          1254.2,
+          1224.0,
+          1205.1
+        ],
+        "slotP95Us": [
+          2037,
+          1980,
+          1954,
+          1940,
+          2004,
+          1805
+        ]
+      },
+      "candidate": {
+        "slots": 6,
+        "samples": 2160,
+        "meanUs": 1220.783,
+        "p95Us": 1934.167,
+        "processToFirstTickUs": 65256.500,
+        "slotMeanUs": [
+          1143.7,
+          1206.6,
+          1117.6,
+          1283.9,
+          1254.7,
+          1318.2
+        ],
+        "slotP95Us": [
+          1883,
+          1901,
+          1890,
+          1975,
+          1952,
+          2004
+        ]
+      },
+      "deltaPercent": {
+        "mean": -3.781,
+        "p95": -0.981,
+        "processToFirstTick": -8.209
+      },
+      "meanNoRegression": true,
+      "p95WithinThreePercent": true,
+      "frameGatePass": true
+    }
+  },
+  "coldStart": {
+    "wander": {
+      "480x272": {
+        "baseline": {
+          "slots": 6,
+          "runsPerSlot": 7,
+          "startupMeanOfSlotMediansMs": 118.066,
+          "startupMedianOfSlotMediansMs": 120.539,
+          "bundleEvalMeanOfSlotMediansMs": 109.297,
+          "slotStartupMediansMs": [
+            121.393,
+            121.397,
+            120.907,
+            120.170,
+            111.985,
+            112.545
+          ],
+          "slotBundleEvalMediansMs": [
+            112.166,
+            112.319,
+            111.985,
+            111.386,
+            103.664,
+            104.261
+          ]
+        },
+        "candidate": {
+          "slots": 6,
+          "runsPerSlot": 7,
+          "startupMeanOfSlotMediansMs": 119.528,
+          "startupMedianOfSlotMediansMs": 120.450,
+          "bundleEvalMeanOfSlotMediansMs": 110.834,
+          "slotStartupMediansMs": [
+            122.898,
+            116.874,
+            118.438,
+            122.667,
+            113.829,
+            122.462
+          ],
+          "slotBundleEvalMediansMs": [
+            113.941,
+            108.487,
+            109.309,
+            113.796,
+            105.830,
+            113.643
+          ]
+        },
+        "deltaPercent": {
+          "startupMean": 1.238,
+          "startupMedian": -0.074,
+          "bundleEvalMean": 1.406
+        },
+        "gatePass": true
+      },
+      "960x544": {
+        "baseline": {
+          "slots": 6,
+          "runsPerSlot": 7,
+          "startupMeanOfSlotMediansMs": 145.295,
+          "startupMedianOfSlotMediansMs": 145.541,
+          "bundleEvalMeanOfSlotMediansMs": 125.065,
+          "slotStartupMediansMs": [
+            142.664,
+            149.156,
+            141.057,
+            140.017,
+            148.417,
+            150.457
+          ],
+          "slotBundleEvalMediansMs": [
+            122.747,
+            128.410,
+            121.322,
+            120.648,
+            127.738,
+            129.525
+          ]
+        },
+        "candidate": {
+          "slots": 6,
+          "runsPerSlot": 7,
+          "startupMeanOfSlotMediansMs": 148.957,
+          "startupMedianOfSlotMediansMs": 149.677,
+          "bundleEvalMeanOfSlotMediansMs": 128.575,
+          "slotStartupMediansMs": [
+            151.076,
+            143.194,
+            149.172,
+            151.113,
+            150.182,
+            149.006
+          ],
+          "slotBundleEvalMediansMs": [
+            130.449,
+            123.384,
+            128.421,
+            130.421,
+            129.870,
+            128.905
+          ]
+        },
+        "deltaPercent": {
+          "startupMean": 2.520,
+          "startupMedian": 2.842,
+          "bundleEvalMean": 2.807
+        },
+        "gatePass": true
+      }
+    },
+    "wander-online": {
+      "480x272": {
+        "baseline": {
+          "slots": 6,
+          "runsPerSlot": 7,
+          "startupMeanOfSlotMediansMs": 61.377,
+          "startupMedianOfSlotMediansMs": 61.115,
+          "bundleEvalMeanOfSlotMediansMs": 56.180,
+          "slotStartupMediansMs": [
+            59.030,
+            64.184,
+            63.004,
+            60.618,
+            61.612,
+            59.815
+          ],
+          "slotBundleEvalMediansMs": [
+            54.207,
+            58.892,
+            57.826,
+            55.264,
+            56.321,
+            54.572
+          ]
+        },
+        "candidate": {
+          "slots": 6,
+          "runsPerSlot": 7,
+          "startupMeanOfSlotMediansMs": 61.321,
+          "startupMedianOfSlotMediansMs": 61.295,
+          "bundleEvalMeanOfSlotMediansMs": 56.041,
+          "slotStartupMediansMs": [
+            60.515,
+            61.992,
+            60.597,
+            62.605,
+            62.680,
+            59.539
+          ],
+          "slotBundleEvalMediansMs": [
+            55.252,
+            56.594,
+            55.519,
+            57.160,
+            57.259,
+            54.464
+          ]
+        },
+        "deltaPercent": {
+          "startupMean": -0.091,
+          "startupMedian": 0.295,
+          "bundleEvalMean": -0.247
+        },
+        "gatePass": true
+      },
+      "960x544": {
+        "baseline": {
+          "slots": 6,
+          "runsPerSlot": 7,
+          "startupMeanOfSlotMediansMs": 59.630,
+          "startupMedianOfSlotMediansMs": 60.161,
+          "bundleEvalMeanOfSlotMediansMs": 54.800,
+          "slotStartupMediansMs": [
+            61.028,
+            58.155,
+            60.171,
+            60.151,
+            56.493,
+            61.781
+          ],
+          "slotBundleEvalMediansMs": [
+            55.656,
+            53.331,
+            55.232,
+            55.432,
+            52.090,
+            57.059
+          ]
+        },
+        "candidate": {
+          "slots": 6,
+          "runsPerSlot": 7,
+          "startupMeanOfSlotMediansMs": 60.614,
+          "startupMedianOfSlotMediansMs": 60.716,
+          "bundleEvalMeanOfSlotMediansMs": 55.547,
+          "slotStartupMediansMs": [
+            62.501,
+            62.056,
+            58.972,
+            61.551,
+            59.880,
+            58.725
+          ],
+          "slotBundleEvalMediansMs": [
+            57.330,
+            57.033,
+            53.498,
+            56.773,
+            54.584,
+            54.067
+          ]
+        },
+        "deltaPercent": {
+          "startupMean": 1.650,
+          "startupMedian": 0.923,
+          "bundleEvalMean": 1.363
+        },
+        "gatePass": true
+      }
+    }
+  },
+  "verdict": {
+    "allColdStartRowsWithinThreePercent": true,
+    "allFrameRowsPass": true,
+    "result": "PASS"
+  }
+}

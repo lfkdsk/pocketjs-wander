@@ -1,0 +1,145 @@
+{
+  "schema": "wander-component-bump-size/v2",
+  "revisions": {
+    "baselineWander": "526d518b559e2b28a3fd4361a6afe6bf9cfe717a",
+    "candidateWander": "a724613cd4b149566191412fc5ca7fdebb513338",
+    "baselinePocketRpgKit": "a4dc4e72341ae6aa7373623f83dbd07124316a6d",
+    "candidatePocketRpgKit": "2a37b9aa5c6f464087cc5d97a815a38d2000acbd",
+    "pocketJs": "862040bd77edc49b1f815beff63952b6616a14c6"
+  },
+  "method": {
+    "build": "bun run build",
+    "gzip": "gzip -n -9",
+    "comparison": "The same Wander source revision is built with the old and new component trees; the candidate commit changes only the component gitlink, isolation test, and status documentation."
+  },
+  "applications": {
+    "wander": {
+      "javascript": {
+        "baseline": {
+          "rawBytes": 849902,
+          "gzipBytes": 180440,
+          "sha256": "f7e1105f0bd7036bd764b2c524c74c4671d2bc87f66f660ffcd907b8f242f46e"
+        },
+        "candidate": {
+          "rawBytes": 890187,
+          "gzipBytes": 188693,
+          "sha256": "0d98f0bd4097eae23112efd3b719676fdb1fd4e02368d3f3dadc456157a93409"
+        },
+        "delta": {
+          "rawBytes": 40285,
+          "rawPercent": 4.740,
+          "gzipBytes": 8253,
+          "gzipPercent": 4.574
+        }
+      },
+      "pak": {
+        "baseline": {
+          "rawBytes": 1132768,
+          "gzipBytes": 73949,
+          "sha256": "e56d4a045e6fe22d79aa511144576b9e31aaad95ab19325790d1289e8cc253d1"
+        },
+        "candidate": {
+          "rawBytes": 1132768,
+          "gzipBytes": 73951,
+          "sha256": "b7ec486759acc56253a22744128a16d74696519d9de33a90481f77eb48cdfc9d"
+        },
+        "delta": {
+          "rawBytes": 0,
+          "rawPercent": 0,
+          "gzipBytes": 2,
+          "gzipPercent": 0.003
+        }
+      },
+      "inputs": {
+        "baselineCount": 604,
+        "candidateCount": 608,
+        "addedLightweightContracts": [
+          "src/engine/rpgmaker-text-contract.ts",
+          "src/engine/travel-contract.ts",
+          "src/engine/travel-types.ts",
+          "src/ui/choice-text-contract.ts"
+        ],
+        "forbiddenOptionalImplementations": []
+      }
+    },
+    "wander-online": {
+      "javascript": {
+        "baseline": {
+          "rawBytes": 1086786,
+          "gzipBytes": 232804,
+          "sha256": "e45c51d08e7008609db5777ed5a2da671955c24d2773c6bb4d18bfb699634fa5"
+        },
+        "candidate": {
+          "rawBytes": 1115908,
+          "gzipBytes": 239209,
+          "sha256": "3f727901de36a1ac5a8d2be0379efc1305ef46971c43e280ce93c38b3961fbf0"
+        },
+        "delta": {
+          "rawBytes": 29122,
+          "rawPercent": 2.680,
+          "gzipBytes": 6405,
+          "gzipPercent": 2.751
+        }
+      },
+      "pak": {
+        "baseline": {
+          "rawBytes": 2543120,
+          "gzipBytes": 328885,
+          "sha256": "4b9a072aa0e42da692d227a01832b70bd013a964c9c7289671d00cab617c92bc"
+        },
+        "candidate": {
+          "rawBytes": 2543120,
+          "gzipBytes": 328885,
+          "sha256": "4b9a072aa0e42da692d227a01832b70bd013a964c9c7289671d00cab617c92bc"
+        },
+        "delta": {
+          "rawBytes": 0,
+          "rawPercent": 0,
+          "gzipBytes": 0,
+          "gzipPercent": 0
+        }
+      },
+      "inputs": {
+        "baselineCount": 628,
+        "candidateCount": 631,
+        "addedLightweightContracts": [
+          "src/engine/rpgmaker-text-contract.ts",
+          "src/engine/travel-contract.ts",
+          "src/engine/travel-types.ts"
+        ],
+        "forbiddenOptionalImplementations": []
+      }
+    }
+  },
+  "isolation": {
+    "forbiddenConcreteModules": [
+      "src/engine/rpgmaker-screen.ts",
+      "src/engine/rpgmaker-text.ts",
+      "src/engine/travel-session.ts",
+      "src/engine/travel.ts",
+      "src/ui/ChoiceColourLine.tsx",
+      "src/ui/TravelActors.tsx",
+      "src/ui/choice-colour.ts",
+      "src/ui/travel-actors.ts",
+      "src/rpgmaker-battle/",
+      "src/ui/rpgmaker-battle/"
+    ],
+    "clean": {
+      "tests": 2,
+      "pass": 2,
+      "fail": 0,
+      "manifestAndBundleHits": 0
+    },
+    "mutation": {
+      "change": "Statically import rpgmaker-text.ts from the ordinary session path in a disposable worktree.",
+      "admittedModules": [
+        "src/engine/rpgmaker-screen.ts",
+        "src/engine/rpgmaker-text.ts"
+      ],
+      "tests": 2,
+      "pass": 0,
+      "fail": 2,
+      "exitCode": 1
+    }
+  }
+}
