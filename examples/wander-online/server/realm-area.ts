@@ -191,6 +191,13 @@ export interface RealmArenaHooks {
   /** A fact already accepted by the authoritative reducer. Hosts may use it
    *  to advance a realm-owned aggregate; clients never submit goal credit. */
   contributeDaily?(contribution: RealmDailyContribution, nowMs: number, player: RealmPlayer): void;
+  /** Cooperative settlement emits two facts as one authoritative unit when
+   * the host can persist them transactionally. Simpler hosts fall back to
+   * the singular hook for each courier. */
+  contributeDailyBatch?(
+    entries: readonly { contribution: RealmDailyContribution; player: RealmPlayer }[],
+    nowMs: number,
+  ): void;
 }
 
 export interface RealmArenaConfig {
@@ -249,9 +256,11 @@ function checkedCoopIdentity(value: string): string {
   return value;
 }
 
-function deliveryDailySourceId(player: RealmPlayer, journeyRevision: number, errand: Errand): string {
+function deliveryDailySourceId(journeyRevision: number, errand: Errand): string {
   if (errand.kind !== "deliver") throw new TypeError("daily delivery source requires a delivery errand");
-  return `delivery:${player.coopIdentity}:${journeyRevision >>> 0}:${errand.orx}:${errand.ory}:${errand.trx}:${errand.try}`;
+  // The host keys this opaque source within the authenticated incarnation;
+  // do not duplicate that private token in the stored/debuggable id itself.
+  return `delivery:${journeyRevision >>> 0}:${errand.orx}:${errand.ory}:${errand.trx}:${errand.try}`;
 }
 
 function heading(p: RealmPlayer): Pick<RealmFocus, "hx" | "hy"> {
@@ -795,15 +804,23 @@ export class RealmArena {
     // A storage-backed host first guarantees that this physically occupied
     // target has a region row, so its compare-and-set cannot silently vanish.
     this.improve(mine.targetRx, mine.targetRy, 1, nowMs, player);
-    for (const [courier, errand] of [[partner, partnerErrand], [player, mineErrand]] as const) {
-      this.hooks.contributeDaily?.({
-        sourceId: deliveryDailySourceId(courier, sourceRevisions.get(courier)!, errand),
-        kind: "delivery",
+    const dailyEntries = ([[partner, partnerErrand], [player, mineErrand]] as const).map(([courier, errand]) => ({
+      player: courier,
+      contribution: {
+        sourceId: deliveryDailySourceId(sourceRevisions.get(courier)!, errand),
+        kind: "delivery" as const,
         offerRx: errand.orx,
         offerRy: errand.ory,
         targetRx: errand.trx,
         targetRy: errand.try,
-      }, nowMs, courier);
+      },
+    }));
+    if (this.hooks.contributeDailyBatch) {
+      this.hooks.contributeDailyBatch(dailyEntries, nowMs);
+    } else {
+      for (const entry of dailyEntries) {
+        this.hooks.contributeDaily?.(entry.contribution, nowMs, entry.player);
+      }
     }
     return true;
   }
@@ -946,7 +963,7 @@ export class RealmArena {
     const done = journeyComplete(this.seed, p.journey, errand);
     if (errand.kind === "deliver") {
       this.hooks.contributeDaily?.({
-        sourceId: deliveryDailySourceId(p, p.journeyRevision, errand),
+        sourceId: deliveryDailySourceId(p.journeyRevision, errand),
         kind: "delivery",
         offerRx: errand.orx,
         offerRy: errand.ory,

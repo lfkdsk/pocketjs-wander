@@ -652,7 +652,7 @@ describe("authoritative arena rules", () => {
         playerId: a.id,
         nowMs: clock.now,
         fact: {
-          sourceId: `delivery:account-a:1:0:0:${errand.trx}:${errand.try}`,
+          sourceId: `delivery:1:0:0:${errand.trx}:${errand.try}`,
           kind: "delivery", offerRx: 0, offerRy: 0,
           targetRx: errand.trx, targetRy: errand.try,
         },
@@ -661,7 +661,7 @@ describe("authoritative arena rules", () => {
         playerId: b.id,
         nowMs: clock.now,
         fact: {
-          sourceId: `delivery:account-b:1:0:0:${errand.trx}:${errand.try}`,
+          sourceId: `delivery:1:0:0:${errand.trx}:${errand.try}`,
           kind: "delivery", offerRx: 0, offerRy: 0,
           targetRx: errand.trx, targetRy: errand.try,
         },
