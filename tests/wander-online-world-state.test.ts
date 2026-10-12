@@ -13,8 +13,8 @@ import { RealmPredictor } from "../examples/wander-online/net/realm-predict.ts";
 import { festivalCells, improvementCells } from "../examples/wander/towns.ts";
 import { WANDER_UPPER } from "../examples/wander/assets-wander.ts";
 import { blocksAt, COMPLETE, UNDISCOVERED } from "../examples/wander/chunk.ts";
-import { GROWTH_TICK_FRAMES } from "../examples/wander/region.ts";
-import { CHUNK, regionHub } from "../examples/wander/world.ts";
+import { F_BLOCK, F_ROAD, F_UPPER, GROWTH_TICK_FRAMES, planRegion } from "../examples/wander/region.ts";
+import { CHUNK, REGION, regionHub } from "../examples/wander/world.ts";
 
 const SEED = 0x5eed_0001;
 
@@ -243,6 +243,35 @@ describe("wander-online realm state projection", () => {
       expect(blocksAt(chunk, ci, COMPLETE)).toBe(false);
     }
   }, 20_000);
+
+  test("festival stalls fall back deterministically when an edge town's preferred cells are occupied", () => {
+    let plan = planRegion(SEED, 0, 0);
+    outer: for (let ry = -4; ry <= 4; ry++) for (let rx = -4; rx <= 4; rx++) {
+      if (!regionHub(SEED, rx, ry).town) continue;
+      plan = planRegion(SEED, rx, ry);
+      break outer;
+    }
+    const flags = new Uint8Array(REGION * REGION).fill(F_UPPER);
+    const hub = { ...plan.hub, x: plan.x0, y: plan.y0 };
+    // None are in the art-directed offset list. Three stay on the preferred
+    // outer band and two are inner fallbacks, leaving one spare candidate.
+    const available = [[0, 6], [1, 6], [2, 6], [0, 5], [1, 5]] as const;
+    for (const [dx, dy] of available) flags[(hub.y + dy - plan.y0) * REGION + hub.x + dx - plan.x0] = 0;
+    const edgePlan = { ...plan, hub, flags };
+
+    const festival = festivalCells(edgePlan);
+    expect(festival).toHaveLength(4);
+    expect(festivalCells(edgePlan)).toEqual(festival);
+    expect(new Set(festival.map((cell) => `${cell.x},${cell.y}`)).size).toBe(4);
+    for (const cell of festival) {
+      const lx = cell.x - edgePlan.x0, ly = cell.y - edgePlan.y0;
+      expect(lx).toBeGreaterThanOrEqual(0);
+      expect(ly).toBeGreaterThanOrEqual(0);
+      expect(lx).toBeLessThan(REGION);
+      expect(ly).toBeLessThan(REGION);
+      expect(flags[ly * REGION + lx]! & (F_ROAD | F_BLOCK | F_UPPER)).toBe(0);
+    }
+  });
 
   test("rollback evaluates each pending input at its saved server time", () => {
     const probe = new MultiFocusWorld(SEED);

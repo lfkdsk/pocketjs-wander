@@ -6,8 +6,8 @@
 // and the thanks are recomputed by anyone who needs them, so nothing here
 // stores state.
 
-import { growHash, regionGates, regionHub, type Biome } from "./world.ts";
-import { planRegion, regionName, type RegionPlan } from "./region.ts";
+import { REGION, growHash, regionGates, regionHub, type Biome } from "./world.ts";
+import { F_BLOCK, F_ROAD, F_UPPER, planRegion, regionName, type RegionPlan } from "./region.ts";
 import { isWilderness, landmarkApproach, landmarkFor, landmarkRoll, type Landmark } from "./landmarks.ts";
 
 export type FactKind = "biome" | "size" | "neighbor" | "landmark";
@@ -568,6 +568,22 @@ const FESTIVAL_TILE = 41; // STALL: a bright market canopy, installed as walkabl
  * regenerated realm plan reconstructs exactly the same festival. */
 export function festivalCells(plan: RegionPlan): { x: number; y: number; tile: number }[] {
   const out: { x: number; y: number; tile: number }[] = [];
+  const flags = plan.flags;
+  if (!flags) return out;
+  const reserved = new Set(improvementCells(plan).map((cell) => `${cell.x},${cell.y}`));
+  const selected = new Set<string>();
+  const blocked = F_ROAD | F_BLOCK | F_UPPER;
+  const tryCell = (dx: number, dy: number): void => {
+    if (out.length >= 4) return;
+    const x = plan.hub.x + dx, y = plan.hub.y + dy;
+    const lx = x - plan.x0, ly = y - plan.y0;
+    if (lx < 0 || ly < 0 || lx >= REGION || ly >= REGION) return;
+    const key = `${x},${y}`;
+    if (selected.has(key) || reserved.has(key)) return;
+    if (flags[ly * REGION + lx]! & blocked) return;
+    selected.add(key);
+    out.push({ x, y, tile: FESTIVAL_TILE });
+  };
   const offsets = [
     [6, 3], [-6, 3], [6, -3], [-6, -3],
     [3, 6], [-3, 6], [3, -6], [-3, -6],
@@ -581,14 +597,28 @@ export function festivalCells(plan: RegionPlan): { x: number; y: number; tile: n
     [5, 7], [-5, 7], [5, -7], [-5, -7],
   ] as const;
   for (const [dx, dy] of offsets) {
-    const x = plan.hub.x + dx, y = plan.hub.y + dy;
-    const lx = x - plan.x0, ly = y - plan.y0;
-    if (lx < 0 || ly < 0 || lx >= 96 || ly >= 96) continue;
-    const i = ly * 96 + lx;
-    const f = plan.flags![i]!;
-    if (f & 0x13) continue; // F_ROAD | F_BLOCK | F_UPPER: never replace developed cells
-    out.push({ x, y, tile: FESTIVAL_TILE });
+    tryCell(dx, dy);
     if (out.length >= 4) break;
   }
+
+  // Dense towns can occupy every art-directed offset, and synthetic/legacy
+  // plans can put a hub close to a region edge. Walk deterministic square
+  // rings to find other undeveloped cells: prefer the same outer festival
+  // band, then use the inner plaza area only when the outer map has fewer
+  // than four candidates. Level-1 flower cells remain reserved throughout.
+  const maxRadius = Math.max(
+    plan.hub.x - plan.x0,
+    plan.x0 + REGION - 1 - plan.hub.x,
+    plan.hub.y - plan.y0,
+    plan.y0 + REGION - 1 - plan.hub.y,
+  );
+  const scanRing = (radius: number): void => {
+    for (let dx = -radius; dx <= radius; dx++) tryCell(dx, -radius);
+    for (let dy = -radius + 1; dy <= radius; dy++) tryCell(radius, dy);
+    for (let dx = radius - 1; dx >= -radius; dx--) tryCell(dx, radius);
+    for (let dy = radius - 1; dy > -radius; dy--) tryCell(-radius, dy);
+  };
+  for (let radius = 6; radius <= maxRadius && out.length < 4; radius++) scanRing(radius);
+  for (let radius = Math.min(5, maxRadius); radius >= 0 && out.length < 4; radius--) scanRing(radius);
   return out;
 }
