@@ -13,6 +13,8 @@ import { encodePNG } from "../vendor/pocket-rpgkit/vendor/pocketjs/tests/png.ts"
 import type { PocketSocket } from "@pocketjs/framework/socket";
 import type { OnlinePublished } from "../examples/wander-online/OnlineView.tsx";
 import { encodeRoster } from "../examples/wander-online/net/protocol.ts";
+import { achievementCopy } from "../examples/wander-online/shared/profile.ts";
+import { SOCIAL_PROFILE_COPY_CELLS, wrapSocialText } from "../examples/wander-online/social-model.ts";
 import { appBundle } from "../tests/helpers/boot.ts";
 import { fakeOnlineSocketFactory, type FakeOnlineOpts } from "../tests/lib/fake-online-socket.ts";
 
@@ -21,6 +23,14 @@ mkdirSync(out, { recursive: true });
 const leaderboardReport: Array<{
   scene: string;
   viewport: string;
+  requiredText: readonly string[];
+  selectedRowPixels: number;
+  files: string[];
+}> = [];
+const profileReport: Array<{
+  scene: string;
+  viewport: string;
+  locale: "en" | "zh";
   requiredText: readonly string[];
   selectedRowPixels: number;
   files: string[];
@@ -112,6 +122,16 @@ function capture(world: World, name: string, width: number, height: number, requ
     leaderboardReport.push({
       scene: name,
       viewport: `${width}x${height}`,
+      requiredText,
+      selectedRowPixels,
+      files: [`${name}.${width}x${height}.png`, `${name}.${width}x${height}-3x.png`],
+    });
+  }
+  if (name.startsWith("profile-")) {
+    profileReport.push({
+      scene: name,
+      viewport: `${width}x${height}`,
+      locale: name.startsWith("profile-zh-") ? "zh" : "en",
       requiredText,
       selectedRowPixels,
       files: [`${name}.${width}x${height}.png`, `${name}.${width}x${height}-3x.png`],
@@ -303,13 +323,123 @@ async function leaderboardScene(width: number, height: number, locale: "en" | "z
   world.frame(0);
 }
 
+async function profileScene(width: number, height: number, locale: "en" | "zh"): Promise<void> {
+  let socket: PocketSocket | null = null;
+  const sent: Record<string, unknown>[] = [];
+  const name = locale === "zh" ? han(0x5c71, 0x6d77, 0x5ba2) : "Trail Keeper";
+  const stamps = locale === "zh"
+    ? [han(0x53e4, 0x6811, 0x9a7f, 0x7ad9), han(0x661f, 0x6cb3, 0x706f, 0x5854)]
+    : ["Ancient Orchard", "River Lantern"];
+  const opts: FakeOnlineOpts = {
+    mode: "welcome4",
+    name,
+    look: 40,
+    ticket: `profile-${locale}`,
+    realm: { tx: HUB.x, ty: HUB.y, seed: SEED, epoch: 5, id: "plaza-1" },
+    serverTimeMs: GROWN_MS,
+    heartbeat: true,
+    sent,
+    onSocket: (value) => { socket = value; },
+  };
+  (globalThis as { __onlineState?: OnlinePublished }).__onlineState = undefined;
+  const world = (await bootWorld(
+    appBundle("wander-online"),
+    60,
+    {
+      __onlineUrl: "ws://fake/ws",
+      __onlineAuth: { kind: "ticket", ticket: opts.ticket },
+      __onlineLocale: locale,
+      __onlineSocketFactory: fakeOnlineSocketFactory(opts),
+    },
+    undefined,
+    { width, height },
+  )) as unknown as World;
+  const pushText = (message: Record<string, unknown>): void => {
+    socket!.onMessage?.(JSON.stringify(message));
+  };
+
+  pump(world, 5);
+  await waitFor(world, () => state()?.status === "joined", `profile ${locale} joined realm`);
+  pushText({
+    type: "realmFeatures",
+    v: 1,
+    realm: "plaza-1",
+    coopErrands: false,
+    discoveryLeaderboard: false,
+    playerProfiles: true,
+  });
+  pump(world, 2);
+
+  press(world, BTN.SELECT);
+  press(world, BTN.DOWN);
+  press(world, BTN.DOWN);
+  press(world, BTN.DOWN);
+  press(world, BTN.CIRCLE);
+  if (state()?.socialScreen !== "profile") {
+    throw new Error(`${locale} ${width}x${height}: owner card route did not open`);
+  }
+  const request = sent.findLast((message) => message.type === "profileGet");
+  if (request?.githubId !== null) {
+    throw new Error(`${locale} ${width}x${height}: owner card did not request the bound identity`);
+  }
+  pushText({
+    type: "profileSnapshot",
+    v: 1,
+    self: true,
+    card: {
+      name,
+      look: 40,
+      joinedAt: Date.UTC(2026, 9, 12) / 1000,
+      achievements: ["errands-1", "firsts-5"],
+      showcasePostmark: stamps[0],
+      postmarkOptions: stamps,
+    },
+    newAchievements: [],
+  });
+  pump(world, 2);
+  const copy = achievementCopy("errands-1", locale);
+  const copyLines = wrapSocialText(copy.description, SOCIAL_PROFILE_COPY_CELLS);
+  capture(world, `profile-${locale}-owner`, width, height, [
+    "PLAYER CARD",
+    name,
+    "2026-10-12",
+    stamps[0]!,
+    copy.name,
+    copyLines[0]!,
+  ]);
+
+  press(world, BTN.DOWN);
+  press(world, BTN.DOWN);
+  press(world, BTN.CIRCLE);
+  const stampChange = sent.findLast((message) => message.type === "profilePostmarkSet");
+  if (stampChange?.postmark !== stamps[1]) {
+    throw new Error(`${locale} ${width}x${height}: owner stamp cycle did not send the next server option`);
+  }
+  for (let row = 0; row < 5; row++) press(world, BTN.DOWN);
+  const nextCopy = achievementCopy("firsts-5", locale);
+  capture(world, `profile-${locale}-owner-more`, width, height, [
+    "PLAYER CARD",
+    ...copyLines.slice(1),
+    nextCopy.name,
+    ...wrapSocialText(nextCopy.description, SOCIAL_PROFILE_COPY_CELLS),
+  ]);
+  world.frame(0);
+}
+
 for (const [width, height] of [[480, 272], [960, 544]] as const) {
   await scene(width, height);
   await leaderboardScene(width, height, "en");
   await leaderboardScene(width, height, "zh");
+  await profileScene(width, height, "en");
+  await profileScene(width, height, "zh");
 }
 writeFileSync(join(out, "leaderboard-report.json"), `${JSON.stringify({
   verdict: "PASS",
   scale: 3,
   scenes: leaderboardReport,
+}, null, 2)}\n`);
+writeFileSync(join(out, "profile-report.json"), `${JSON.stringify({
+  verdict: "PASS",
+  scale: 3,
+  scenes: profileReport,
 }, null, 2)}\n`);

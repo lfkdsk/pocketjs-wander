@@ -45,7 +45,7 @@ the same words.
 | CROSS | at a born town notice board on a hosted postcard realm: open the post office; otherwise near a town hub: accept its errand, deliver a solo errand, or mark this courier ready for a cooperative delivery; elsewhere: page the travel log |
 | TRIANGLE | request fast mode; the HUD says `FAST` once a snapshot confirms it |
 | R | the emote picker: LEFT/RIGHT choose one of five presets, CIRCLE sends it, CROSS or R closes |
-| SELECT | open/close the menu: CIRCLE links a device, SQUARE twice deletes all account data, TRIANGLE toggles debug, START toggles auto-walk, L mints an invite to this world, R leaves for any world, DOWN opens friends/worlds/my data |
+| SELECT | open/close the menu: CIRCLE links a device, SQUARE twice deletes all account data, TRIANGLE toggles debug, START toggles auto-walk, L mints an invite to this world, R leaves for any world, DOWN opens friends/worlds/player cards/my data |
 
 Residents of the nearby towns walk their routes on the realm clock (a pure
 function of the plan, the region's discovery time and the server time, so
@@ -174,12 +174,15 @@ keeps codes in memory, the hosted one in the realm's SQLite.
 ### Friends, worlds and account data
 
 The hosted service adds a low-frequency, versioned JSON social control plane.
-The controller UI is deliberately separate from movement: press SELECT and
-then DOWN to open it, use the d-pad and CIRCLE to choose a row, and use CROSS
-to go back. All dialog, emote, menu and social-panel input is consumed before
-the gameplay client sees that frame. The loopback Bun server has no accounts
-or persistence, so it can display the panel shell but does not provide these
-hosted social records.
+The panel consumes the same button mask from controllers, keyboards and touch:
+press SELECT then DOWN, use the d-pad and CIRCLE to choose a row, and use CROSS
+to go back. In the web player those buttons are Shift, the arrow keys,
+A/Enter/Z and B/Esc/Backspace; X is TRIANGLE and Y is SQUARE. On touch, use the
+matching floating controls or tap a panel row, and tap the footer to go back.
+All dialog, emote, menu and social-panel input is consumed before the gameplay
+client sees that frame. The loopback Bun server has no accounts or persistence,
+so it can display the panel shell but does not provide these hosted social
+records.
 
 - **Friends.** The Friends page lists incoming requests, mutual friends,
   outgoing requests and players currently in the same realm. CIRCLE accepts
@@ -197,6 +200,24 @@ hosted social records.
   they see `online` plus the exact realm or `offline`; with sharing off they see
   `hidden` and no realm. Other accounts cannot query either value. On My Data,
   TRIANGLE toggles this setting.
+- **Player cards and achievements.** When the current realm advertises
+  `realmFeatures.playerProfiles`, the home page gains My Card. Select it with
+  CIRCLE; from Friends, select a mutual friend and press TRIANGLE, or tap that
+  friend's row. A card shows the server-supplied name and look portrait, the
+  UTC join date, an optional showcase postmark and bilingual achievements. The
+  hosted service derives the 15 three-tier achievement ids from durable counts
+  for completed errands, landmark sightings, landmark FIRSTs, daily-goal
+  contribution days and realms visited; the client only validates and renders
+  that bounded result. Newly persisted owner unlocks arrive as one-shot edges.
+  The client queues simultaneous unlocks and ignores replayed edges, so each
+  achievement notice is shown once and none is overwritten by another notice.
+  On the owner's card, CIRCLE or a tap on Showcase Stamp cycles through no stamp
+  and the server-supplied choices; the client submits only the selected value.
+  Friend cards are read-only and omit both the owner's stamp-choice list and new
+  unlock edges. Every friend-card read is rechecked as a mutual friendship, so
+  a removed friend receives `forbidden` and stale card data is cleared; the card
+  itself contains no account id, presence, realm or coordinates. Missing or
+  false `playerProfiles` flags normalize to false and hide all card routes.
 - **Worlds.** The Worlds page reports `empty`, `quiet`, `lively`, `busy` or
   `full`, never an exact player count. CIRCLE on a joinable row reconnects to
   that exact realm instead of using the default fullest-with-space choice. A
@@ -284,13 +305,16 @@ bun run shots:postcard -- ./wander-online-postcard-shots
 
 The social panel has bounded responsive layouts. Its row details are deliberate
 single-line short labels (`REQUESTS`, `POPULATION`, `PRIVACY`) because PocketJS
-text wraps only at explicit newlines; the detail column retains a 120 px text
-cell at both 390x844 portrait and 844x390 landscape. On a wide 1x landscape
-viewport, the inner panel narrows into the control-free lane between the
-floating d-pad and action cluster; labels refit to the resulting column while
-the full-screen shade remains unchanged. After building the bundle and
-simulator core, capture Friends, Worlds, My Data and delete-confirm screens at
-480x272 and 960x544, together with nearest-neighbour 3x review copies:
+text wraps only at explicit newlines; player-card achievement and postmark prose
+is instead wrapped without ellipses to a conservative 24-display-cell column
+and paginated through the same seven-row view. The detail column retains a
+120 px text cell at both 390x844 portrait and 844x390 landscape, and the card's
+look portrait stays inside its header. On a wide 1x landscape viewport, the
+inner panel narrows to a 360-logical-pixel control-free lane between the floating
+d-pad and action cluster; labels refit to the resulting column while the
+full-screen shade remains unchanged. After building the bundle and simulator
+core, capture Friends, Worlds, My Data and delete-confirm screens at 480x272 and
+960x544, together with nearest-neighbour 3x review copies:
 
 ```sh
 bun run build:wasm
@@ -502,9 +526,11 @@ migrate or reinterpret a legacy room.
 | [`net/emote.ts`](net/emote.ts) | the five preset emotes and their limits |
 | [`shared/invite.ts`](shared/invite.ts) | invite tokens, lifetimes and the realm pin query |
 | [`shared/social.ts`](shared/social.ts) | bounded social snapshots, world choices and self-data parsers |
+| [`shared/profile.ts`](shared/profile.ts) | bounded player-card payloads, achievement tiers and strict parsers |
 | [`net/journey.ts`](net/journey.ts) | private journey v3, deterministic co-op eligibility and bilingual confirmations |
 | [`social-model.ts`](social-model.ts) | controller navigation, pagination and typed social actions |
-| [`SocialPanel.tsx`](SocialPanel.tsx) | the responsive friends/worlds/my-data overlay |
+| [`SocialPanel.tsx`](SocialPanel.tsx) | the responsive friends/worlds/player-card/my-data overlay |
+| [`PlayerLookPreview.tsx`](PlayerLookPreview.tsx) | reusable player-card appearance portrait |
 | [`net/client.ts`](net/client.ts) | the PocketJS net client (socket, reconnect, freeze, rejection policy) |
 | [`server/area.ts`](server/area.ts) | the authoritative arena (input queues, AOI) |
 | [`server/realm-area.ts`](server/realm-area.ts) | v4 authoritative realm (streaming budget, sparse AOI) |
@@ -551,9 +577,16 @@ migrate or reinterpret a legacy room.
   far markers with a CJK name at both viewport sizes, the emote picker and
   bubbles, the invite notice and page events, the realm pin at boot, modal
   input capture, social wire identities and exact-realm selection.
-- `tests/wander-online-social-panel.test.ts` — friend/world/self-data rows,
-  FIRST-finder consent/ranks, stable-versus-temporary identity actions,
-  destructive confirmation, bounded pagination and 480x272/960x544 geometry.
+- `tests/wander-online-social-panel.test.ts` — friend/world/profile/self-data
+  rows, capability-gated card routes, showcase-postmark cycling, bilingual
+  achievement wrapping, destructive confirmation, bounded pagination and
+  desktop/phone geometry.
+- `tests/wander-online-profile.test.ts` — achievement derivation from the five
+  authoritative fact classes, bilingual copy, strict owner/friend payload
+  bounds and host-independent UTC join dates.
+- `tests/wander-online-profile-view.test.ts` — mounted self and mutual-friend
+  card routes, forged-payload rejection, one-shot queued notices, replay
+  deduplication, showcase updates and direct touch navigation.
 - `tests/wander-online-journey.test.ts` — private journey bounds and merge,
   deterministic cooperative eligibility, distinct-identity quorum,
   once-only competing completion and READY restore/expiry.

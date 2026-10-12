@@ -654,6 +654,7 @@ async function main(): Promise<void> {
       postcards: true,
       postcardReplies: true,
       postcardIdempotency: true,
+      playerProfiles: true,
     });
     await pushJson({
       type: "socialSnapshot",
@@ -826,6 +827,52 @@ async function main(): Promise<void> {
       `${waitingFriendState.coopWaitingFriends} waiting friend`);
     const friendRowPixels = await checkScreenColor("selected waiting-friend row", [0x35, 0x49, 0x68], 100);
     const friendListShot = await screenshot(`${label}-${width}x${height}-coop-${locale}-friend-list`);
+
+    // The same physical touch overlay drives the friend-card secondary
+    // action. The request carries only the stable friend id; the injected
+    // response is shaped exactly like the hosted authority's projection.
+    await touch('[data-button="TRIANGLE"]', 140);
+    await waitFor<boolean>(
+      "friend player card",
+      'globalThis.__onlineState?.socialScreen === "profile"',
+      Boolean,
+    );
+    const profileRequest = await waitFor<Record<string, unknown> | null>(
+      "friend profile request",
+      `(() => {
+        const frames = globalThis.__mobileVerifyTextFrames ?? [];
+        for (let i = frames.length - 1; i >= 0; i--) if (frames[i]?.type === "profileGet") return frames[i];
+        return null;
+      })()`,
+      (candidate) => candidate?.githubId === 72,
+    );
+    const profileStamp = locale === "zh" ? han(0x53e4, 0x6811, 0x9a7f, 0x7ad9) : "Ancient Orchard";
+    await pushJson({
+      type: "profileSnapshot",
+      v: 1,
+      self: false,
+      card: {
+        name: friend.name,
+        look: 17,
+        joinedAt: Date.UTC(2026, 9, 12) / 1000,
+        achievements: ["errands-1", "shared-days-1"],
+        showcasePostmark: profileStamp,
+        postmarkOptions: [],
+      },
+      newAchievements: [],
+    });
+    await sleep(100);
+    const profileLayout = await layoutReport(true);
+    const profilePanelPixels = await checkScreenColor("friend player-card panel", [0x14, 0x1c, 0x30], 500);
+    const profileTitlePixels = await checkScreenColor("friend player-card title", [0xff, 0xe1, 0x7a], 8);
+    const profileSelectedPixels = await checkScreenColor("friend player-card selected row", [0x35, 0x49, 0x68], 80);
+    const profileShot = await screenshot(`${label}-${width}x${height}-profile-${locale}-friend-card`);
+    await touch('[data-button="CROSS"]', 140);
+    await waitFor<boolean>(
+      "Friends social panel after card",
+      'globalThis.__onlineState?.socialScreen === "friends"',
+      Boolean,
+    );
     await touch('[data-button="CROSS"]', 140);
     await waitFor<boolean>(
       "social home panel",
@@ -1015,6 +1062,14 @@ async function main(): Promise<void> {
       socialOverlaps: socialLayout.socialOverlaps,
       socialFriendsPanel: socialFriendsLayout.socialPanel,
       socialFriendsOverlaps: socialFriendsLayout.socialOverlaps,
+      playerCard: {
+        request: profileRequest,
+        postmark: profileStamp,
+        panelPixels: profilePanelPixels,
+        titlePixels: profileTitlePixels,
+        selectedPixels: profileSelectedPixels,
+        layout: profileLayout,
+      },
       screenshots: [
         nameShot,
         dailyShot,
@@ -1024,6 +1079,7 @@ async function main(): Promise<void> {
         socialShot,
         socialFriendsShot,
         friendListShot,
+        profileShot,
         postcardUnreadShot,
         postcardReadShot,
         postcardReviewShot,
