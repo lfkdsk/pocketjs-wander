@@ -11,6 +11,7 @@ import {
   type PostcardMailbox,
   type PostcardMessage,
   type PostcardSentenceId,
+  type PostcardStatus,
 } from "./shared/postcard.ts";
 import type { FriendView } from "./shared/social.ts";
 import {
@@ -37,6 +38,7 @@ export interface PostmarkOption {
 }
 
 export interface PostcardMenuData {
+  status: PostcardStatus | null;
   mailbox: PostcardMailbox | null;
   friends: readonly FriendView[];
   postmarks: readonly PostmarkOption[];
@@ -155,8 +157,8 @@ export function postcardMenuRows(state: PostcardMenuState, data: PostcardMenuDat
   switch (state.screen) {
     case "home":
       return [
-        row("route-inbox", words.mailbox, `${data.mailbox?.unread ?? 0} ${words.unread}`, "accent"),
-        row("route-send", words.send, `${words.today} ${data.mailbox?.dailyRemaining ?? 0}`, "accent"),
+        row("route-inbox", words.mailbox, `${data.status?.unread ?? 0} ${words.unread}`, "accent"),
+        row("route-send", words.send, `${words.today} ${data.status?.dailyRemaining ?? 0}`, "accent"),
         row("route-close", words.leave, "", "muted"),
       ];
     case "inbox": {

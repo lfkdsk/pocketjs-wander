@@ -26,6 +26,7 @@ import {
   logBarRect,
   menuRect,
   noticeRect,
+  postcardBadgeRect,
   statusPlate,
   type HudRect,
 } from "../examples/wander-online/hud.ts";
@@ -130,6 +131,18 @@ describe("wander-online layout: world overlays", () => {
       expect(debug.y1 - debug.y0).toBeGreaterThan(normal.y1 - normal.y0);
       expect(debug.y1).toBeGreaterThan(normal.y1);
       expect(noticeRect(w, h, true).y0).toBeGreaterThan(noticeRect(w, h, false).y0);
+    }
+  });
+
+  test("the postcard unread badge stays inside the status plate in both phone orientations", () => {
+    for (const [w, h] of [[390, 844], [844, 390], ...SIZES] as [number, number][]) {
+      for (const debug of [false, true]) {
+        const plate = statusPlate(w, h, debug);
+        const badge = postcardBadgeRect(w, h, debug);
+        expect(contains(plate, badge), `${w}x${h} badge`).toBe(true);
+        expect(badge.x1 - badge.x0).toBeGreaterThanOrEqual(58);
+        expect(badge.y1 - badge.y0).toBe(12);
+      }
     }
   });
 

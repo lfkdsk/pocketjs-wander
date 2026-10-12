@@ -50,6 +50,18 @@ import { purePlacedLandmark, townErrand, townFacts, townPlaque, townTalk, type T
 import { NAME_INPUT_ACTION_OK, nameInputRules, type NameInputState } from "../../vendor/pocket-rpgkit/src/engine/name-input.ts";
 import { CreateCharScene, type CreateFocus } from "./CreateCharScene.tsx";
 import { SocialPanel } from "./SocialPanel.tsx";
+import { PostcardPanel } from "./PostcardPanel.tsx";
+import {
+  createPostcardMenuState,
+  normalizePostcardMenuState,
+  postcardSendComplete,
+  reducePostcardMenu,
+  type PostcardAction,
+  type PostcardInput,
+  type PostcardMenuData,
+  type PostcardMenuState,
+  type PostmarkOption,
+} from "./postcard-model.ts";
 import {
   createSocialMenuState,
   normalizeSocialMenuState,
@@ -84,6 +96,7 @@ import {
   logBarRect,
   menuRect,
   noticeRect,
+  postcardBadgeRect,
   statusPlate,
   type HudRect, NAME_LABEL_W } from "./hud.ts";
 import { createLayout, createNameGrid } from "./hud.ts";
@@ -119,6 +132,13 @@ import {
   type SocialSnapshot,
 } from "./shared/social.ts";
 import { formatDailyGoal, parseDailyGoalSnapshot, type DailyGoalSnapshot } from "./shared/daily-goal.ts";
+import {
+  POSTCARD_PROTOCOL_VERSION,
+  parsePostcardMailbox,
+  parsePostcardStatus,
+  type PostcardMailbox,
+  type PostcardStatus,
+} from "./shared/postcard.ts";
 import { nameGridCharset } from "./shared/name-charset.ts";
 import { describeCreateError } from "./create-text.ts";
 import { LINK_PAD_KEYS, stepLinkCode, type LinkCodeState } from "./link-code.ts";
@@ -311,6 +331,11 @@ export interface OnlinePublished {
   /** The controller-friendly friends/worlds/self-data panel is open. */
   social: boolean;
   socialScreen: string;
+  /** The physical post-office panel is open. */
+  postcard: boolean;
+  postcardScreen: string;
+  /** Server-authoritative unread count, zero before the first status. */
+  postcardUnread: number;
   /** The last invite token this client minted ("" until then). */
   invite: string;
   /** The realm this client asks for on (re)connect ("" = any). */
@@ -467,6 +492,10 @@ export function OnlineView() {
   const [realmChoices, setRealmChoices] = createSignal<RealmChoice[]>([]);
   const [selfData, setSelfData] = createSignal<SelfDataSummary | null>(null);
   const [realmFeatures, setRealmFeatures] = createSignal<RealmFeatures | null>(null);
+  const [postcardOpen, setPostcardOpen] = createSignal(false);
+  const [postcardState, setPostcardState] = createSignal<PostcardMenuState>(createPostcardMenuState());
+  const [postcardStatus, setPostcardStatus] = createSignal<PostcardStatus | null>(null);
+  const [postcardMailbox, setPostcardMailbox] = createSignal<PostcardMailbox | null>(null);
   const [coopErrand, setCoopErrand] = createSignal<CoopErrandSnapshot | null>(null);
   const [discoveryLeaderboard, setDiscoveryLeaderboard] = createSignal<DiscoveryLeaderboard | null>(null);
   const [dailyGoal, setDailyGoal] = createSignal<DailyGoalSnapshot | null>(null);
@@ -536,6 +565,8 @@ export function OnlineView() {
       setDiscoveryLeaderboard(null);
       setDailyGoal(null);
       setDailyCountdownText("");
+      setPostcardOpen(false);
+      setPostcardState(createPostcardMenuState());
       setSocialSnapshot((snapshot) => snapshot ? {
         ...snapshot,
         friends: snapshot.friends.map((friend) => friend.coopWaiting
@@ -654,6 +685,10 @@ export function OnlineView() {
     setSocialOpen(false);
     setSocialState(createSocialMenuState());
     setSocialSnapshot(null);
+    setPostcardOpen(false);
+    setPostcardState(createPostcardMenuState());
+    setPostcardStatus(null);
+    setPostcardMailbox(null);
     setRealmChoices([]);
     setSelfData(null);
     setScreen("gate");
@@ -793,6 +828,98 @@ export function OnlineView() {
     if (transition.action) applySocialAction(transition.action);
   };
 
+  const postcardPostmarks = (): PostmarkOption[] => {
+    const c = client;
+    const seed = c?.predictor?.world.seed;
+    if (!c || seed === undefined) return [];
+    const options: PostmarkOption[] = [];
+    for (const key of c.progressKeys) {
+      const [rx, ry] = parseKey(key);
+      const landmark = purePlacedLandmark(seed, rx, ry);
+      if (!landmark) continue;
+      options.push({ rx, ry, label: `${landmark.kindName} · ${regionName(seed, rx, ry)}` });
+    }
+    return options;
+  };
+
+  const postcardMenuData = (): PostcardMenuData => ({
+    status: postcardStatus(),
+    mailbox: postcardMailbox(),
+    friends: socialSnapshot()?.friends ?? [],
+    postmarks: postcardPostmarks(),
+    locale,
+  });
+
+  const sendPostcard = (message: Record<string, unknown>): void => {
+    client?.sendText(JSON.stringify({ ...message, v: POSTCARD_PROTOCOL_VERSION }));
+  };
+
+  const applyPostcardAction = (action: PostcardAction): void => {
+    switch (action.type) {
+      case "close":
+        setPostcardOpen(false);
+        return;
+      case "read":
+        sendPostcard({ type: "postcardRead", id: action.id });
+        return;
+      case "send":
+        sendPostcard({ type: "postcardSend", ...action.draft });
+        return;
+    }
+  };
+
+  const stepPostcard = (input: PostcardInput): void => {
+    const transition = reducePostcardMenu(postcardState(), input, postcardMenuData());
+    setPostcardState(transition.state);
+    if (transition.action) applyPostcardAction(transition.action);
+  };
+
+  const postcardErrorText = (reason: string): string => {
+    switch (reason) {
+      case "not-friends": return locale === "zh" ? "只能给互为好友的人寄信" : "POSTCARD: MUTUAL FRIENDS ONLY";
+      case "daily-limit": return locale === "zh" ? "今天的寄件额度已用完" : "POSTCARD: DAILY LIMIT REACHED";
+      case "mailbox-full": return locale === "zh" ? "对方的信箱已满" : "POSTCARD: MAILBOX FULL";
+      case "postmark": return locale === "zh" ? "这个邮戳不可用" : "POSTCARD: INVALID POSTMARK";
+      case "post-office": return locale === "zh" ? "请在邮局办理" : "POSTCARD: VISIT A POST OFFICE";
+      case "sentence": return locale === "zh" ? "问候语无效" : "POSTCARD: INVALID MESSAGE";
+      default: return locale === "zh" ? "明信片暂时无法处理" : "POSTCARD UNAVAILABLE";
+    }
+  };
+
+  /** Account-level mail responses are monotonic and survive realm changes;
+   * the physical panel itself is closed whenever admission changes. */
+  const handlePostcardMessage = (msg: Record<string, unknown>): boolean => {
+    const type = String(msg.type ?? "");
+    if (type !== "postcardStatus" && type !== "postcardMailbox" && type !== "postcardResult") return false;
+    if (msg.v !== POSTCARD_PROTOCOL_VERSION) return true;
+    if (type === "postcardStatus") {
+      const parsed = parsePostcardStatus(msg);
+      if (!parsed || (postcardStatus()?.revision ?? -1) > parsed.revision) return true;
+      setPostcardStatus(parsed);
+      if ((postcardMailbox()?.revision ?? -1) < parsed.revision) setPostcardMailbox(null);
+      return true;
+    }
+    if (type === "postcardMailbox") {
+      const parsed = parsePostcardMailbox(msg);
+      if (!parsed || (postcardStatus()?.revision ?? -1) > parsed.revision) return true;
+      setPostcardStatus(parsed);
+      setPostcardMailbox(parsed);
+      setPostcardState((state) => normalizePostcardMenuState(state, postcardMenuData()));
+      return true;
+    }
+    if (typeof msg.ok !== "boolean" || (msg.operation !== "send" && msg.operation !== "read")) return true;
+    if (msg.ok) {
+      if (msg.operation === "send") {
+        setPostcardState(postcardSendComplete());
+        showNotice(locale === "zh" ? "明信片已寄出" : "POSTCARD SENT", NOTICE_EVENT_MS);
+      }
+      sendPostcard({ type: "postcardGet" });
+    } else {
+      showNotice(postcardErrorText(String(msg.reason ?? "")), NOTICE_EVENT_MS);
+    }
+    return true;
+  };
+
   /** Strictly versioned social responses never replace valid cached data
    * with a malformed or future-version payload. */
   const handleSocialMessage = (msg: Record<string, unknown>): boolean => {
@@ -838,12 +965,17 @@ export function OnlineView() {
         setDailyCountdownText("");
         refreshOpenNoticeBoard();
       }
+      if (parsed.postcards !== true) {
+        setPostcardOpen(false);
+        setPostcardState(createPostcardMenuState());
+      }
       setSocialState((state) => state.screen === "discovery" && !parsed.discoveryLeaderboard
         ? createSocialMenuState()
         : normalizeSocialMenuState(state, socialMenuData()));
       if (!previous?.discoveryLeaderboard && parsed.discoveryLeaderboard && socialOpen()) {
         sendSocial({ type: "leaderboardGet" });
       }
+      if (!previous?.postcards && parsed.postcards) sendPostcard({ type: "postcardStatusGet" });
       return true;
     }
     if (type === "dailyGoal") {
@@ -981,6 +1113,7 @@ export function OnlineView() {
               : { ...friend, coopWaiting: null }),
         });
         setSocialState((state) => normalizeSocialMenuState(state, socialMenuData()));
+        setPostcardState((state) => normalizePostcardMenuState(state, postcardMenuData()));
       }
       return true;
     }
@@ -1093,6 +1226,7 @@ export function OnlineView() {
         }
       },
       onText: (msg) => {
+        if (handlePostcardMessage(msg)) return;
         if (handleSocialMessage(msg)) return;
         if (msg.type === "linked" && typeof msg.login === "string") publishLogin(msg.login);
         if (msg.type === "deleted") {
@@ -1787,6 +1921,39 @@ export function OnlineView() {
     setDialogRows(dialogLines.slice(dialogPage, dialogPage + DIALOG_ROWS));
   };
 
+  const postOfficeInFront = (c: OnlineClient): { rx: number; ry: number } | null => {
+    const predictor = c.predictor;
+    if (!(predictor instanceof RealmPredictor)) return null;
+    const world = predictor.world;
+    const front = frontTile(predictor.current.move);
+    const rx = regionOf(front.x), ry = regionOf(front.y);
+    const plan = world.plans.get(realmRegionKey(rx, ry));
+    if (!plan) return null;
+    const board = plaqueOf(plan);
+    if (!board || board.x !== front.x || board.y !== front.y) return null;
+    return world.regionTick(rx, ry, c.estimatedServerTime()) >= board.born ? { rx, ry } : null;
+  };
+
+  /** CROSS at a town notice board uses its postal counter. CIRCLE remains
+   * the ordinary notice-board dialog, so both interactions stay available. */
+  const tryOpenPostOffice = (c: OnlineClient): boolean => {
+    if (!postOfficeInFront(c)) return false;
+    const features = realmFeatures();
+    if (features === null) {
+      showNotice(locale === "zh" ? "正在检查邮局服务…" : "CHECKING POST OFFICE…", NOTICE_EMPTY_MS);
+      return true;
+    }
+    if (features.postcards !== true) {
+      showNotice(locale === "zh" ? "邮局暂未开放" : "POST OFFICE UNAVAILABLE", NOTICE_EMPTY_MS);
+      return true;
+    }
+    setPostcardState(createPostcardMenuState());
+    setPostcardOpen(true);
+    sendSocial({ type: "socialGet" });
+    sendPostcard({ type: "postcardGet" });
+    return true;
+  };
+
   /** CIRCLE: talk to the resident in front (the server records the
    *  conversation), or read the notice board in front once it is born. */
   const pressTalk = (c: OnlineClient) => {
@@ -1843,6 +2010,7 @@ export function OnlineView() {
       pageLog(c, seed);
       return;
     }
+    if (tryOpenPostOffice(c)) return;
     const move = predictor.current.move;
     const rx = regionOf(move.tx), ry = regionOf(move.ty);
     const currentCoop = coopErrand();
@@ -2081,6 +2249,9 @@ export function OnlineView() {
     out.emoteBar = emoteOpen();
     out.social = socialOpen();
     out.socialScreen = socialState().screen;
+    out.postcard = postcardOpen();
+    out.postcardScreen = postcardState().screen;
+    out.postcardUnread = postcardStatus()?.unread ?? 0;
     out.invite = c?.inviteToken ?? "";
     out.realmPin = c?.realmPin ?? "";
     let remoteCount = 0;
@@ -2260,16 +2431,17 @@ export function OnlineView() {
     const wasDialogOpen = dialogOpen();
     const wasEmoteOpen = emoteOpen();
     const wasSocialOpen = socialOpen();
+    const wasPostcardOpen = postcardOpen();
     const wasMenuOpen = menuOpen();
     const selectDown = (buttons & BTN.SELECT) !== 0;
     const selectEdge = selectDown && !menuHeld;
-    if (selectEdge && !wasDialogOpen && !wasEmoteOpen && !wasSocialOpen) {
+    if (selectEdge && !wasDialogOpen && !wasEmoteOpen && !wasSocialOpen && !wasPostcardOpen) {
       setMenuOpen(!wasMenuOpen);
       if (wasMenuOpen) setDeleteArmed(false);
     }
     menuHeld = selectDown;
-    const inputCaptured = wasDialogOpen || wasEmoteOpen || wasSocialOpen || wasMenuOpen
-      || dialogOpen() || emoteOpen() || socialOpen() || menuOpen() || selectDown;
+    const inputCaptured = wasDialogOpen || wasEmoteOpen || wasSocialOpen || wasPostcardOpen || wasMenuOpen
+      || dialogOpen() || emoteOpen() || socialOpen() || postcardOpen() || menuOpen() || selectDown;
     const dpad = buttons & DPAD;
     if (dpad && !inputCaptured) {
       if (autoMode) auto.reset();
@@ -2327,6 +2499,13 @@ export function OnlineView() {
       else if (edge(buttons, BTN.SQUARE)) socialInput = "delete";
       else if (edge(buttons, BTN.TRIANGLE)) socialInput = "privacy";
       if (socialInput) stepSocial(socialInput);
+    } else if (wasPostcardOpen) {
+      let postcardInput: PostcardInput | null = null;
+      if (edge(buttons, BTN.UP)) postcardInput = "up";
+      else if (edge(buttons, BTN.DOWN)) postcardInput = "down";
+      else if (edge(buttons, BTN.CIRCLE)) postcardInput = "confirm";
+      else if (edge(buttons, BTN.CROSS)) postcardInput = "back";
+      if (postcardInput) stepPostcard(postcardInput);
     } else if (wasMenuOpen || menuOpen()) {
       if (edge(buttons, BTN.CROSS)) {
         setMenuOpen(false);
@@ -2391,6 +2570,7 @@ export function OnlineView() {
   refreshHud();
 
   const plate = () => statusPlate(viewport().w, viewport().h, debugOn());
+  const postcardBadge = () => postcardBadgeRect(viewport().w, viewport().h, debugOn());
   const gate = () => isDesktop ? linkGateRect(viewport().w, viewport().h) : gateRect(viewport().w, viewport().h);
   const menu = () => menuRect(viewport().w, viewport().h);
   const logBar = () => logBarRect(viewport().w, viewport().h);
@@ -2431,7 +2611,13 @@ export function OnlineView() {
       </View>
       <Show when={screen() === "world"}>
         <View class="absolute" style={{ posType: 1, ...rect(plate()), bgColor: "#0b1626", opacity: 0.84 }} debugName="online-plate" />
-        <Text class="text-xs" style={{ posType: 1, insetT: plate().y0 + 2, insetL: 12, width: plate().x1 - 18, textColor: "#ffe97a", lineHeight: 12, height: 12 }}>{statusText()}</Text>
+        <Text class="text-xs" style={{ posType: 1, insetT: plate().y0 + 2, insetL: 12, width: realmFeatures()?.postcards === true && (postcardStatus()?.unread ?? 0) > 0 ? postcardBadge().x0 - 14 : plate().x1 - 18, textColor: "#ffe97a", lineHeight: 12, height: 12 }}>{statusText()}</Text>
+        <Show when={realmFeatures()?.postcards === true && (postcardStatus()?.unread ?? 0) > 0}>
+          <View class="absolute" style={{ posType: 1, ...rect(postcardBadge()), bgColor: "#8d3152" }} debugName="online-postcard-badge" />
+          <Text class="text-xs" style={{ posType: 1, ...rect(postcardBadge()), textColor: "#fff0c8", textAlign: 2, lineHeight: 12 }} debugName="online-postcard-unread">
+            {`${locale === "zh" ? "信" : "MAIL"} ${postcardStatus()?.unread ?? 0}`}
+          </Text>
+        </Show>
         <Text class="text-xs" style={{ posType: 1, insetT: plate().y0 + 15, insetL: 12, width: plate().x1 - 18, textColor: "#9fd0ff", lineHeight: 12, height: 12 }}>{nameLine()}</Text>
         <Text class="text-xs" style={{ posType: 1, insetT: plate().y0 + 28, insetL: 12, textColor: "#c8d6ea", lineHeight: 12, height: 12 }}>{posText()}</Text>
         <Show when={debugOn()}>
@@ -2439,7 +2625,7 @@ export function OnlineView() {
         </Show>
         <Show when={!dialogOpen()}>
           <Show when={realmOn()}>
-            <Show when={dailyGoal() !== null && !menuOpen() && !socialOpen()}>
+            <Show when={dailyGoal() !== null && !menuOpen() && !socialOpen() && !postcardOpen()}>
               <View class="absolute" style={{ posType: 1, ...rect(dailyLayout().panel), bgColor: "#0b1626", opacity: 0.76 }} debugName="online-daily-goal" />
               <View class="absolute" style={{ ...rect(dailyLayout().goalText), bgColor: DAILY_GOAL_TRACK_COLOR }} debugName="online-daily-goal-progress-track" />
               <View class="absolute" style={{ ...rect(progressFill(dailyLayout().goalText)), bgColor: DAILY_GOAL_FILL_COLOR }} debugName="online-daily-goal-progress-fill" />
@@ -2516,6 +2702,14 @@ export function OnlineView() {
           <SocialPanel
             state={socialState()}
             data={socialMenuData()}
+            width={viewport().w}
+            height={viewport().h}
+          />
+        </Show>
+        <Show when={postcardOpen()}>
+          <PostcardPanel
+            state={postcardState()}
+            data={postcardMenuData()}
             width={viewport().w}
             height={viewport().h}
           />

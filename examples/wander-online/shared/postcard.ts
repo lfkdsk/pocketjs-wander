@@ -11,6 +11,7 @@ export const POSTCARD_MAILBOX_CAP = 32;
 export const POSTCARD_DAILY_SEND_LIMIT = 5;
 export const POSTCARD_TTL_DAYS = 30;
 export const POSTCARD_TTL_MS = POSTCARD_TTL_DAYS * 86_400_000;
+export const POSTCARD_PROTOCOL_VERSION = 1;
 
 export const POSTCARD_SENTENCE_IDS = [
   "hello",
@@ -44,6 +45,8 @@ export interface PostcardMessage {
 }
 
 export interface PostcardStatus {
+  /** Monotonic per-account mailbox revision. */
+  revision: number;
   unread: number;
   total: number;
   dailyRemaining: number;
@@ -116,11 +119,13 @@ export function parsePostcardDraft(value: unknown): PostcardDraft | null {
 
 export function parsePostcardStatus(value: unknown): PostcardStatus | null {
   if (!record(value)
+    || !safeInteger(value.revision, 0, Number.MAX_SAFE_INTEGER)
     || !safeInteger(value.unread, 0, POSTCARD_MAILBOX_CAP)
     || !safeInteger(value.total, 0, POSTCARD_MAILBOX_CAP)
     || value.unread > value.total
     || !safeInteger(value.dailyRemaining, 0, POSTCARD_DAILY_SEND_LIMIT)) return null;
   return {
+    revision: value.revision,
     unread: value.unread,
     total: value.total,
     dailyRemaining: value.dailyRemaining,

@@ -28,6 +28,15 @@ export function statusPlate(w: number, _h: number, debug: boolean): HudRect {
   return { x0: 6, y0: 4, x1: 6 + W, y1: 4 + H };
 }
 
+/** Compact server-authoritative unread counter. It sits inside the first
+ * status-plate row, including on phone portrait viewports, so it never
+ * depends on unused space to the right of the plate. */
+export function postcardBadgeRect(w: number, h: number, debug: boolean): HudRect {
+  const plate = statusPlate(w, h, debug);
+  const width = Math.min(78, Math.max(58, plate.x1 - plate.x0 - 132));
+  return { x0: plate.x1 - width - 4, y0: plate.y0 + 2, x1: plate.x1 - 4, y1: plate.y0 + 14 };
+}
+
 /** Width of a walker's name tag, centred on the sprite. A name is at most
  *  NAME_MAX (12) code points and the widest glyph of the 12 px slot is the
  *  12 px CJK cell, so 144 px of text plus a margin never truncates. */

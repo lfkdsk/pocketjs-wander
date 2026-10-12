@@ -52,15 +52,17 @@ describe("postcard shared contract", () => {
       expiresAt: 2_000,
       read: false,
     } as const;
-    expect(parsePostcardMailbox({ unread: 1, total: 1, dailyRemaining: 3, postcards: [first] })).toEqual({
+    expect(parsePostcardMailbox({ revision: 4, unread: 1, total: 1, dailyRemaining: 3, postcards: [first] })).toEqual({
+      revision: 4,
       unread: 1,
       total: 1,
       dailyRemaining: 3,
       postcards: [first],
     });
-    expect(parsePostcardMailbox({ unread: 0, total: 1, dailyRemaining: 3, postcards: [first] })).toBeNull();
-    expect(parsePostcardMailbox({ unread: 2, total: 2, dailyRemaining: 3, postcards: [first, first] })).toBeNull();
+    expect(parsePostcardMailbox({ revision: 4, unread: 0, total: 1, dailyRemaining: 3, postcards: [first] })).toBeNull();
+    expect(parsePostcardMailbox({ revision: 4, unread: 2, total: 2, dailyRemaining: 3, postcards: [first, first] })).toBeNull();
     expect(parsePostcardMailbox({
+      revision: 4,
       unread: 1,
       total: 1,
       dailyRemaining: 3,
@@ -69,15 +71,17 @@ describe("postcard shared contract", () => {
   });
 
   test("status counters stay inside server authority limits", () => {
-    expect(parsePostcardStatus({ unread: 1, total: 2, dailyRemaining: 4 })).toEqual({ unread: 1, total: 2, dailyRemaining: 4 });
-    expect(parsePostcardStatus({ unread: 3, total: 2, dailyRemaining: 4 })).toBeNull();
-    expect(parsePostcardStatus({ unread: 0, total: POSTCARD_MAILBOX_CAP + 1, dailyRemaining: 4 })).toBeNull();
-    expect(parsePostcardStatus({ unread: 0, total: 0, dailyRemaining: POSTCARD_DAILY_SEND_LIMIT + 1 })).toBeNull();
+    expect(parsePostcardStatus({ revision: 3, unread: 1, total: 2, dailyRemaining: 4 })).toEqual({ revision: 3, unread: 1, total: 2, dailyRemaining: 4 });
+    expect(parsePostcardStatus({ revision: -1, unread: 1, total: 2, dailyRemaining: 4 })).toBeNull();
+    expect(parsePostcardStatus({ revision: 3, unread: 3, total: 2, dailyRemaining: 4 })).toBeNull();
+    expect(parsePostcardStatus({ revision: 3, unread: 0, total: POSTCARD_MAILBOX_CAP + 1, dailyRemaining: 4 })).toBeNull();
+    expect(parsePostcardStatus({ revision: 3, unread: 0, total: 0, dailyRemaining: POSTCARD_DAILY_SEND_LIMIT + 1 })).toBeNull();
   });
 });
 
 describe("postcard controller flow", () => {
   const mailbox = {
+    revision: 3,
     unread: 1,
     total: 1,
     dailyRemaining: 4,
@@ -92,6 +96,7 @@ describe("postcard controller flow", () => {
     }],
   };
   const data: PostcardMenuData = {
+    status: mailbox,
     mailbox,
     friends: [{ githubId: 7, name: "Bob", presence: "offline", realm: null }],
     postmarks: [{ rx: -2, ry: 5, label: "Ancient Tree · Mossvale" }],
