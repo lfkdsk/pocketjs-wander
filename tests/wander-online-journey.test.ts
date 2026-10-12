@@ -714,6 +714,53 @@ describe("authoritative arena rules", () => {
     expect(improvements).toBe(1);
   });
 
+  test("a failed cooperative daily batch leaves both journeys and READY claims replayable", () => {
+    const clock = { now: 2_550_000 };
+    let batchCalls = 0;
+    let improvements = 0;
+    const arena = new RealmArena({
+      seed: SEED,
+      hz: 60,
+      now: () => clock.now,
+      hooks: {
+        persistCoopReady: () => {},
+        improveRegion: () => { improvements++; return null; },
+        contributeDailyBatch: () => {
+          batchCalls++;
+          throw new Error("injected daily batch failure");
+        },
+      },
+    });
+    const origin = regionHub(SEED, 0, 0);
+    const errand = townErrand(SEED, 0, 0)!;
+    const a = arena.add("A", 1, 0, { tx: origin.x, ty: origin.y }, { coopIdentity: "account-a" });
+    const b = arena.add("B", 2, 0, { tx: origin.x, ty: origin.y }, { coopIdentity: "account-b" });
+    for (const player of [a, b]) {
+      expect(arena.applyCommand(
+        player,
+        { kind: COMMAND.acceptCoopErrand, rx: 0, ry: 0, extra: 0 },
+        clock.now,
+      )).toBe(JOURNEY_EVENT.accepted);
+      teleport(player, errand.tx, errand.ty);
+    }
+    expect(arena.applyCommand(
+      a,
+      { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 },
+      clock.now,
+    )).toBe(JOURNEY_EVENT.coopWaiting);
+    expect(() => arena.applyCommand(
+      b,
+      { kind: COMMAND.readyCoopErrand, rx: errand.trx, ry: errand.try, extra: 0 },
+      clock.now,
+    )).toThrow("injected daily batch failure");
+    expect(batchCalls).toBe(1);
+    expect(improvements).toBe(0);
+    expect(a.journey.errand).toEqual({ rx: 0, ry: 0 });
+    expect(b.journey.errand).toEqual({ rx: 0, ry: 0 });
+    expect(a.coopReady).not.toBeNull();
+    expect(b.coopReady).not.toBeNull();
+  });
+
   test("different offers to the same target do not match or share anonymous counts", () => {
     const clock = { now: 2_650_000 };
     const arena = arenaAt(SEED, clock);

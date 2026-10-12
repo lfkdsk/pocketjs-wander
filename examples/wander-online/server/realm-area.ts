@@ -790,6 +790,27 @@ export class RealmArena {
       [partner, partner.journeyRevision],
       [player, player.journeyRevision],
     ]);
+    const dailyEntries = ([[partner, partnerErrand], [player, mineErrand]] as const).map(([courier, errand]) => ({
+      player: courier,
+      contribution: {
+        sourceId: deliveryDailySourceId(sourceRevisions.get(courier)!, errand),
+        kind: "delivery" as const,
+        offerRx: errand.orx,
+        offerRy: errand.ory,
+        targetRx: errand.trx,
+        targetRy: errand.try,
+      },
+    }));
+    // Persist the already-validated pair before mutating arena/readiness state.
+    // A later failure or host loss can replay the pair, but stable fact ids
+    // make that replay a no-op instead of losing or double-counting a courier.
+    if (this.hooks.contributeDailyBatch) {
+      this.hooks.contributeDailyBatch(dailyEntries, nowMs);
+    } else {
+      for (const entry of dailyEntries) {
+        this.hooks.contributeDaily?.(entry.contribution, nowMs, entry.player);
+      }
+    }
 
     // Clear both durable claims before changing either journey. A replay can
     // then observe neither an active cooperative errand nor a ready pair.
@@ -804,24 +825,6 @@ export class RealmArena {
     // A storage-backed host first guarantees that this physically occupied
     // target has a region row, so its compare-and-set cannot silently vanish.
     this.improve(mine.targetRx, mine.targetRy, 1, nowMs, player);
-    const dailyEntries = ([[partner, partnerErrand], [player, mineErrand]] as const).map(([courier, errand]) => ({
-      player: courier,
-      contribution: {
-        sourceId: deliveryDailySourceId(sourceRevisions.get(courier)!, errand),
-        kind: "delivery" as const,
-        offerRx: errand.orx,
-        offerRy: errand.ory,
-        targetRx: errand.trx,
-        targetRy: errand.try,
-      },
-    }));
-    if (this.hooks.contributeDailyBatch) {
-      this.hooks.contributeDailyBatch(dailyEntries, nowMs);
-    } else {
-      for (const entry of dailyEntries) {
-        this.hooks.contributeDaily?.(entry.contribution, nowMs, entry.player);
-      }
-    }
     return true;
   }
 
