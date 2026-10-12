@@ -25,12 +25,23 @@ export const POSTCARD_SENTENCE_IDS = [
 export type PostcardSentenceId = typeof POSTCARD_SENTENCE_IDS[number];
 export type PostcardLocale = "en" | "zh";
 
-export interface PostcardDraft {
-  targetGithubId: number;
+export type PostcardTarget =
+  | { targetGithubId: number; replyToPostcardId?: never }
+  | { targetGithubId?: never; replyToPostcardId: string };
+
+export type PostcardDraft = PostcardTarget & {
   sentenceId: PostcardSentenceId;
   /** Coordinates are request-only proof. They never enter a recipient
    * mailbox response or the persisted postcard body. */
   postmark: { rx: number; ry: number } | null;
+};
+
+/** A parsed send control. New clients always supply an id; null is reserved
+ * for an explicitly enabled compatibility path for legacy clients. */
+export type PostcardSendRequest = PostcardDraft & { requestId: string | null };
+
+export interface ParsePostcardSendRequestOptions {
+  allowLegacy?: boolean;
 }
 
 export interface PostcardMessage {
@@ -87,6 +98,7 @@ const SENTENCES: Record<PostcardSentenceId, Record<PostcardLocale, string>> = {
 };
 
 const POSTCARD_ID_RE = /^[A-Za-z0-9_-]{8,80}$/;
+const POSTCARD_REQUEST_ID_RE = /^[A-Za-z0-9_-]{16,80}$/;
 
 export function postcardSentenceId(value: unknown): value is PostcardSentenceId {
   return typeof value === "string" && (POSTCARD_SENTENCE_IDS as readonly string[]).includes(value);
@@ -96,13 +108,46 @@ export function formatPostcardSentence(id: PostcardSentenceId, locale: PostcardL
   return SENTENCES[id][locale];
 }
 
+export function postcardRequestId(value: unknown): value is string {
+  return typeof value === "string" && POSTCARD_REQUEST_ID_RE.test(value);
+}
+
+/** Create a wire-safe id without depending on a host-specific crypto API.
+ * Tests and deterministic hosts may inject both sources. Account scoping and
+ * payload-conflict detection remain server responsibilities. */
+export function createPostcardRequestId(
+  now: () => number = () => Date.now(),
+  random: () => number = () => Math.random(),
+): string {
+  const rawNow = now();
+  const millis = Number.isFinite(rawNow) && rawNow > 0
+    ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(rawNow))
+    : 0;
+  const word = (): string => {
+    const raw = random();
+    const unit = Number.isFinite(raw) ? Math.max(0, Math.min(1 - Number.EPSILON, raw)) : 0;
+    return Math.floor(unit * 0x1_0000_0000).toString(36).padStart(7, "0");
+  };
+  return `pc_${millis.toString(36)}_${word()}${word()}`;
+}
+
 /** Strict request parser used on both the client boundary tests and hosted
  * Room. Unknown fields are harmless, but no string supplied by a client can
  * become stored content. */
 export function parsePostcardDraft(value: unknown): PostcardDraft | null {
   if (!record(value)
-    || !safeInteger(value.targetGithubId, 1, Number.MAX_SAFE_INTEGER)
     || !postcardSentenceId(value.sentenceId)) return null;
+  const hasFriend = Object.hasOwn(value, "targetGithubId");
+  const hasReply = Object.hasOwn(value, "replyToPostcardId");
+  if (hasFriend === hasReply) return null;
+  let target: PostcardTarget;
+  if (hasFriend) {
+    if (!safeInteger(value.targetGithubId, 1, Number.MAX_SAFE_INTEGER)) return null;
+    target = { targetGithubId: value.targetGithubId };
+  } else {
+    if (typeof value.replyToPostcardId !== "string" || !POSTCARD_ID_RE.test(value.replyToPostcardId)) return null;
+    target = { replyToPostcardId: value.replyToPostcardId };
+  }
   let postmark: PostcardDraft["postmark"];
   if (value.postmark === null) {
     postmark = null;
@@ -114,10 +159,25 @@ export function parsePostcardDraft(value: unknown): PostcardDraft | null {
     return null;
   }
   return {
-    targetGithubId: value.targetGithubId,
+    ...target,
     sentenceId: value.sentenceId,
     postmark,
   };
+}
+
+/** Strict send-control parser. Missing request ids are rejected unless the
+ * caller deliberately enables the bounded legacy deployment window. */
+export function parsePostcardSendRequest(
+  value: unknown,
+  options: ParsePostcardSendRequestOptions = {},
+): PostcardSendRequest | null {
+  const draft = parsePostcardDraft(value);
+  if (!draft || !record(value)) return null;
+  if (!Object.hasOwn(value, "requestId")) {
+    return options.allowLegacy === true ? { ...draft, requestId: null } : null;
+  }
+  if (!postcardRequestId(value.requestId)) return null;
+  return { ...draft, requestId: value.requestId };
 }
 
 export function parsePostcardStatus(value: unknown): PostcardStatus | null {

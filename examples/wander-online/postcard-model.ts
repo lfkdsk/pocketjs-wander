@@ -55,13 +55,18 @@ export interface PostcardMenuData {
   friends: readonly FriendView[];
   postmarks: readonly PostmarkOption[];
   locale: PostcardLocale;
+  repliesEnabled: boolean;
 }
+
+export type PostcardRecipient =
+  | { kind: "friend"; githubId: number; name: string }
+  | { kind: "reply"; postcardId: string; name: string };
 
 export interface PostcardMenuState {
   screen: PostcardScreen;
   cursor: number;
   page: number;
-  recipient: { githubId: number; name: string } | null;
+  recipient: PostcardRecipient | null;
   sentenceId: PostcardSentenceId;
   postmark: PostmarkOption | null;
   readingId: string | null;
@@ -121,6 +126,7 @@ const COPY = {
     read: "READ",
     new: "NEW",
     from: "FROM",
+    reply: "REPLY",
     open: "OPEN",
     select: "SELECT",
     close: "CLOSE",
@@ -150,6 +156,7 @@ const COPY = {
     read: "已读",
     new: "未读",
     from: "寄件人",
+    reply: "回信",
     open: "打开",
     select: "选择",
     close: "关闭",
@@ -206,6 +213,7 @@ export function postcardMenuRows(state: PostcardMenuState, data: PostcardMenuDat
         row("read-from", words.from, postcard.senderName, "accent"),
         row("read-message", formatPostcardSentence(postcard.sentenceId, data.locale), "", "normal", { wide: true }),
         row("read-postmark", postcard.postmark ? `${words.postmark}: ${postcard.postmark}` : words.noPostmark, "", "muted", { wide: true }),
+        ...(data.repliesEnabled ? [row("read-reply", words.reply, "", "accent", { wide: true })] : []),
       ];
     }
     case "recipients": {
@@ -282,6 +290,9 @@ export function reducePostcardMenu(
     return { state: { ...current, cursor, page: Math.floor(cursor / SOCIAL_PAGE_ROWS) }, action: null };
   }
   if (input === "back") {
+    if (current.screen === "phrases" && current.recipient?.kind === "reply") {
+      return { state: enter(current, "read", data.repliesEnabled ? 3 : 0), action: null };
+    }
     const previous: Partial<Record<PostcardScreen, PostcardScreen>> = {
       inbox: "home",
       read: "inbox",
@@ -308,9 +319,24 @@ export function reducePostcardMenu(
       action: postcard.read ? null : { type: "read", id: postcard.id },
     };
   }
+  if (current.screen === "read" && selected?.key === "read-reply") {
+    const postcard = reading(current, data);
+    if (postcard && data.repliesEnabled) {
+      return {
+        state: enter({
+          ...current,
+          recipient: { kind: "reply", postcardId: postcard.id, name: postcard.senderName },
+        }, "phrases"),
+        action: null,
+      };
+    }
+  }
   if (current.screen === "recipients" && selected?.friend) {
     return {
-      state: enter({ ...current, recipient: { githubId: selected.friend.githubId, name: selected.friend.name } }, "phrases"),
+      state: enter({
+        ...current,
+        recipient: { kind: "friend", githubId: selected.friend.githubId, name: selected.friend.name },
+      }, "phrases"),
       action: null,
     };
   }
@@ -321,12 +347,15 @@ export function reducePostcardMenu(
     return { state: enter({ ...current, postmark: selected.postmark ?? null }, "review", 3), action: null };
   }
   if (current.screen === "review" && selected?.key === "review-send" && current.recipient) {
+    const target = current.recipient.kind === "friend"
+      ? { targetGithubId: current.recipient.githubId }
+      : { replyToPostcardId: current.recipient.postcardId };
     return {
       state: current,
       action: {
         type: "send",
         draft: {
-          targetGithubId: current.recipient.githubId,
+          ...target,
           sentenceId: current.sentenceId,
           postmark: current.postmark ? { rx: current.postmark.rx, ry: current.postmark.ry } : null,
         },

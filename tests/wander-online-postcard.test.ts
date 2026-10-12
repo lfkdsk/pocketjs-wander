@@ -3,10 +3,13 @@ import {
   POSTCARD_DAILY_SEND_LIMIT,
   POSTCARD_MAILBOX_CAP,
   POSTCARD_SENTENCE_IDS,
+  createPostcardRequestId,
   formatPostcardSentence,
   parsePostcardDraft,
   parsePostcardMailbox,
+  parsePostcardSendRequest,
   parsePostcardStatus,
+  postcardRequestId,
 } from "../examples/wander-online/shared/postcard.ts";
 import {
   createPostcardMenuState,
@@ -36,6 +39,58 @@ describe("postcard shared contract", () => {
     expect(parsePostcardDraft({ targetGithubId: 42, sentenceId: "custom", postmark: null })).toBeNull();
     expect(parsePostcardDraft({ targetGithubId: 42, sentenceId: "hello", postmark: { rx: 2 ** 31, ry: 0 } })).toBeNull();
     expect(parsePostcardDraft({ targetGithubId: 0, sentenceId: "hello", postmark: null })).toBeNull();
+    expect(parsePostcardDraft({ replyToPostcardId: "pc_abcdefgh1234", sentenceId: "hello", postmark: null })).toEqual({
+      replyToPostcardId: "pc_abcdefgh1234",
+      sentenceId: "hello",
+      postmark: null,
+    });
+    expect(parsePostcardDraft({
+      targetGithubId: 42,
+      replyToPostcardId: "pc_abcdefgh1234",
+      sentenceId: "hello",
+      postmark: null,
+    })).toBeNull();
+    expect(parsePostcardDraft({ sentenceId: "hello", postmark: null })).toBeNull();
+    expect(parsePostcardDraft({ replyToPostcardId: "short", sentenceId: "hello", postmark: null })).toBeNull();
+  });
+
+  test("send controls require a bounded request id unless legacy parsing is explicit", () => {
+    const random = [0.25, 0.75];
+    const requestId = createPostcardRequestId(() => 1_700_000_000_123, () => random.shift()!);
+    expect(postcardRequestId(requestId)).toBe(true);
+    expect(requestId).toBe(createPostcardRequestId(() => 1_700_000_000_123, (() => {
+      const values = [0.25, 0.75];
+      return () => values.shift()!;
+    })()));
+
+    const friend = { targetGithubId: 42, sentenceId: "thanks", postmark: null } as const;
+    expect(parsePostcardSendRequest({ ...friend, requestId })).toEqual({ ...friend, requestId });
+    expect(parsePostcardSendRequest(friend)).toBeNull();
+    expect(parsePostcardSendRequest(friend, { allowLegacy: true })).toEqual({ ...friend, requestId: null });
+    expect(parsePostcardSendRequest({ ...friend, requestId: null }, { allowLegacy: true })).toBeNull();
+
+    for (const bad of ["a".repeat(15), "a".repeat(81), `${"a".repeat(15)}!`]) {
+      expect(parsePostcardSendRequest({ ...friend, requestId: bad })).toBeNull();
+    }
+    for (const valid of ["a".repeat(16), "Z_-0".repeat(20)]) {
+      expect(parsePostcardSendRequest({ ...friend, requestId: valid })?.requestId).toBe(valid);
+    }
+    expect(parsePostcardSendRequest({
+      ...friend,
+      replyToPostcardId: "pc_abcdefgh1234",
+      requestId,
+    })).toBeNull();
+    expect(parsePostcardSendRequest({
+      replyToPostcardId: "pc_abcdefgh1234",
+      sentenceId: "thanks",
+      postmark: { rx: -2, ry: 5 },
+      requestId,
+    })).toEqual({
+      replyToPostcardId: "pc_abcdefgh1234",
+      sentenceId: "thanks",
+      postmark: { rx: -2, ry: 5 },
+      requestId,
+    });
   });
 
   test("the bilingual phrase book is complete and never accepts free text", () => {
@@ -107,6 +162,7 @@ describe("postcard controller flow", () => {
     friends: [{ githubId: 7, name: "Bob", presence: "offline", realm: null }],
     postmarks: [{ rx: -2, ry: 5, label: "Ancient Tree · Mossvale" }],
     locale: "en",
+    repliesEnabled: true,
   };
 
   test("reading one unread card emits exactly one server action", () => {
@@ -148,6 +204,46 @@ describe("postcard controller flow", () => {
     });
   });
 
+  test("reply composes from the opened card and returns to it from phrase selection", () => {
+    let state = reducePostcardMenu(createPostcardMenuState(), "confirm", data).state;
+    state = reducePostcardMenu(state, "confirm", data).state;
+    expect(state.screen).toBe("read");
+    expect(postcardMenuRows(state, data).map((entry) => entry.label)).toContain("REPLY");
+    for (let i = 0; i < 3; i++) state = reducePostcardMenu(state, "down", data).state;
+    state = reducePostcardMenu(state, "confirm", data).state;
+    expect(state.screen).toBe("phrases");
+    expect(state.recipient).toEqual({ kind: "reply", postcardId: "pc_abcdefgh1234", name: "Alice" });
+
+    const returned = reducePostcardMenu(state, "back", data).state;
+    expect(returned.screen).toBe("read");
+    expect(returned.cursor).toBe(3);
+
+    state = reducePostcardMenu(returned, "confirm", data).state;
+    state = reducePostcardMenu(state, "down", data).state;
+    state = reducePostcardMenu(state, "down", data).state;
+    state = reducePostcardMenu(state, "confirm", data).state;
+    expect(state.sentenceId).toBe("thanks");
+    state = reducePostcardMenu(state, "down", data).state;
+    state = reducePostcardMenu(state, "confirm", data).state;
+    expect(state.screen).toBe("review");
+    expect(postcardMenuRows(state, data).find((entry) => entry.key === "review-to")?.detail).toBe("Alice");
+    expect(reducePostcardMenu(state, "confirm", data).action).toEqual({
+      type: "send",
+      draft: {
+        replyToPostcardId: "pc_abcdefgh1234",
+        sentenceId: "thanks",
+        postmark: { rx: -2, ry: 5 },
+      },
+    });
+  });
+
+  test("reply rows are capability-gated and bilingual", () => {
+    const read = { ...createPostcardMenuState(), screen: "read" as const, readingId: "pc_abcdefgh1234" };
+    expect(postcardMenuRows(read, { ...data, repliesEnabled: false }).map((entry) => entry.label)).not.toContain("REPLY");
+    expect(postcardMenuRows(read, data).map((entry) => entry.label)).toContain("REPLY");
+    expect(postcardMenuRows(read, { ...data, locale: "zh" }).map((entry) => entry.label)).toContain("回信");
+  });
+
   test("Chinese rows use translated phrase and post-office copy", () => {
     const zh: PostcardMenuData = { ...data, locale: "zh" };
     expect(postcardMenuRows(createPostcardMenuState(), zh).map((entry) => entry.label)).toEqual([
@@ -166,7 +262,7 @@ describe("postcard controller flow", () => {
     const state = {
       ...createPostcardMenuState(),
       screen: "review" as const,
-      recipient: { githubId: 7, name: "Bob" },
+      recipient: { kind: "friend" as const, githubId: 7, name: "Bob" },
       sentenceId: "thanks" as const,
     };
     const message = postcardMenuRows(state, data).find((entry) => entry.key === "review-message")!.label;
