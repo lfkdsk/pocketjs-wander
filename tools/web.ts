@@ -9,6 +9,7 @@
 // Every URL in the generated site is relative, so it works from any
 // subpath (GitHub Pages serves this repository at /pocketjs-wander/).
 
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { writeOnlineUrl } from "./lib/online-url.ts";
 
@@ -30,4 +31,28 @@ const proc = Bun.spawn({
   cwd: root,
   stdio: ["inherit", "inherit", "inherit"],
 });
-process.exit(await proc.exited);
+const exitCode = await proc.exited;
+if (exitCode !== 0) process.exit(exitCode);
+
+// Wander Online adds one more bottom HUD strip than the generic web host
+// knows about. In landscape immersive play, lift this page's two floating
+// pad clusters just above that strip; portrait and every other game retain
+// the kit defaults. Keep this as a post-build page class/CSS override so the
+// shared kit submodule remains unmodified.
+if (args.includes("wander-online")) {
+  const pagePath = join(root, "dist", "web", "wander-online", "index.html");
+  const body = '<body class="player-page">';
+  const html = readFileSync(pagePath, "utf8");
+  if (!html.includes(body)) throw new Error("wander-online web page body marker changed");
+  writeFileSync(pagePath, html.replace(body, '<body class="player-page wander-online-page">'));
+  appendFileSync(join(root, "dist", "web", "site.css"), `
+
+/* Wander Online's daily-goal strip occupies the band above LOG. */
+@media (orientation: landscape) {
+  body.wander-online-page.immersive .pad .dpad,
+  body.wander-online-page.immersive .pad .actions {
+    transform: translateY(-16px);
+  }
+}
+`);
+}

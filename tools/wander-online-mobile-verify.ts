@@ -7,7 +7,8 @@
 //
 // The verifier starts loopback web, GitHub-stub and game servers. Each phone
 // orientation signs a fresh account in through the real OAuth callback,
-// creates its character through the page text box, exercises the co-op board,
+// creates its character through the page text box, verifies the realm daily
+// goal HUD and notice-board line, exercises the co-op board,
 // friend-waiting, READY countdown/cancel surfaces, opens the social home and
 // Friends panels and emote picker, mints/copies/closes an invite, and signs
 // out. Landscape additionally uses immersive play and proves the floating
@@ -18,12 +19,14 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } f
 import { join, resolve, sep } from "node:path";
 import { startServer } from "../examples/wander-online/server/server.ts";
 import {
+  dailyGoalLayout,
   errandBarRect,
   helpRect,
   logBarRect,
   statusPlate,
   type HudRect,
 } from "../examples/wander-online/hud.ts";
+import { formatDailyGoal, type DailyGoalSnapshot } from "../examples/wander-online/shared/daily-goal.ts";
 import { isCooperativeErrand } from "../examples/wander-online/net/journey.ts";
 import { COMMAND } from "../examples/wander-online/net/protocol.ts";
 import { plaqueOf } from "../examples/wander-online/net/npc.ts";
@@ -76,6 +79,10 @@ interface OnlineState {
   errand: string;
   coopRemaining: number;
   coopWaitingFriends: number;
+  dailyGoal: DailyGoalSnapshot | null;
+  dailyGoalText: string;
+  dailyGoalCountdown: string;
+  dailyGoalRemaining: number;
   x: number;
   y: number;
   roster: Record<string, { name: string; look: number }>;
@@ -386,6 +393,7 @@ async function main(): Promise<void> {
     })()`);
     const critical = [
       { name: "status", rect: project(statusPlate(browser.logical.width, browser.logical.height, false), browser.screen, browser.logical.width, browser.logical.height) },
+      { name: "daily", rect: project(dailyGoalLayout(browser.logical.width, browser.logical.height).panel, browser.screen, browser.logical.width, browser.logical.height) },
       { name: "log", rect: project(logBarRect(browser.logical.width, browser.logical.height), browser.screen, browser.logical.width, browser.logical.height) },
       { name: "errand", rect: project(errandBarRect(browser.logical.width, browser.logical.height), browser.screen, browser.logical.width, browser.logical.height) },
       { name: "help", rect: project(helpRect(browser.logical.width, browser.logical.height), browser.screen, browser.logical.width, browser.logical.height) },
@@ -421,7 +429,7 @@ async function main(): Promise<void> {
           .filter((control) => control.selector.startsWith('[data-button="') && intersects(control.rect, socialPanel))
           .map((control) => control.label)
       : [];
-    check(`${phase}: controls clear critical HUD`, overlaps.length === 0, overlaps.length ? overlaps.join(", ") : "status/log/errand/help clear");
+    check(`${phase}: controls clear critical HUD`, overlaps.length === 0, overlaps.length ? overlaps.join(", ") : "status/daily/log/errand/help clear");
     check(`${phase}: controls leave the central playfield clear`, centreOverlaps.length === 0, centreOverlaps.length ? centreOverlaps.join(", ") : "central 50% clear");
     if (socialPanel) {
       check(`${phase}: controls clear the open social panel`, socialOverlaps.length === 0,
@@ -496,6 +504,20 @@ async function main(): Promise<void> {
       check(`${phase}: all game buttons fit the first viewport`, firstViewport, `${buttonNames.length} buttons reachable without scrolling`);
     }
     const controls = await layoutReport();
+
+    const dailyState = await waitFor<OnlineState | null>(
+      "authoritative daily goal",
+      "globalThis.__onlineState ?? null",
+      (candidate) => candidate?.dailyGoal !== null && !!candidate?.dailyGoalText && candidate.dailyGoalRemaining > 0,
+    );
+    const expectedDailyText = formatDailyGoal(dailyState!.dailyGoal!, locale);
+    check(`${phase}: daily goal uses the complete localized copy`, dailyState!.dailyGoalText === expectedDailyText,
+      dailyState!.dailyGoalText);
+    check(`${phase}: daily goal exposes a UTC countdown`, dailyState!.dailyGoalCountdown.endsWith(" UTC"),
+      dailyState!.dailyGoalCountdown);
+    const dailyGreenPixels = await checkScreenColor("daily goal text", [0x8f, 0xe3, 0xb0], 8);
+    const dailyCountdownPixels = await checkScreenColor("daily goal countdown", [0x9f, 0xd0, 0xff], 8);
+    const dailyShot = await screenshot(`${label}-${width}x${height}-daily-${locale}-progress`);
 
     // Put this verified account at a deterministic co-op notice board. The
     // harness ages that region row so the board is present immediately; the
@@ -594,8 +616,13 @@ async function main(): Promise<void> {
       boardReplyExtra.length ? boardReplyExtra.join(", ") : "count only");
     await pushJson(boardReply);
     const boardLayout = await layoutReport();
-    const boardDialogPixels = await checkScreenColor("co-op board dialog", [0x0b, 0x16, 0x26], 500);
-    const boardTextPixels = await checkScreenColor("co-op board text", [0xe7, 0xed, 0xf8], 10);
+    const boardDialogPixels = await checkScreenColor("daily board dialog", [0x0b, 0x16, 0x26], 500);
+    const boardTextPixels = await checkScreenColor("daily board text", [0xe7, 0xed, 0xf8], 10);
+    const dailyBoardShot = await screenshot(`${label}-${width}x${height}-daily-${locale}-board`);
+    // The daily line occupies the fourth row. The anonymous co-op count is
+    // the following page, so exercise and retain both pages before closing.
+    await touch('[data-button="CIRCLE"]', 140);
+    await waitFor<boolean>("co-op board second page", "globalThis.__onlineState?.dialog === true", Boolean);
     const boardShot = await screenshot(`${label}-${width}x${height}-coop-${locale}-board-count`);
     await touch('[data-button="CIRCLE"]', 140);
     await waitFor<boolean>("co-op board dialog closed", "globalThis.__onlineState?.dialog === false", Boolean);
@@ -615,6 +642,7 @@ async function main(): Promise<void> {
       coopErrands: true,
       coopPartnerFinding: true,
       discoveryLeaderboard: false,
+      dailyGoals: true,
     });
     await pushJson({
       type: "socialSnapshot",
@@ -798,6 +826,14 @@ async function main(): Promise<void> {
       inviteTargets,
       invite,
       controls,
+      dailyGoal: {
+        snapshot: dailyState!.dailyGoal,
+        text: dailyState!.dailyGoalText,
+        countdown: dailyState!.dailyGoalCountdown,
+        remaining: dailyState!.dailyGoalRemaining,
+        textPixels: dailyGreenPixels,
+        countdownPixels: dailyCountdownPixels,
+      },
       coopPartnerFinding: {
         board: {
           offer,
@@ -830,6 +866,8 @@ async function main(): Promise<void> {
       socialFriendsOverlaps: socialFriendsLayout.socialOverlaps,
       screenshots: [
         nameShot,
+        dailyShot,
+        dailyBoardShot,
         boardShot,
         friendPromptShot,
         socialShot,
