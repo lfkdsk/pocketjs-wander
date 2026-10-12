@@ -10,10 +10,11 @@
 // creates its character through the page text box, verifies the realm daily
 // goal HUD and notice-board line, exercises the co-op board,
 // friend-waiting, READY countdown/cancel surfaces, opens the social home and
-// Friends panels and emote picker, mints/copies/closes an invite, and signs
-// out. Landscape additionally uses immersive play and proves the floating
-// controls clear the game's status, log, errand and help HUD rectangles plus
-// the open social panel. PNGs and report.json are retained for inspection.
+// Friends panels, the post-office mailbox and postcard review, and the emote
+// picker, mints/copies/closes an invite, and signs out. Landscape additionally
+// uses immersive play and proves the floating controls clear the game's
+// status, log, errand and help HUD rectangles plus each open modal panel.
+// PNGs and report.json are retained for inspection.
 
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
@@ -72,6 +73,9 @@ interface OnlineState {
   emoteBar: boolean;
   social: boolean;
   socialScreen: string;
+  postcard: boolean;
+  postcardScreen: string;
+  postcardUnread: number;
   invite: string;
   myId: number;
   realmId: string;
@@ -634,6 +638,9 @@ async function main(): Promise<void> {
           item: han(0x5305, 0x88f9),
         }
       : { name: "Mia", targetTown: "Moss", item: "parcel" };
+    const penPal = locale === "zh"
+      ? { githubId: 73, name: han(0x661f, 0x53cb) }
+      : { githubId: 73, name: "Ari" };
     const expiresAt = Date.now() + 30_000;
     await pushJson({
       type: "realmFeatures",
@@ -643,6 +650,7 @@ async function main(): Promise<void> {
       coopPartnerFinding: true,
       discoveryLeaderboard: false,
       dailyGoals: true,
+      postcards: true,
     });
     await pushJson({
       type: "socialSnapshot",
@@ -654,6 +662,11 @@ async function main(): Promise<void> {
         presence: "online",
         realm: joined.realmId,
         coopWaiting: { targetTown: friend.targetTown, item: friend.item, expiresAt },
+      }, {
+        githubId: penPal.githubId,
+        name: penPal.name,
+        presence: "offline",
+        realm: null,
       }],
       incoming: [],
       outgoing: [],
@@ -667,6 +680,92 @@ async function main(): Promise<void> {
       item: friend.item,
       expiresAt,
     });
+    const postcardSentAt = Date.now() - 60_000;
+    await pushJson({
+      type: "postcardMailbox",
+      v: 1,
+      revision: 7,
+      unread: 1,
+      total: 1,
+      dailyRemaining: 4,
+      postcards: [{
+        id: `pc_mobile_${label}`,
+        senderName: locale === "zh" ? han(0x65c5, 0x53cb) : "Nia",
+        sentenceId: "thanks",
+        postmark: locale === "zh" ? han(0x53e4, 0x6811) : "Ancient Tree",
+        sentAt: postcardSentAt,
+        expiresAt: postcardSentAt + 30 * 86_400_000,
+        read: false,
+      }],
+    });
+    const unreadState = await waitFor<OnlineState | null>(
+      "authoritative postcard unread badge",
+      "globalThis.__onlineState ?? null",
+      (candidate) => candidate?.postcardUnread === 1,
+    );
+    check(`${phase}: unread postcard count is server supplied`, unreadState!.postcardUnread === 1,
+      `${unreadState!.postcardUnread} unread`);
+    const postcardBadgePixels = await checkScreenColor("postcard unread badge", [0x8d, 0x31, 0x52], 40);
+    const postcardBadgeTextPixels = await checkScreenColor("postcard unread label", [0xff, 0xf0, 0xc8], 3);
+    const postcardUnreadShot = await screenshot(`${label}-${width}x${height}-postcard-${locale}-unread`);
+
+    // CROSS at the same born notice board opens its postal counter. Read the
+    // offline card, then compose to a different offline mutual friend using
+    // only controller input and a preset phrase. The loopback server does not
+    // advertise hosted mail, so bounded hosted-shaped responses are injected
+    // while every client transition and outgoing request remains production.
+    await touch('[data-button="CROSS"]', 140);
+    await waitFor<boolean>("post office", "globalThis.__onlineState?.postcard === true", Boolean);
+    check(`${phase}: physical board opens the post office`,
+      await evaluate<string>('globalThis.__onlineState?.postcardScreen || ""') === "home", "home");
+    const postcardHomeLayout = await layoutReport(true);
+    await touch('[data-button="CIRCLE"]', 140);
+    await waitFor<boolean>("postcard inbox", 'globalThis.__onlineState?.postcardScreen === "inbox"', Boolean);
+    await touch('[data-button="CIRCLE"]', 140);
+    await waitFor<boolean>("postcard reading view", 'globalThis.__onlineState?.postcardScreen === "read"', Boolean);
+    const postcardReadFrame = await waitFor<Record<string, unknown> | null>(
+      "postcard read request",
+      `(() => {
+        const frames = globalThis.__mobileVerifyTextFrames ?? [];
+        for (let i = frames.length - 1; i >= 0; i--) if (frames[i]?.type === "postcardRead") return frames[i];
+        return null;
+      })()`,
+      (candidate) => candidate?.id === `pc_mobile_${label}`,
+    );
+    const postcardReadLayout = await layoutReport(true);
+    const postcardReadPanelPixels = await checkScreenColor("postcard read panel", [0x17, 0x24, 0x3b], 500);
+    const postcardReadTitlePixels = await checkScreenColor("postcard read title", [0xff, 0xe1, 0x7a], 8);
+    const postcardReadInkPixels = await checkScreenColor("postcard read ink", [0xe8, 0xef, 0xff], 8);
+    const postcardReadAccentPixels = await checkScreenColor("postcard read accent", [0x9f, 0xd0, 0xff], 4);
+    const postcardReadSelectedPixels = await checkScreenColor("postcard selected row", [0x35, 0x49, 0x68], 80);
+    const postcardReadShot = await screenshot(`${label}-${width}x${height}-postcard-${locale}-read`);
+
+    await touch('[data-button="CROSS"]', 140); // read -> inbox
+    await touch('[data-button="CROSS"]', 140); // inbox -> home
+    await touch('[data-button="DOWN"]', 140); // send
+    await touch('[data-button="CIRCLE"]', 140); // recipients
+    await waitFor<boolean>("postcard recipients", 'globalThis.__onlineState?.postcardScreen === "recipients"', Boolean);
+    await touch('[data-button="DOWN"]', 140); // offline pen pal
+    await touch('[data-button="CIRCLE"]', 140); // phrases
+    await touch('[data-button="DOWN"]', 140);
+    await touch('[data-button="DOWN"]', 140); // longest preset: thanks
+    await touch('[data-button="CIRCLE"]', 140); // postmarks
+    await touch('[data-button="CIRCLE"]', 140); // no postmark -> review
+    await waitFor<boolean>("postcard review", 'globalThis.__onlineState?.postcardScreen === "review"', Boolean);
+    const postcardReviewLayout = await layoutReport(true);
+    const postcardReviewPanelPixels = await checkScreenColor("postcard review panel", [0x17, 0x24, 0x3b], 500);
+    const postcardReviewTitlePixels = await checkScreenColor("postcard review title", [0xff, 0xe1, 0x7a], 8);
+    const postcardReviewInkPixels = await checkScreenColor("postcard review ink", [0xe8, 0xef, 0xff], 8);
+    const postcardReviewSelectedPixels = await checkScreenColor("postcard review selected row", [0x35, 0x49, 0x68], 80);
+    const postcardReviewShot = await screenshot(`${label}-${width}x${height}-postcard-${locale}-review`);
+    for (const screen of ["postmarks", "phrases", "recipients", "home"] as const) {
+      await touch('[data-button="CROSS"]', 140);
+      await waitFor<boolean>(`postcard back to ${screen}`,
+        `globalThis.__onlineState?.postcardScreen === ${JSON.stringify(screen)}`, Boolean);
+    }
+    await touch('[data-button="CROSS"]', 140);
+    await waitFor<boolean>("post office closed", "globalThis.__onlineState?.postcard === false", Boolean);
+
     const coopLabel = locale === "zh" ? han(0x534f, 0x4f5c) : "COOP";
     const friendNotice = `${coopLabel} · ${friend.name} · ${friend.targetTown} · ${friend.item}`;
     const friendState = await waitFor<OnlineState | null>(
@@ -860,6 +959,29 @@ async function main(): Promise<void> {
           noticePixels: cancelledBluePixels,
         },
       },
+      postcards: {
+        unread: unreadState!.postcardUnread,
+        offlineRecipient: penPal,
+        readRequest: postcardReadFrame,
+        badgePixels: postcardBadgePixels,
+        badgeTextPixels: postcardBadgeTextPixels,
+        homeLayout: postcardHomeLayout,
+        read: {
+          panelPixels: postcardReadPanelPixels,
+          titlePixels: postcardReadTitlePixels,
+          inkPixels: postcardReadInkPixels,
+          accentPixels: postcardReadAccentPixels,
+          selectedPixels: postcardReadSelectedPixels,
+          layout: postcardReadLayout,
+        },
+        review: {
+          panelPixels: postcardReviewPanelPixels,
+          titlePixels: postcardReviewTitlePixels,
+          inkPixels: postcardReviewInkPixels,
+          selectedPixels: postcardReviewSelectedPixels,
+          layout: postcardReviewLayout,
+        },
+      },
       socialPanel: socialLayout.socialPanel,
       socialOverlaps: socialLayout.socialOverlaps,
       socialFriendsPanel: socialFriendsLayout.socialPanel,
@@ -873,6 +995,9 @@ async function main(): Promise<void> {
         socialShot,
         socialFriendsShot,
         friendListShot,
+        postcardUnreadShot,
+        postcardReadShot,
+        postcardReviewShot,
         readyShot,
         cancelledShot,
         emoteShot,
