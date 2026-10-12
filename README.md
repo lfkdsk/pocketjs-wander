@@ -63,6 +63,13 @@ same panel exposes a per-realm FIRST-finder board that is private by default;
 every player sees their own rank, while names appear publicly only after an
 explicit opt-in. Neither view exposes another player's position or presence.
 
+Each realm also receives a deterministic UTC daily goal drawn from real
+delivery offers or landmark discoveries. Its authoritative progress is shared,
+while each player sees only their own bounded contribution-day record. The HUD
+and town boards show progress and time to midnight in English or Chinese; the
+single completion crossing announces to the realm and leaves a permanent
+festival market at the target town as a record of the achievement.
+
 For local development, start the loopback-only Bun server with its explicit
 guest switch, then launch clients with matching guest credentials:
 

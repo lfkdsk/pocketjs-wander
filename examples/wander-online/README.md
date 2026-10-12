@@ -104,6 +104,37 @@ deterministic real-WebSocket check with two couriers and one observer, run:
 bun tools/wander-online-coop-demo.ts
 ```
 
+### Daily realm goal
+
+A server advertises this additive surface with `realmFeatures.dailyGoals`.
+For every realm and UTC calendar day, `shared/daily-goal.ts` deterministically
+chooses either a real delivery offer or landmark discoveries and a target of
+three to five contributions. The realm seed remains the world seed: the day
+hash selects existing generated content rather than inventing a second world.
+
+Only facts already accepted by the authoritative reducer count. A completed
+matching delivery contributes once, both couriers in a completed cooperative
+delivery contribute, and a landmark contributes only for the winner of the
+server's FIRST compare-and-set. Clients cannot submit goal credit. Progress is
+shared with the realm; `contributed` and the bounded `contributionDays` list in
+each recipient's snapshot describe only that authenticated account and never
+publish a contributor list.
+
+The top-right goal plate shows progress and the time remaining until UTC
+midnight. Every physical town notice board appends the same goal, so it remains
+available when the HUD is crowded. Copy follows the selected English or Chinese
+locale and uses the compact font slot. At midnight the occupied server pushes
+the next definition without a reconnect; a fact's one captured timestamp
+chooses exactly one day. The sole completion crossing sends one celebration
+notice and raises the selected town to improvement level 2, adding a market
+ring through the normal shared-world repaint path. That festival remains after
+rollover as a realm-history marker; permanence also avoids a reset write every
+day, while ordinary level-1 journey flowers retain their existing appearance.
+
+The loopback server keeps the aggregate and private day lists in memory for a
+deterministic local demo. The hosted server stores the shared aggregate and
+exact-incarnation private history in its realm SQLite database.
+
 ### Meeting others: spawn slots, invites, far markers and emotes
 
 Admission never stacks players. The server anchors a newcomer at the
