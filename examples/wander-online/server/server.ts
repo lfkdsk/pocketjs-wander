@@ -24,9 +24,23 @@
 import { join } from "node:path";
 import { type ServerWebSocket } from "bun";
 import { Arena } from "./area.ts";
-import { COOP_REQUIRED_PLAYERS, REALM_PLAYER_CAP, RealmArena, type CoopStatus, type RealmPlayer } from "./realm-area.ts";
+import {
+  COOP_REQUIRED_PLAYERS,
+  REALM_PLAYER_CAP,
+  RealmArena,
+  type CoopStatus,
+  type RealmDailyContribution,
+  type RealmPlayer,
+} from "./realm-area.ts";
 import { DevAuth } from "./dev-auth.ts";
 import { entityFor, snapshotFor, snapshotForRealm } from "../shared/snapshot.ts";
+import {
+  DAILY_GOAL_CONTRIBUTION_DAYS_MAX,
+  generateDailyGoal,
+  matchesDailyContribution,
+  utcDayFromMs,
+  type DailyGoal,
+} from "../shared/daily-goal.ts";
 import {
   MSG,
   REGION_STATE_FLAG_INITIAL,
@@ -83,6 +97,8 @@ export interface ServerOpts {
   /** Disable the wall-clock timer so a deterministic host/test can advance
    *  complete server frames through ServerHandle.advance(). */
   manualTick?: boolean;
+  /** Wall-clock injection for deterministic UTC-day and rollover tests. */
+  now?: () => number;
 }
 
 interface Conn {
@@ -121,14 +137,54 @@ export interface ServerHandle {
 
 const BACKPRESSURE_LIMIT = 256 * 1024; // bytes buffered before we drop a snapshot
 
+interface LocalDailyState {
+  goal: DailyGoal;
+  progress: number;
+  revision: number;
+}
+
 export function startServer(opts: ServerOpts): ServerHandle {
+  const now = opts.now ?? Date.now;
   const arena = new Arena({ seed: opts.seed, hz: opts.hz });
-  const realmArena = new RealmArena({
+  const initialNowMs = now();
+  let daily: LocalDailyState = {
+    goal: generateDailyGoal(opts.seed, "local", utcDayFromMs(initialNowMs)),
+    progress: 0,
+    revision: 0,
+  };
+  // Arena ids identify sockets; coopIdentity is the local host's stable
+  // authenticated-player key (guests deliberately receive a session key).
+  const dailyContributionDays = new Map<string, number[]>();
+  let dailyDirty = false;
+  let dailyCompletedNow = false;
+  let realmArena: RealmArena;
+  realmArena = new RealmArena({
     seed: opts.seed,
     hz: opts.hz,
     realmId: "local",
     epoch: opts.realmEpoch ?? crypto.getRandomValues(new Uint32Array(1))[0]!,
     maxPlayers: opts.realmPlayerCap,
+    now,
+    hooks: {
+      // The local host owns the same monotonic row transition as a durable
+      // host. This also lets a daily festival create its remote target row
+      // before raising it, rather than depending on that town being in AOI.
+      improveRegion(rx, ry, level, nowMs) {
+        const current = realmArena.world.regionState(rx, ry);
+        if (current && current.improvementLevel >= level) return null;
+        return {
+          rx,
+          ry,
+          discoveredAtMs: current?.discoveredAtMs ?? nowMs,
+          improvementLevel: level,
+          revision: ++realmArena.realmRevision,
+          landmarkFirstName: current?.landmarkFirstName ?? "",
+        };
+      },
+      contributeDaily(contribution, nowMs, player) {
+        contributeDaily(contribution, nowMs, player);
+      },
+    },
   });
   const grid = gridFromWindow(arena.world.window);
   const conns = new Map<number, Conn>();
@@ -136,7 +192,7 @@ export function startServer(opts: ServerOpts): ServerHandle {
   const frameMod = Math.max(1, Math.round(opts.hz / opts.broadcastHz));
   const farMod = Math.max(1, Math.round(opts.hz * FAR_INTERVAL_SEC));
   // Realm invites: codes only, in memory (the loopback server is ephemeral).
-  const invites = new InviteTable(() => Date.now(), Math.random);
+  const invites = new InviteTable(now, Math.random);
 
   const stats = {
     ticks: 0,
@@ -160,6 +216,79 @@ export function startServer(opts: ServerOpts): ServerHandle {
   function emit(conn: Conn, buf: ArrayBuffer): void {
     if (opts.simLatency > 0) setTimeout(() => send(conn, buf), opts.simLatency);
     else send(conn, buf);
+  }
+
+  function dailyMessage(player: RealmPlayer, completedNow: boolean): Record<string, unknown> {
+    const contributionDays = (dailyContributionDays.get(player.coopIdentity) ?? [])
+      .filter((day) => day <= daily.goal.day);
+    return {
+      type: "dailyGoal",
+      v: SOCIAL_PROTOCOL_VERSION,
+      ...daily.goal,
+      progress: daily.progress,
+      completed: daily.progress === daily.goal.required,
+      contributed: contributionDays.includes(daily.goal.day),
+      contributionDays,
+      revision: daily.revision,
+      completedNow,
+    };
+  }
+
+  function sendDaily(conn: Conn, player: RealmPlayer, completedNow = false): void {
+    conn.ws.send(JSON.stringify(dailyMessage(player, completedNow)));
+  }
+
+  /** Flush one idempotent aggregate snapshot to every connected recipient.
+   *  `completedNow` is consumed here, so it can never leak into later joins. */
+  function flushDaily(): void {
+    if (!dailyDirty) return;
+    const completedNow = dailyCompletedNow;
+    dailyDirty = false;
+    dailyCompletedNow = false;
+    for (const player of realmArena.players.values()) {
+      const conn = realmConns.get(player.id);
+      if (conn?.ws.readyState === 1) sendDaily(conn, player, completedNow);
+    }
+  }
+
+  /** Install the definition for the captured UTC day. Existing contribution
+   *  histories remain exact and bounded; only the realm aggregate rolls. */
+  function rollDaily(nowMs: number): boolean {
+    const day = utcDayFromMs(nowMs);
+    if (daily.goal.day === day) return false;
+    // A test clock can cross midnight between two authoritative arena facts
+    // in one host frame. Deliver the old day's pending completion pulse before
+    // replacing its aggregate; normal frames have nothing pending here.
+    flushDaily();
+    daily = { goal: generateDailyGoal(realmArena.seed, realmArena.realmId, day), progress: 0, revision: 0 };
+    dailyDirty = true;
+    dailyCompletedNow = false;
+    return true;
+  }
+
+  /** Consume only facts already accepted by RealmArena. The captured arena
+   *  timestamp assigns a midnight event to exactly one UTC day. */
+  function contributeDaily(contribution: RealmDailyContribution, nowMs: number, player: RealmPlayer): void {
+    rollDaily(nowMs);
+    const fact = { ...contribution, realm: realmArena.realmId, day: daily.goal.day };
+    if (!matchesDailyContribution(daily.goal, fact)) return;
+
+    const previous = dailyContributionDays.get(player.coopIdentity) ?? [];
+    if (previous.includes(daily.goal.day)) return;
+    const contributionDays = [...previous, daily.goal.day];
+    if (contributionDays.length > DAILY_GOAL_CONTRIBUTION_DAYS_MAX) {
+      contributionDays.splice(0, contributionDays.length - DAILY_GOAL_CONTRIBUTION_DAYS_MAX);
+    }
+    dailyContributionDays.set(player.coopIdentity, contributionDays);
+
+    const wasCompleted = daily.progress === daily.goal.required;
+    if (!wasCompleted) daily.progress++;
+    daily.revision = (daily.revision + 1) >>> 0;
+    dailyDirty = true;
+    if (!wasCompleted && daily.progress === daily.goal.required) {
+      dailyCompletedNow = true;
+      realmArena.raiseSharedImprovement(player, daily.goal.targetRx, daily.goal.targetRy, 2, nowMs);
+    }
   }
 
   function broadcast(snapshotDue: boolean, farDue: boolean): void {
@@ -233,10 +362,15 @@ export function startServer(opts: ServerOpts): ServerHandle {
 
   /** Shared rows a journey changed (improvements, landmark firsts) go to
    *  everyone at once rather than waiting for the periodic snapshot. */
-  function flushChangedRows(): void {
+  function flushChangedRows(serverTimeMs?: number): void {
     const rows = realmArena.drainChangedRows();
     if (rows.length === 0) return;
-    const message = encodeRegionState({ flags: 0, realmRevision: realmArena.realmRevision, serverTimeMs: Date.now(), rows });
+    const message = encodeRegionState({
+      flags: 0,
+      realmRevision: realmArena.realmRevision,
+      serverTimeMs: serverTimeMs ?? now(),
+      rows,
+    });
     for (const conn of realmConns.values()) emit(conn, message);
   }
 
@@ -245,10 +379,12 @@ export function startServer(opts: ServerOpts): ServerHandle {
       throw new RangeError("server advance frames must be a positive safe integer");
     }
     for (let i = 0; i < frames; i++) {
+      rollDaily(now());
       arena.step();
       realmArena.step();
       stats.ticks++;
       flushChangedRows();
+      flushDaily();
       flushCoopStatuses();
       const snapshotDue = arena.frame % frameMod === 0;
       const farDue = realmArena.frame % farMod === 0;
@@ -301,8 +437,11 @@ export function startServer(opts: ServerOpts): ServerHandle {
       if (p && cmd) {
         // The arena validates against its own mover and clock; a refused
         // command is simply dropped. Confirmations ride the next flush.
-        realmArena.applyCommand(p, cmd);
-        flushChangedRows();
+        const commandNowMs = now();
+        rollDaily(commandNowMs);
+        realmArena.applyCommand(p, cmd, commandNowMs);
+        flushChangedRows(commandNowMs);
+        flushDaily();
         flushPrivate(p, conn);
         flushCoopStatuses();
         flushEmotes();
@@ -344,7 +483,7 @@ export function startServer(opts: ServerOpts): ServerHandle {
           // account, name or position.
           const conn = ws.data.conn;
           if (!conn || !conn.realm) return;
-          conn.inviteWindow ??= new SlidingWindow(INVITE_ISSUE_PER_MIN, 60_000, () => Date.now());
+          conn.inviteWindow ??= new SlidingWindow(INVITE_ISSUE_PER_MIN, 60_000, now);
           if (!conn.inviteWindow.hit()) {
             ws.send(JSON.stringify({ type: "inviteError", reason: "invite-rate" }));
             return;
@@ -477,6 +616,10 @@ export function startServer(opts: ServerOpts): ServerHandle {
   function admit(ws: ServerWebSocket<ConnData>, name: string, color: number, look: number, githubId: number, sid: string): void {
     const activeArena = ws.data.realm ? realmArena : arena;
     const activeConns = ws.data.realm ? realmConns : conns;
+    if (ws.data.realm) {
+      rollDaily(now());
+      flushDaily();
+    }
     // Guests have no account: the spawn-slot hash takes the connection's
     // sid, so two guests with one name still spread over the ring.
     const p = ws.data.realm
@@ -518,7 +661,17 @@ export function startServer(opts: ServerOpts): ServerHandle {
         coopErrands: true,
         coopPartnerFinding: true,
         discoveryLeaderboard: false,
+        dailyGoals: true,
       }));
+      // Admission can itself claim a freshly visible landmark. If that fact
+      // changed the daily aggregate, broadcast it once; otherwise this is the
+      // new recipient's private initial projection.
+      if (dailyDirty) {
+        flushChangedRows();
+        flushDaily();
+      } else {
+        sendDaily(conn, rp);
+      }
       rp.coopDirty = false;
       conn.ws.send(JSON.stringify(coopErrandMessage(realmArena.realmId, realmArena.coopStatusFor(rp))));
     } else {
