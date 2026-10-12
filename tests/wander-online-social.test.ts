@@ -62,7 +62,13 @@ describe("social wire contract", () => {
       coopErrands: true,
       discoveryLeaderboard: false,
       privateRoster: [{ id: 7, x: 12, y: 4 }],
-    })).toEqual({ realm: "plaza-1", coopErrands: true, discoveryLeaderboard: false });
+    })).toEqual({
+      realm: "plaza-1",
+      coopErrands: true,
+      discoveryLeaderboard: false,
+      postcardReplies: false,
+      postcardIdempotency: false,
+    });
     expect(parseRealmFeatures({ realm: "../secret", coopErrands: true, discoveryLeaderboard: true })).toBeNull();
     expect(parseRealmFeatures({ realm: "plaza-1", coopErrands: 1, discoveryLeaderboard: true })).toBeNull();
     expect(parseRealmFeatures({
@@ -70,14 +76,31 @@ describe("social wire contract", () => {
       coopErrands: true,
       coopPartnerFinding: true,
       discoveryLeaderboard: false,
-    })).toEqual({ realm: "plaza-1", coopErrands: true, coopPartnerFinding: true, discoveryLeaderboard: false });
+    })).toEqual({
+      realm: "plaza-1",
+      coopErrands: true,
+      coopPartnerFinding: true,
+      discoveryLeaderboard: false,
+      postcardReplies: false,
+      postcardIdempotency: false,
+    });
     expect(parseRealmFeatures({
       realm: "plaza-1",
       coopErrands: true,
       discoveryLeaderboard: true,
       dailyGoals: true,
       postcards: true,
-    })).toEqual({ realm: "plaza-1", coopErrands: true, discoveryLeaderboard: true, dailyGoals: true, postcards: true });
+      postcardReplies: true,
+      postcardIdempotency: true,
+    })).toEqual({
+      realm: "plaza-1",
+      coopErrands: true,
+      discoveryLeaderboard: true,
+      dailyGoals: true,
+      postcards: true,
+      postcardReplies: true,
+      postcardIdempotency: true,
+    });
     expect(parseRealmFeatures({
       realm: "plaza-1",
       coopErrands: true,
@@ -95,6 +118,18 @@ describe("social wire contract", () => {
       coopErrands: false,
       discoveryLeaderboard: false,
       postcards: 1,
+    })).toBeNull();
+    expect(parseRealmFeatures({
+      realm: "plaza-1",
+      coopErrands: false,
+      discoveryLeaderboard: false,
+      postcardReplies: 1,
+    })).toBeNull();
+    expect(parseRealmFeatures({
+      realm: "plaza-1",
+      coopErrands: false,
+      discoveryLeaderboard: false,
+      postcardIdempotency: "yes",
     })).toBeNull();
   });
 

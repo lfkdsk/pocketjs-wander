@@ -28,6 +28,12 @@ export interface RealmFeatures {
   dailyGoals?: boolean;
   /** Additive server-authoritative offline postcard surface. */
   postcards?: boolean;
+  /** Additive direct-reply flow. The parser normalizes an absent legacy wire
+   * field to false. */
+  postcardReplies?: boolean;
+  /** Additive request-id deduplication. The parser normalizes an absent legacy
+   * wire field to false. */
+  postcardIdempotency?: boolean;
 }
 
 export type CoopErrandStatus = "none" | "travel" | "waiting" | "completed" | "cancelled" | "expired";
@@ -176,11 +182,15 @@ export function parseRealmFeatures(value: unknown): RealmFeatures | null {
     || (value.coopPartnerFinding !== undefined && typeof value.coopPartnerFinding !== "boolean")
     || typeof value.discoveryLeaderboard !== "boolean"
     || (value.dailyGoals !== undefined && typeof value.dailyGoals !== "boolean")
-    || (value.postcards !== undefined && typeof value.postcards !== "boolean")) return null;
+    || (value.postcards !== undefined && typeof value.postcards !== "boolean")
+    || (value.postcardReplies !== undefined && typeof value.postcardReplies !== "boolean")
+    || (value.postcardIdempotency !== undefined && typeof value.postcardIdempotency !== "boolean")) return null;
   const parsed: RealmFeatures = {
     realm: value.realm,
     coopErrands: value.coopErrands,
     discoveryLeaderboard: value.discoveryLeaderboard,
+    postcardReplies: value.postcardReplies === true,
+    postcardIdempotency: value.postcardIdempotency === true,
   };
   if (value.coopPartnerFinding !== undefined) parsed.coopPartnerFinding = value.coopPartnerFinding;
   if (value.dailyGoals !== undefined) parsed.dailyGoals = value.dailyGoals;

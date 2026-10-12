@@ -7,6 +7,7 @@ import { bootWorld, treeHasText } from "../vendor/pocket-rpgkit/vendor/pocketjs/
 import { appBundle, appPreflight } from "./helpers/boot.ts";
 import { fakeOnlineSocketFactory } from "./lib/fake-online-socket.ts";
 import type { OnlinePublished } from "../examples/wander-online/OnlineView.tsx";
+import { postcardRequestId } from "../examples/wander-online/shared/postcard.ts";
 
 const preflight = appPreflight("wander-online");
 if (!preflight.ok) console.warn(`wander-online postcard view tests skipped: ${preflight.reason}`);
@@ -82,7 +83,7 @@ simDescribe("wander-online postcard view", () => {
     push({
       type: "realmFeatures", v: 1, realm: REALM,
       coopErrands: false, coopPartnerFinding: false, discoveryLeaderboard: false,
-      dailyGoals: false, postcards: true,
+      dailyGoals: false, postcards: true, postcardReplies: true, postcardIdempotency: true,
     });
     expect(sent).toContainEqual({ type: "postcardStatusGet", v: 1 });
     push({ type: "postcardStatus", v: 1, revision: 2, unread: 1, total: 1, dailyRemaining: 4 });
@@ -133,8 +134,52 @@ simDescribe("wander-online postcard view", () => {
     expect(state().postcardUnread).toBe(0);
     expect(treeHasText(world.getTree(), "MAIL 1")).toBe(false);
 
-    press(world, BTN.CROSS); // read -> inbox
-    press(world, BTN.CROSS); // inbox -> home
+    press(world, BTN.DOWN);
+    press(world, BTN.DOWN);
+    press(world, BTN.DOWN);
+    press(world, BTN.CIRCLE); // reply directly from the opened card
+    expect(state().postcardScreen).toBe("phrases");
+    press(world, BTN.DOWN);
+    press(world, BTN.DOWN);
+    press(world, BTN.CIRCLE); // thanks
+    press(world, BTN.CIRCLE); // no postmark
+    press(world, BTN.CIRCLE); // send now; simulate a lost response
+    const replyAttempts = sent.filter((message) => message.type === "postcardSend");
+    expect(replyAttempts).toHaveLength(1);
+    expect(replyAttempts[0]).toMatchObject({
+      type: "postcardSend", v: 1, replyToPostcardId: "pc_abcdefgh1234",
+      sentenceId: "thanks", postmark: null,
+    });
+    expect(postcardRequestId(replyAttempts[0]!.requestId)).toBe(true);
+    expect(Object.hasOwn(replyAttempts[0]!, "targetGithubId")).toBe(false);
+
+    press(world, BTN.CIRCLE); // response was lost: retry the immutable request
+    const retried = sent.filter((message) => message.type === "postcardSend");
+    expect(retried).toHaveLength(2);
+    expect(retried[1]).toEqual(retried[0]);
+
+    push({
+      type: "postcardResult", v: 1, operation: "send", ok: true,
+      requestId: "different_request_1234",
+    });
+    expect(state().postcardScreen).toBe("review");
+    push({ type: "postcardResult", v: 1, operation: "send", ok: true });
+    expect(state().postcardScreen).toBe("review");
+    push({
+      type: "postcardResult", v: 1, operation: "send", ok: true,
+      requestId: retried[0]!.requestId,
+    });
+    expect(state().postcardScreen).toBe("home");
+    expect(state().notice).toBe("POSTCARD SENT");
+
+    // A new client remains rollout-compatible with an old server: it still
+    // sends an id, but accepts a result without one when the capability is
+    // absent.
+    push({
+      type: "realmFeatures", v: 1, realm: REALM,
+      coopErrands: false, coopPartnerFinding: false, discoveryLeaderboard: false,
+      dailyGoals: false, postcards: true,
+    });
     press(world, BTN.DOWN);
     press(world, BTN.CIRCLE); // recipient list
     press(world, BTN.CIRCLE); // Bob
@@ -143,9 +188,12 @@ simDescribe("wander-online postcard view", () => {
     press(world, BTN.CIRCLE); // thanks
     press(world, BTN.CIRCLE); // no postmark
     press(world, BTN.CIRCLE); // send now
-    expect(sent.at(-1)).toEqual({
+    expect(sent.at(-1)).toMatchObject({
       type: "postcardSend", v: 1, targetGithubId: 7, sentenceId: "thanks", postmark: null,
     });
+    expect(postcardRequestId(sent.at(-1)!.requestId)).toBe(true);
     expect(Object.hasOwn(sent.at(-1)!, "body"), "no free text crosses the wire").toBe(false);
+    push({ type: "postcardResult", v: 1, operation: "send", ok: true });
+    expect(state().postcardScreen).toBe("home");
   }, 30_000);
 });

@@ -134,8 +134,11 @@ import {
 import { formatDailyGoal, parseDailyGoalSnapshot, type DailyGoalSnapshot } from "./shared/daily-goal.ts";
 import {
   POSTCARD_PROTOCOL_VERSION,
+  createPostcardRequestId,
   parsePostcardMailbox,
   parsePostcardStatus,
+  postcardRequestId,
+  type PostcardDraft,
   type PostcardMailbox,
   type PostcardStatus,
 } from "./shared/postcard.ts";
@@ -524,6 +527,10 @@ export function OnlineView() {
   const [emoteSel, setEmoteSel] = createSignal(0);
 
   let client: OnlineClient | null = null;
+  /** A lost send response leaves this request intact. Pressing SEND again
+   * reuses its id, so the server can return the original result without
+   * delivering or charging quota twice. */
+  let pendingPostcardSend: { requestId: string; draftKey: string } | null = null;
   let noticeUntil = 0;
   /** The demo hook's one invite request, sent once the world is ready. */
   let autoInvitePending = false;
@@ -677,6 +684,7 @@ export function OnlineView() {
     }
     client?.stop();
     client = null;
+    pendingPostcardSend = null;
     clearRealmJson();
     roster.clear();
     setRosterRevision((value) => value + 1);
@@ -848,11 +856,14 @@ export function OnlineView() {
     friends: socialSnapshot()?.friends ?? [],
     postmarks: postcardPostmarks(),
     locale,
+    repliesEnabled: realmFeatures()?.postcardReplies === true,
   });
 
   const sendPostcard = (message: Record<string, unknown>): void => {
     client?.sendText(JSON.stringify({ ...message, v: POSTCARD_PROTOCOL_VERSION }));
   };
+
+  const postcardDraftKey = (draft: PostcardDraft): string => JSON.stringify(draft);
 
   const applyPostcardAction = (action: PostcardAction): void => {
     switch (action.type) {
@@ -863,7 +874,17 @@ export function OnlineView() {
         sendPostcard({ type: "postcardRead", id: action.id });
         return;
       case "send":
-        sendPostcard({ type: "postcardSend", ...action.draft });
+        {
+          const draftKey = postcardDraftKey(action.draft);
+          if (!pendingPostcardSend || pendingPostcardSend.draftKey !== draftKey) {
+            pendingPostcardSend = { requestId: createPostcardRequestId(), draftKey };
+          }
+          sendPostcard({
+            type: "postcardSend",
+            ...action.draft,
+            requestId: pendingPostcardSend.requestId,
+          });
+        }
         return;
     }
   };
@@ -882,6 +903,8 @@ export function OnlineView() {
       case "postmark": return locale === "zh" ? "这个邮戳不可用" : "POSTCARD: INVALID POSTMARK";
       case "post-office": return locale === "zh" ? "请在邮局办理" : "POSTCARD: VISIT A POST OFFICE";
       case "sentence": return locale === "zh" ? "问候语无效" : "POSTCARD: INVALID MESSAGE";
+      case "reply-not-found": return locale === "zh" ? "原明信片已过期" : "POSTCARD: REPLY EXPIRED";
+      case "request-conflict": return locale === "zh" ? "寄件请求已变更，请重试" : "POSTCARD: REQUEST CHANGED";
       default: return locale === "zh" ? "明信片暂时无法处理" : "POSTCARD UNAVAILABLE";
     }
   };
@@ -909,6 +932,17 @@ export function OnlineView() {
     }
     if (typeof msg.ok !== "boolean"
       || (msg.operation !== "get" && msg.operation !== "send" && msg.operation !== "read")) return true;
+    if (msg.operation === "send") {
+      const resultRequestId = msg.requestId;
+      if (resultRequestId !== undefined && !postcardRequestId(resultRequestId)) return true;
+      if (!pendingPostcardSend) return true;
+      if (realmFeatures()?.postcardIdempotency === true) {
+        if (resultRequestId !== pendingPostcardSend.requestId) return true;
+      } else if (resultRequestId !== undefined && resultRequestId !== pendingPostcardSend.requestId) {
+        return true;
+      }
+      pendingPostcardSend = null;
+    }
     if (msg.ok) {
       if (msg.operation === "send") {
         setPostcardState(postcardSendComplete());
