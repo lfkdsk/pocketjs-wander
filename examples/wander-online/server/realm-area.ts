@@ -163,6 +163,8 @@ export interface RealmPlayerRestore {
  * makes a contribution at midnight belong to exactly one atomic store call. */
 export type RealmDailyContribution =
   | {
+    /** Stable across replay of the same accepted journey fact. */
+    sourceId: string;
     kind: "delivery";
     offerRx: number;
     offerRy: number;
@@ -170,6 +172,8 @@ export type RealmDailyContribution =
     targetRy: number;
   }
   | {
+    /** Realm-global identity of the elected landmark-first fact. */
+    sourceId: string;
     kind: "landmark";
     landmarkRx: number;
     landmarkRy: number;
@@ -243,6 +247,11 @@ function checkedCoopIdentity(value: string): string {
     throw new RangeError(`coop identity must contain 1..${COOP_IDENTITY_MAX} code units`);
   }
   return value;
+}
+
+function deliveryDailySourceId(player: RealmPlayer, journeyRevision: number, errand: Errand): string {
+  if (errand.kind !== "deliver") throw new TypeError("daily delivery source requires a delivery errand");
+  return `delivery:${player.coopIdentity}:${journeyRevision >>> 0}:${errand.orx}:${errand.ory}:${errand.trx}:${errand.try}`;
 }
 
 function heading(p: RealmPlayer): Pick<RealmFocus, "hx" | "hy"> {
@@ -764,6 +773,14 @@ export class RealmArena {
     const mineErrand = this.cooperativeDelivery(player);
     const partnerErrand = this.cooperativeDelivery(partner);
     if (!mineErrand || !partnerErrand) return false;
+    // The pre-completion journey revision is durable and stable if a host
+    // crashes before checkpointing this settlement. Combined with the exact
+    // incarnation and errand coordinates it identifies this accepted fact,
+    // while a later accepted errand receives another revision.
+    const sourceRevisions = new Map<RealmPlayer, number>([
+      [partner, partner.journeyRevision],
+      [player, player.journeyRevision],
+    ]);
 
     // Clear both durable claims before changing either journey. A replay can
     // then observe neither an active cooperative errand nor a ready pair.
@@ -780,6 +797,7 @@ export class RealmArena {
     this.improve(mine.targetRx, mine.targetRy, 1, nowMs, player);
     for (const [courier, errand] of [[partner, partnerErrand], [player, mineErrand]] as const) {
       this.hooks.contributeDaily?.({
+        sourceId: deliveryDailySourceId(courier, sourceRevisions.get(courier)!, errand),
         kind: "delivery",
         offerRx: errand.orx,
         offerRy: errand.ory,
@@ -928,6 +946,7 @@ export class RealmArena {
     const done = journeyComplete(this.seed, p.journey, errand);
     if (errand.kind === "deliver") {
       this.hooks.contributeDaily?.({
+        sourceId: deliveryDailySourceId(p, p.journeyRevision, errand),
         kind: "delivery",
         offerRx: errand.orx,
         offerRy: errand.ory,
@@ -1029,7 +1048,12 @@ export class RealmArena {
     // crediting its actual winner. Without that hook this arena elected the
     // winner itself, so the generic contribution callback is safe here.
     if (!this.hooks.landmarkFirst) {
-      this.hooks.contributeDaily?.({ kind: "landmark", landmarkRx: rx, landmarkRy: ry }, nowMs, p);
+      this.hooks.contributeDaily?.({
+        sourceId: `landmark:${rx}:${ry}`,
+        kind: "landmark",
+        landmarkRx: rx,
+        landmarkRy: ry,
+      }, nowMs, p);
     }
     this.world.applyRegionState({ flags: 0, realmRevision: this.realmRevision, serverTimeMs: nowMs, rows: [row] });
     this.changedRows.push(row);
