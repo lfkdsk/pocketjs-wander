@@ -8,6 +8,12 @@ import {
   parsePostcardMailbox,
   parsePostcardStatus,
 } from "../examples/wander-online/shared/postcard.ts";
+import {
+  createPostcardMenuState,
+  postcardMenuRows,
+  reducePostcardMenu,
+  type PostcardMenuData,
+} from "../examples/wander-online/postcard-model.ts";
 
 describe("postcard shared contract", () => {
   test("only preset sentence ids and int32 discovery coordinates form a draft", () => {
@@ -67,5 +73,78 @@ describe("postcard shared contract", () => {
     expect(parsePostcardStatus({ unread: 3, total: 2, dailyRemaining: 4 })).toBeNull();
     expect(parsePostcardStatus({ unread: 0, total: POSTCARD_MAILBOX_CAP + 1, dailyRemaining: 4 })).toBeNull();
     expect(parsePostcardStatus({ unread: 0, total: 0, dailyRemaining: POSTCARD_DAILY_SEND_LIMIT + 1 })).toBeNull();
+  });
+});
+
+describe("postcard controller flow", () => {
+  const mailbox = {
+    unread: 1,
+    total: 1,
+    dailyRemaining: 4,
+    postcards: [{
+      id: "pc_abcdefgh1234",
+      senderName: "Alice",
+      sentenceId: "thanks" as const,
+      postmark: "Ancient Tree",
+      sentAt: 1_000,
+      expiresAt: 2_000,
+      read: false,
+    }],
+  };
+  const data: PostcardMenuData = {
+    mailbox,
+    friends: [{ githubId: 7, name: "Bob", presence: "offline", realm: null }],
+    postmarks: [{ rx: -2, ry: 5, label: "Ancient Tree · Mossvale" }],
+    locale: "en",
+  };
+
+  test("reading one unread card emits exactly one server action", () => {
+    let state = createPostcardMenuState();
+    state = reducePostcardMenu(state, "confirm", data).state;
+    expect(state.screen).toBe("inbox");
+    const opened = reducePostcardMenu(state, "confirm", data);
+    expect(opened.state.screen).toBe("read");
+    expect(opened.action).toEqual({ type: "read", id: "pc_abcdefgh1234" });
+    expect(postcardMenuRows(opened.state, data).map((entry) => entry.label)).toContain(
+      formatPostcardSentence("thanks", "en"),
+    );
+    expect(reducePostcardMenu(opened.state, "back", data).state.screen).toBe("inbox");
+  });
+
+  test("compose chooses a mutual friend, preset and discovered stamp before send", () => {
+    let state = createPostcardMenuState();
+    state = reducePostcardMenu(state, "down", data).state;
+    state = reducePostcardMenu(state, "confirm", data).state;
+    expect(state.screen).toBe("recipients");
+    state = reducePostcardMenu(state, "confirm", data).state;
+    expect(state.screen).toBe("phrases");
+    state = reducePostcardMenu(state, "down", data).state;
+    state = reducePostcardMenu(state, "down", data).state;
+    state = reducePostcardMenu(state, "confirm", data).state;
+    expect(state.sentenceId).toBe("thanks");
+    expect(state.screen).toBe("postmarks");
+    state = reducePostcardMenu(state, "down", data).state;
+    state = reducePostcardMenu(state, "confirm", data).state;
+    expect(state.screen).toBe("review");
+    expect(state.cursor).toBe(3);
+    expect(reducePostcardMenu(state, "confirm", data).action).toEqual({
+      type: "send",
+      draft: {
+        targetGithubId: 7,
+        sentenceId: "thanks",
+        postmark: { rx: -2, ry: 5 },
+      },
+    });
+  });
+
+  test("Chinese rows use translated phrase and post-office copy", () => {
+    const zh: PostcardMenuData = { ...data, locale: "zh" };
+    expect(postcardMenuRows(createPostcardMenuState(), zh).map((entry) => entry.label)).toEqual([
+      "信箱",
+      "寄一张明信片",
+      "离开邮局",
+    ]);
+    const phrases = postcardMenuRows({ ...createPostcardMenuState(), screen: "phrases" }, zh);
+    expect(phrases.map((entry) => entry.label)).toContain(formatPostcardSentence("recommend", "zh"));
   });
 });

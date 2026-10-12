@@ -76,7 +76,8 @@ describe("social wire contract", () => {
       coopErrands: true,
       discoveryLeaderboard: true,
       dailyGoals: true,
-    })).toEqual({ realm: "plaza-1", coopErrands: true, discoveryLeaderboard: true, dailyGoals: true });
+      postcards: true,
+    })).toEqual({ realm: "plaza-1", coopErrands: true, discoveryLeaderboard: true, dailyGoals: true, postcards: true });
     expect(parseRealmFeatures({
       realm: "plaza-1",
       coopErrands: true,
@@ -88,6 +89,12 @@ describe("social wire contract", () => {
       coopErrands: true,
       discoveryLeaderboard: false,
       dailyGoals: 1,
+    })).toBeNull();
+    expect(parseRealmFeatures({
+      realm: "plaza-1",
+      coopErrands: false,
+      discoveryLeaderboard: false,
+      postcards: 1,
     })).toBeNull();
   });
 

@@ -26,6 +26,8 @@ export interface RealmFeatures {
   discoveryLeaderboard: boolean;
   /** Additive realm-wide UTC goal surface. Absent on older servers. */
   dailyGoals?: boolean;
+  /** Additive server-authoritative offline postcard surface. */
+  postcards?: boolean;
 }
 
 export type CoopErrandStatus = "none" | "travel" | "waiting" | "completed" | "cancelled" | "expired";
@@ -173,7 +175,8 @@ export function parseRealmFeatures(value: unknown): RealmFeatures | null {
     || typeof value.coopErrands !== "boolean"
     || (value.coopPartnerFinding !== undefined && typeof value.coopPartnerFinding !== "boolean")
     || typeof value.discoveryLeaderboard !== "boolean"
-    || (value.dailyGoals !== undefined && typeof value.dailyGoals !== "boolean")) return null;
+    || (value.dailyGoals !== undefined && typeof value.dailyGoals !== "boolean")
+    || (value.postcards !== undefined && typeof value.postcards !== "boolean")) return null;
   const parsed: RealmFeatures = {
     realm: value.realm,
     coopErrands: value.coopErrands,
@@ -181,6 +184,7 @@ export function parseRealmFeatures(value: unknown): RealmFeatures | null {
   };
   if (value.coopPartnerFinding !== undefined) parsed.coopPartnerFinding = value.coopPartnerFinding;
   if (value.dailyGoals !== undefined) parsed.dailyGoals = value.dailyGoals;
+  if (value.postcards !== undefined) parsed.postcards = value.postcards;
   return parsed;
 }
 
