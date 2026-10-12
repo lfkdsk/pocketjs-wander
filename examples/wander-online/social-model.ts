@@ -199,6 +199,12 @@ function discoveryAvailable(data: SocialMenuData): boolean {
     && data.features.discoveryLeaderboard;
 }
 
+function profilesAvailable(data: SocialMenuData): boolean {
+  return typeof data.currentRealm === "string"
+    && data.features?.realm === data.currentRealm
+    && data.features.playerProfiles === true;
+}
+
 function currentDiscoveryLeaderboard(data: SocialMenuData): DiscoveryLeaderboard | null {
   return discoveryAvailable(data) && data.leaderboard?.realm === data.currentRealm
     ? data.leaderboard ?? null
@@ -211,10 +217,12 @@ function homeRows(data: SocialMenuData): SocialMenuRow[] {
   const rows = [
     row("route-friends", "route", "FRIENDS", "REQUESTS", "accent"),
     row("route-worlds", "route", "WORLDS", "POPULATION", "accent"),
-    data.locale === "zh"
-      ? row("route-profile", "route", ZH.myCard, ZH.achievements, "accent")
-      : row("route-profile", "route", "MY CARD", "ACHIEVEMENTS", "accent"),
   ];
+  if (profilesAvailable(data)) {
+    rows.push(data.locale === "zh"
+      ? row("route-profile", "route", ZH.myCard, ZH.achievements, "accent")
+      : row("route-profile", "route", "MY CARD", "ACHIEVEMENTS", "accent"));
+  }
   if (discoveryAvailable(data)) {
     rows.push(data.locale === "zh"
       ? row("route-discovery", "route", ZH.discovery, ZH.firstFinders, "accent")
@@ -619,7 +627,7 @@ export function reduceSocialMenu(
   if (input === "privacy") {
     if (current.screen === "friends") {
       const selected = selectedRow(current, data);
-      return selected?.kind === "friend" && selected.githubId !== undefined
+      return profilesAvailable(data) && selected?.kind === "friend" && selected.githubId !== undefined
         ? {
           state: enter("profile", "friends"),
           action: { type: "view-profile", githubId: selected.githubId },
@@ -708,7 +716,9 @@ export function socialMenuView(state: SocialMenuState, data: SocialMenuData): So
   const footer = normalized.screen === "home"
     ? "CIRCLE OPEN · CROSS CLOSE"
     : normalized.screen === "friends"
-      ? "CIRCLE ACT · TRIANGLE CARD · SQUARE REMOVE · CROSS BACK"
+      ? profilesAvailable(data)
+        ? "CIRCLE ACT · TRIANGLE CARD · SQUARE REMOVE · CROSS BACK"
+        : "CIRCLE ACT · SQUARE REMOVE · CROSS BACK"
       : normalized.screen === "worlds"
         ? "CIRCLE JOIN · CROSS BACK"
         : normalized.screen === "discovery"

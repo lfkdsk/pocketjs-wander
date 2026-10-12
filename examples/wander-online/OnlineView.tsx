@@ -63,11 +63,15 @@ import {
   type PostmarkOption,
 } from "./postcard-model.ts";
 import {
+  SOCIAL_PAGE_ROWS,
   createSocialMenuState,
   normalizeSocialMenuState,
   onlineNoticeTypography,
   reduceSocialMenu,
   resolveOnlineLocale,
+  socialMenuRows,
+  socialPanelLayout,
+  socialPanelRowRect,
   type SocialAction,
   type SocialInput,
   type SocialMenuData,
@@ -131,6 +135,12 @@ import {
   type SelfDataSummary,
   type SocialSnapshot,
 } from "./shared/social.ts";
+import {
+  achievementCopy,
+  parseProfileSnapshot,
+  type AchievementId,
+  type ProfileSnapshot,
+} from "./shared/profile.ts";
 import { formatDailyGoal, parseDailyGoalSnapshot, type DailyGoalSnapshot } from "./shared/daily-goal.ts";
 import {
   POSTCARD_PROTOCOL_VERSION,
@@ -492,6 +502,7 @@ export function OnlineView() {
   const [socialOpen, setSocialOpen] = createSignal(false);
   const [socialState, setSocialState] = createSignal<SocialMenuState>(createSocialMenuState());
   const [socialSnapshot, setSocialSnapshot] = createSignal<SocialSnapshot | null>(null);
+  const [profileSnapshot, setProfileSnapshot] = createSignal<ProfileSnapshot | null>(null);
   const [realmChoices, setRealmChoices] = createSignal<RealmChoice[]>([]);
   const [selfData, setSelfData] = createSignal<SelfDataSummary | null>(null);
   const [realmFeatures, setRealmFeatures] = createSignal<RealmFeatures | null>(null);
@@ -531,6 +542,11 @@ export function OnlineView() {
    * reuses its id, so the server can return the original result without
    * delivering or charging quota twice. */
   let pendingPostcardSend: { requestId: string; draftKey: string } | null = null;
+  /** undefined: no request; null: owner card; number: one mutual friend.
+   * Unsolicited owner refreshes must not replace a friend card in flight. */
+  let pendingProfileTarget: number | null | undefined;
+  const announcedAchievements = new Set<AchievementId>();
+  const achievementNoticeQueue: AchievementId[] = [];
   let noticeUntil = 0;
   /** The demo hook's one invite request, sent once the world is ready. */
   let autoInvitePending = false;
@@ -574,14 +590,18 @@ export function OnlineView() {
       setDailyCountdownText("");
       setPostcardOpen(false);
       setPostcardState(createPostcardMenuState());
+      setProfileSnapshot(null);
       setSocialSnapshot((snapshot) => snapshot ? {
         ...snapshot,
         friends: snapshot.friends.map((friend) => friend.coopWaiting
           ? { ...friend, coopWaiting: null }
           : friend),
       } : snapshot);
-      setSocialState((state) => state.screen === "discovery" ? createSocialMenuState() : state);
+      setSocialState((state) => state.screen === "discovery" || state.screen === "profile"
+        ? createSocialMenuState()
+        : state);
     });
+    pendingProfileTarget = undefined;
   };
 
   const currentJsonRealm = (): string => {
@@ -645,6 +665,30 @@ export function OnlineView() {
     noticeUntil = Date.now() + ms;
   };
 
+  const achievementNotice = (id: AchievementId): string => {
+    const name = achievementCopy(id, locale).name;
+    return locale === "zh"
+      ? `${han(0x6210, 0x5c31, 0x89e3, 0x9501)} · ${name}`
+      : `ACHIEVEMENT · ${name}`;
+  };
+
+  /** The server supplies one-shot unlock edges. A bounded session set also
+   * makes duplicate socket delivery harmless, while the queue preserves every
+   * unlock when one fact crosses several tiers at once. */
+  const enqueueAchievementNotices = (ids: readonly AchievementId[]): void => {
+    for (const id of ids) {
+      if (announcedAchievements.has(id)) continue;
+      announcedAchievements.add(id);
+      achievementNoticeQueue.push(id);
+    }
+  };
+
+  const showNextAchievementNotice = (): void => {
+    if (notice() || achievementNoticeQueue.length === 0) return;
+    const id = achievementNoticeQueue.shift();
+    if (id) showNotice(achievementNotice(id), NOTICE_EVENT_MS);
+  };
+
   /** Map a deleteError reason token to a player-facing line. A failed
    *  delete never signs the player out: the profile is still theirs. */
   const deleteErrorText = (reason: string): string => {
@@ -693,12 +737,16 @@ export function OnlineView() {
     setSocialOpen(false);
     setSocialState(createSocialMenuState());
     setSocialSnapshot(null);
+    setProfileSnapshot(null);
     setPostcardOpen(false);
     setPostcardState(createPostcardMenuState());
     setPostcardStatus(null);
     setPostcardMailbox(null);
     setRealmChoices([]);
     setSelfData(null);
+    pendingProfileTarget = undefined;
+    achievementNoticeQueue.length = 0;
+    announcedAchievements.clear();
     setScreen("gate");
     setGateText("Signed out. Sign in again to play.");
   };
@@ -737,6 +785,7 @@ export function OnlineView() {
       self: selfData(),
       features: realmFeatures(),
       leaderboard: discoveryLeaderboard(),
+      profile: profileSnapshot(),
       locale,
       currentRealm: screen() === "world" ? client?.realmId || client?.realmPin || null : null,
       nearby: [...roster.values()]
@@ -816,6 +865,21 @@ export function OnlineView() {
         setSocialOpen(false);
         showNotice(`Joining ${action.realm}…`);
         return;
+      case "view-profile":
+        if (realmFeatures()?.playerProfiles !== true) {
+          setSocialState(createSocialMenuState());
+          showNotice(locale === "zh" ? "玩家名片暂不可用" : "PLAYER CARDS UNAVAILABLE");
+          return;
+        }
+        pendingProfileTarget = action.githubId;
+        setProfileSnapshot(null);
+        sendSocial({ type: "profileGet", githubId: action.githubId });
+        return;
+      case "set-showcase-postmark":
+        if (realmFeatures()?.playerProfiles !== true || profileSnapshot()?.self !== true) return;
+        pendingProfileTarget = null;
+        sendSocial({ type: "profilePostmarkSet", postmark: action.postmark });
+        return;
       case "set-visibility":
         sendSocial({ type: "privacySet", visible: action.visible });
         return;
@@ -832,6 +896,22 @@ export function OnlineView() {
 
   const stepSocial = (input: SocialInput): void => {
     const transition = reduceSocialMenu(socialState(), input, socialMenuData());
+    setSocialState(transition.state);
+    if (transition.action) applySocialAction(transition.action);
+  };
+
+  const activateSocialTouchRow = (visibleRow: number): void => {
+    const state = socialState();
+    const data = socialMenuData();
+    const cursor = state.page * SOCIAL_PAGE_ROWS + visibleRow;
+    const selected = normalizeSocialMenuState({ ...state, cursor }, data);
+    const item = socialMenuRows(selected, data)[selected.cursor];
+    const input: SocialInput = selected.screen === "friends" && item?.kind === "friend"
+      ? "privacy"
+      : selected.screen === "my-data" && item?.key === "self-privacy"
+        ? "privacy"
+        : "confirm";
+    const transition = reduceSocialMenu(selected, input, data);
     setSocialState(transition.state);
     if (transition.action) applySocialAction(transition.action);
   };
@@ -909,6 +989,17 @@ export function OnlineView() {
     }
   };
 
+  const profileErrorText = (reason: string): string => {
+    if (locale === "zh") {
+      if (reason === "forbidden") return "仅好友可以查看这张名片";
+      if (reason === "postmark") return "这个展示邮戳不可用";
+      return "玩家名片暂不可用";
+    }
+    if (reason === "forbidden") return "PLAYER CARD: FRIENDS ONLY";
+    if (reason === "postmark") return "PLAYER CARD: INVALID STAMP";
+    return "PLAYER CARD UNAVAILABLE";
+  };
+
   /** Account-level mail responses are monotonic and survive realm changes;
    * the physical panel itself is closed whenever admission changes. */
   const handlePostcardMessage = (msg: Record<string, unknown>): boolean => {
@@ -963,6 +1054,7 @@ export function OnlineView() {
       || type === "realmFeatures" || type === "coopErrand" || type === "coopBoard"
       || type === "coopFriendWaiting" || type === "discoveryLeaderboard" || type === "dailyGoal"
       || type === "friendResult" || type === "privacyResult" || type === "socialError"
+      || type === "profileSnapshot" || type === "profileError"
       || type === "deletedAll" || type === "deleteAllError";
     if (!socialType) return false;
     if (msg.v !== SOCIAL_PROTOCOL_VERSION) return true;
@@ -1004,13 +1096,45 @@ export function OnlineView() {
         setPostcardOpen(false);
         setPostcardState(createPostcardMenuState());
       }
-      setSocialState((state) => state.screen === "discovery" && !parsed.discoveryLeaderboard
+      if (parsed.playerProfiles !== true) {
+        pendingProfileTarget = undefined;
+        setProfileSnapshot(null);
+      }
+      setSocialState((state) => (state.screen === "discovery" && !parsed.discoveryLeaderboard)
+        || (state.screen === "profile" && !parsed.playerProfiles)
         ? createSocialMenuState()
         : normalizeSocialMenuState(state, socialMenuData()));
       if (!previous?.discoveryLeaderboard && parsed.discoveryLeaderboard && socialOpen()) {
         sendSocial({ type: "leaderboardGet" });
       }
       if (!previous?.postcards && parsed.postcards) sendPostcard({ type: "postcardStatusGet" });
+      return true;
+    }
+    if (type === "profileSnapshot") {
+      if (realmFeatures()?.playerProfiles !== true) return true;
+      const parsed = parseProfileSnapshot(msg);
+      if (!parsed) return true;
+      enqueueAchievementNotices(parsed.newAchievements);
+      showNextAchievementNotice();
+      if (parsed.self) {
+        if (pendingProfileTarget === null || (pendingProfileTarget === undefined && profileSnapshot()?.self !== false)) {
+          setProfileSnapshot(parsed);
+          setSocialState((state) => normalizeSocialMenuState(state, socialMenuData()));
+        }
+        if (pendingProfileTarget === null) pendingProfileTarget = undefined;
+      } else if (typeof pendingProfileTarget === "number") {
+        setProfileSnapshot(parsed);
+        pendingProfileTarget = undefined;
+        setSocialState((state) => normalizeSocialMenuState(state, socialMenuData()));
+      }
+      return true;
+    }
+    if (type === "profileError") {
+      if (msg.reason !== "forbidden" && msg.reason !== "postmark" && msg.reason !== "unavailable") return true;
+      pendingProfileTarget = undefined;
+      setProfileSnapshot(null);
+      setSocialState((state) => normalizeSocialMenuState(state, socialMenuData()));
+      showNotice(profileErrorText(msg.reason));
       return true;
     }
     if (type === "dailyGoal") {
@@ -2534,6 +2658,24 @@ export function OnlineView() {
       else if (edge(buttons, BTN.SQUARE)) socialInput = "delete";
       else if (edge(buttons, BTN.TRIANGLE)) socialInput = "privacy";
       if (socialInput) stepSocial(socialInput);
+      const ts = touches();
+      const layout = socialPanelLayout(vp.w, vp.h);
+      for (const t of ts) {
+        if (prevTouchIds.has(t.id)) continue;
+        if (t.x >= layout.footer.x && t.x < layout.footer.x + layout.footer.w
+          && t.y >= layout.footer.y && t.y < layout.footer.y + layout.footer.h) {
+          stepSocial("back");
+          continue;
+        }
+        for (let row = 0; row < layout.rows; row++) {
+          const hit = socialPanelRowRect(layout, row);
+          if (t.x >= hit.x && t.x < hit.x + hit.w && t.y >= hit.y && t.y < hit.y + hit.h) {
+            activateSocialTouchRow(row);
+            break;
+          }
+        }
+      }
+      prevTouchIds = new Set(ts.map((t) => t.id));
     } else if (wasPostcardOpen) {
       let postcardInput: PostcardInput | null = null;
       if (edge(buttons, BTN.UP)) postcardInput = "up";
@@ -2595,6 +2737,7 @@ export function OnlineView() {
       if (edge(buttons, BTN.RTRIGGER) && c.predictor instanceof RealmPredictor) setEmoteOpen(true);
     }
     if (notice() && Date.now() > noticeUntil) setNotice("");
+    showNextAchievementNotice();
     publish();
     if (++logTimer >= hz) {
       logTimer = 0;

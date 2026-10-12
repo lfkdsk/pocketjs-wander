@@ -2,7 +2,7 @@
 // social-model controller. The parent owns input edges, data and side effects.
 
 import { Text, View } from "@pocketjs/framework/components";
-import { createMemo, For } from "solid-js";
+import { createMemo, For, Show } from "solid-js";
 import {
   SOCIAL_DETAIL_CELLS,
   SOCIAL_PAGE_ROWS,
@@ -17,6 +17,7 @@ import {
   type SocialRect,
   type SocialRowTone,
 } from "./social-model.ts";
+import { PlayerLookPreview } from "./PlayerLookPreview.tsx";
 
 export { socialPanelLayout, socialPanelRowRect } from "./social-model.ts";
 export type { SocialPanelLayout, SocialRect } from "./social-model.ts";
@@ -103,11 +104,35 @@ export function SocialPanel(props: SocialPanelProps) {
             textColor: COLOURS.title,
             lineHeight: 18 * layout().scale,
             height: 18 * layout().scale,
+            width: view().state.screen === "profile"
+              ? Math.max(0, layout().header.w - 24 * layout().scale)
+              : layout().header.w,
           }}
           debugName="social-panel-title"
         >
           {heading()}
         </Text>
+        <Show when={view().state.screen === "profile" && props.data.profile != null}>
+          <View
+            class="absolute items-center justify-center"
+            style={{
+              posType: 1,
+              insetL: layout().header.x - layout().panel.x + layout().header.w - 20 * layout().scale,
+              insetT: layout().header.y - layout().panel.y,
+              width: 20 * layout().scale,
+              height: 20 * layout().scale,
+              bgColor: COLOURS.row,
+              borderWidth: layout().scale,
+              borderColor: COLOURS.accent,
+            }}
+            debugName="social-profile-look"
+          >
+            <PlayerLookPreview
+              look={props.data.profile?.card.look ?? 0}
+              size={16 * layout().scale}
+            />
+          </View>
+        </Show>
 
         <For each={view().rows.slice(0, layout().rows)}>
           {(item, index) => {

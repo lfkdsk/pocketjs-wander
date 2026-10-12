@@ -28,6 +28,12 @@ import { achievementCopy } from "../examples/wander-online/shared/profile.ts";
 function fixture(): SocialMenuData {
   return {
     currentRealm: "plaza-2",
+    features: {
+      realm: "plaza-2",
+      coopErrands: true,
+      discoveryLeaderboard: false,
+      playerProfiles: true,
+    },
     nearby: [{ playerId: 77, name: "Nearby" }],
     social: {
       visible: false,
@@ -94,6 +100,19 @@ describe("wander-online social menu model", () => {
     }
   });
 
+  test("player-card routes and friend-card input require the advertised capability", () => {
+    const data = fixture();
+    data.features = {
+      realm: "plaza-2",
+      coopErrands: true,
+      discoveryLeaderboard: false,
+      playerProfiles: false,
+    };
+    expect(socialMenuRows(screen("home"), data).map((item) => item.key)).not.toContain("route-profile");
+    expect(reduceSocialMenu(screen("friends", 1), "privacy", data).action).toBeNull();
+    expect(socialMenuView(screen("friends"), data).footer).not.toContain("CARD");
+  });
+
   test("home navigation enters each route and back yields an explicit close action", () => {
     const data = fixture();
     let transition = reduceSocialMenu(createSocialMenuState(), "down", data);
@@ -120,11 +139,11 @@ describe("wander-online social menu model", () => {
     expect(socialMenuRows(screen("home"), legacy).map((row) => row.key)).toEqual([
       "route-friends", "route-worlds", "route-profile", "route-my-data",
     ]);
-    legacy.features = { realm: "plaza-2", coopErrands: true, discoveryLeaderboard: false };
+    legacy.features = { realm: "plaza-2", coopErrands: true, discoveryLeaderboard: false, playerProfiles: true };
     expect(socialMenuRows(screen("home"), legacy).map((row) => row.key)).not.toContain("route-discovery");
 
     const data = fixture();
-    data.features = { realm: "plaza-2", coopErrands: true, discoveryLeaderboard: true };
+    data.features = { realm: "plaza-2", coopErrands: true, discoveryLeaderboard: true, playerProfiles: true };
     data.leaderboard = {
       realm: "plaza-2",
       revision: 4,
@@ -154,7 +173,7 @@ describe("wander-online social menu model", () => {
 
   test("Discovery keeps twenty public leaders in normal seven-row paging", () => {
     const data = fixture();
-    data.features = { realm: "plaza-2", coopErrands: false, discoveryLeaderboard: true };
+    data.features = { realm: "plaza-2", coopErrands: false, discoveryLeaderboard: true, playerProfiles: true };
     data.leaderboard = {
       realm: "plaza-2",
       revision: 1,
@@ -172,7 +191,7 @@ describe("wander-online social menu model", () => {
 
   test("locale hook selects concise Chinese Discovery copy from codepoints", () => {
     const data = fixture();
-    data.features = { realm: "plaza-2", coopErrands: true, discoveryLeaderboard: true };
+    data.features = { realm: "plaza-2", coopErrands: true, discoveryLeaderboard: true, playerProfiles: true };
     data.leaderboard = {
       realm: "plaza-2", revision: 1, listed: false,
       mine: { rank: 3, firsts: 7 }, leaders: [{ rank: 1, name: "Alice", firsts: 9 }],
@@ -476,7 +495,7 @@ describe("wander-online social panel layout", () => {
     for (const locale of ["en", "zh"] as const) {
       const data = fixture();
       data.locale = locale;
-      data.features = { realm: "plaza-2", coopErrands: true, discoveryLeaderboard: true };
+      data.features = { realm: "plaza-2", coopErrands: true, discoveryLeaderboard: true, playerProfiles: true };
       data.leaderboard = {
         realm: "plaza-2", revision: 1, listed: true,
         mine: { rank: Number.MAX_SAFE_INTEGER, firsts: Number.MAX_SAFE_INTEGER },
