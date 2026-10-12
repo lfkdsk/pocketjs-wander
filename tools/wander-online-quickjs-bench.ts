@@ -14,6 +14,15 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import {
+  BTN,
+  MSG,
+  V4_BATCH_SIZE,
+  WORLD_PROTOCOL_VERSION,
+  encodeInputBatch,
+} from "../examples/wander-online/net/protocol.ts";
+import { WORLD_STATE_VERSION } from "../examples/wander-online/net/realm-state.ts";
+import { GENERATOR_VERSION } from "../examples/wander-online/net/realm-world.ts";
 
 const args = process.argv.slice(2);
 const option = (name: string, fallback = ""): string => {
@@ -66,6 +75,81 @@ const collect = (stream: ReadableStream<Uint8Array> | number | null | undefined)
   stream && typeof stream !== "number" ? new Response(stream).text() : Promise.resolve("");
 const delay = (ms: number): Promise<void> => new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 
+interface RealmBotFarm {
+  close(): void;
+}
+
+/** Keep deterministic load clients in the same v4 realm as the app. The
+ * standalone server's older bots.ts intentionally exercises the frozen v3
+ * room, so it cannot contribute to the v4 population reported by STATE4. */
+async function startRealmBotFarm(url: string, count: number): Promise<RealmBotFarm> {
+  const sockets: WebSocket[] = [];
+  const ready: Promise<void>[] = [];
+  for (let index = 0; index < count; index++) {
+    const socket = new WebSocket(url);
+    socket.binaryType = "arraybuffer";
+    sockets.push(socket);
+    ready.push(new Promise<void>((resolveReady, rejectReady) => {
+      let admitted = false;
+      socket.addEventListener("open", () => socket.send(JSON.stringify({
+        type: "join",
+        v: WORLD_PROTOCOL_VERSION,
+        clientBuild: "wander-quickjs-bench",
+        supportedGeneratorVersions: [GENERATOR_VERSION],
+        worldStateVersion: WORLD_STATE_VERSION,
+        name: `bench${index}`,
+        color: index & 0x0f,
+      })));
+      socket.addEventListener("message", (event) => {
+        if (admitted || typeof event.data === "string") return;
+        const bytes = new Uint8Array(event.data as ArrayBuffer);
+        if (bytes[0] === MSG.welcome4) {
+          admitted = true;
+          resolveReady();
+        }
+      });
+      socket.addEventListener("error", () => {
+        if (!admitted) rejectReady(new Error(`realm bot ${index} socket error`));
+      });
+      socket.addEventListener("close", (event) => {
+        if (!admitted) rejectReady(new Error(`realm bot ${index} closed ${event.code} ${event.reason}`));
+      });
+    }));
+  }
+
+  try {
+    await Promise.race([
+      Promise.all(ready),
+      delay(10_000).then(() => fail(`timed out waiting for ${count} realm bots`)),
+    ]);
+  } catch (error) {
+    for (const socket of sockets) socket.close();
+    throw error;
+  }
+
+  const directions = [BTN.up, BTN.right, BTN.down, BTN.left] as const;
+  const sequences = sockets.map(() => 0);
+  let batch = 0;
+  const timer = setInterval(() => {
+    batch++;
+    for (let index = 0; index < sockets.length; index++) {
+      const socket = sockets[index]!;
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      const mask = directions[(Math.floor(batch / 12) + index) % directions.length]!;
+      const firstSeq = sequences[index]! + 1;
+      sequences[index] += V4_BATCH_SIZE;
+      socket.send(encodeInputBatch(firstSeq, Array(V4_BATCH_SIZE).fill(mask)));
+    }
+  }, 100);
+
+  return {
+    close(): void {
+      clearInterval(timer);
+      for (const socket of sockets) socket.close();
+    },
+  };
+}
+
 const server = online ? Bun.spawn({
   cmd: [
     process.execPath,
@@ -80,9 +164,7 @@ const server = online ? Bun.spawn({
 }) : null;
 const serverOut = collect(server?.stdout);
 const serverErr = collect(server?.stderr);
-let bots: ReturnType<typeof Bun.spawn> | null = null;
-let botsOut: Promise<string> = Promise.resolve("");
-let botsErr: Promise<string> = Promise.resolve("");
+let bots: RealmBotFarm | null = null;
 let desktopLog = "";
 
 try {
@@ -90,21 +172,7 @@ try {
     await delay(750);
     if (server.exitCode !== null) fail(`server exited ${server.exitCode}: ${(await serverErr).trim()}`);
 
-    bots = Bun.spawn({
-      cmd: [
-        process.execPath,
-        join(runnerRoot, "examples", "wander-online", "server", "bots.ts"),
-        "--url", socketUrl,
-        "--count", String(players - 1),
-        "--seconds", String(Math.ceil(ticks / 60) + 8),
-      ],
-      cwd: runnerRoot,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    botsOut = collect(bots.stdout);
-    botsErr = collect(bots.stderr);
-    await delay(1500);
+    bots = await startRealmBotFarm(`${socketUrl}/v4?realm=local`, players - 1);
   }
 
   const hostCmd = [
@@ -173,7 +241,7 @@ try {
   const summary = {
     label,
     app,
-    workload: online ? "32-player-auto-roam" : "single-player-auto-roam",
+    workload: online ? `${players}-player-auto-roam` : "single-player-auto-roam",
     commit: Bun.spawnSync({ cmd: ["git", "-C", root, "rev-parse", "HEAD"] }).stdout.toString().trim(),
     pocketjs: Bun.spawnSync({ cmd: ["git", "-C", join(root, "vendor", "pocket-rpgkit", "vendor", "pocketjs"), "rev-parse", "HEAD"] }).stdout.toString().trim(),
     bundleSha256: new Bun.CryptoHasher("sha256").update(readFileSync(js)).digest("hex"),
@@ -193,17 +261,15 @@ try {
   writeFileSync(join(out, `${safeLabel}.json`), `${JSON.stringify(summary, null, 2)}\n`);
   console.log(`WANDER_QJS ${JSON.stringify(summary)}`);
 } finally {
-  if (bots?.exitCode === null) bots.kill();
+  bots?.close();
   if (server?.exitCode === null) server.kill();
-  const [botStdout, botStderr, serverStdout, serverStderr] = await Promise.all([
-    botsOut,
-    botsErr,
+  const [serverStdout, serverStderr] = await Promise.all([
     serverOut,
     serverErr,
   ]);
   writeFileSync(
     rawLog,
-    `${desktopLog}\n--- bots ---\n${botStdout}${botStderr}\n--- server ---\n${serverStdout}${serverStderr}`,
+    `${desktopLog}\n--- realm bots ---\n${online ? players - 1 : 0} admitted\n--- server ---\n${serverStdout}${serverStderr}`,
   );
   if (online) rmSync(wrapper, { force: true });
   rmSync(dataRoot, { recursive: true, force: true });
