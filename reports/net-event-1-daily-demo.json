@@ -1,0 +1,295 @@
+{
+  "verdict": "PASS",
+  "transport": "three live WebSocket clients",
+  "seed": 1593842689,
+  "realm": "local",
+  "connectedClients": [
+    {
+      "name": "Aster",
+      "id": 1
+    },
+    {
+      "name": "Birch",
+      "id": 2
+    },
+    {
+      "name": "Clover",
+      "id": 3
+    }
+  ],
+  "today": {
+    "goal": {
+      "realm": "local",
+      "day": 20000,
+      "date": "2024-10-04",
+      "kind": "delivery",
+      "goalId": "dg1_local_ffk_d_msc_kp_msd_kp_9ibq4u",
+      "offerRx": -1020,
+      "offerRy": 745,
+      "targetRx": -1021,
+      "targetRy": 745,
+      "targetName": "Oaklea",
+      "required": 3,
+      "endsAt": 1728086400000
+    },
+    "initialProgress": [
+      {
+        "name": "Aster",
+        "progress": 0
+      },
+      {
+        "name": "Birch",
+        "progress": 0
+      },
+      {
+        "name": "Clover",
+        "progress": 0
+      }
+    ],
+    "progressSteps": [
+      {
+        "courier": "Aster",
+        "progress": 1,
+        "recipients": [
+          {
+            "name": "Aster",
+            "progress": 1,
+            "contributed": true,
+            "contributionDays": [
+              20000
+            ],
+            "completedNow": false,
+            "festivalLevel": null
+          },
+          {
+            "name": "Birch",
+            "progress": 1,
+            "contributed": false,
+            "contributionDays": [],
+            "completedNow": false,
+            "festivalLevel": null
+          },
+          {
+            "name": "Clover",
+            "progress": 1,
+            "contributed": false,
+            "contributionDays": [],
+            "completedNow": false,
+            "festivalLevel": null
+          }
+        ]
+      },
+      {
+        "courier": "Birch",
+        "progress": 2,
+        "recipients": [
+          {
+            "name": "Aster",
+            "progress": 2,
+            "contributed": true,
+            "contributionDays": [
+              20000
+            ],
+            "completedNow": false,
+            "festivalLevel": null
+          },
+          {
+            "name": "Birch",
+            "progress": 2,
+            "contributed": true,
+            "contributionDays": [
+              20000
+            ],
+            "completedNow": false,
+            "festivalLevel": null
+          },
+          {
+            "name": "Clover",
+            "progress": 2,
+            "contributed": false,
+            "contributionDays": [],
+            "completedNow": false,
+            "festivalLevel": null
+          }
+        ]
+      },
+      {
+        "courier": "Clover",
+        "progress": 3,
+        "recipients": [
+          {
+            "name": "Aster",
+            "progress": 3,
+            "contributed": true,
+            "contributionDays": [
+              20000
+            ],
+            "completedNow": true,
+            "festivalLevel": 2
+          },
+          {
+            "name": "Birch",
+            "progress": 3,
+            "contributed": true,
+            "contributionDays": [
+              20000
+            ],
+            "completedNow": true,
+            "festivalLevel": 2
+          },
+          {
+            "name": "Clover",
+            "progress": 3,
+            "contributed": true,
+            "contributionDays": [
+              20000
+            ],
+            "completedNow": true,
+            "festivalLevel": 2
+          }
+        ]
+      }
+    ],
+    "completionPulsesPerClient": [
+      1,
+      1,
+      1
+    ],
+    "extraDailyFramesAfterRepeatDelivery": [
+      0,
+      0,
+      0
+    ]
+  },
+  "festival": {
+    "region": {
+      "rx": -1021,
+      "ry": 745,
+      "name": "Oaklea"
+    },
+    "improvementLevel": 2,
+    "cells": [
+      {
+        "x": -97958,
+        "y": 71576,
+        "tile": 41
+      },
+      {
+        "x": -97970,
+        "y": 71576,
+        "tile": 41
+      },
+      {
+        "x": -97958,
+        "y": 71570,
+        "tile": 41
+      },
+      {
+        "x": -97970,
+        "y": 71570,
+        "tile": 41
+      }
+    ],
+    "beforeTiles": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "afterTiles": [
+      41,
+      41,
+      41,
+      41
+    ],
+    "recipientRegionLevels": [
+      {
+        "name": "Aster",
+        "progress": 3,
+        "contributed": true,
+        "contributionDays": [
+          20000
+        ],
+        "completedNow": true,
+        "festivalLevel": 2
+      },
+      {
+        "name": "Birch",
+        "progress": 3,
+        "contributed": true,
+        "contributionDays": [
+          20000
+        ],
+        "completedNow": true,
+        "festivalLevel": 2
+      },
+      {
+        "name": "Clover",
+        "progress": 3,
+        "contributed": true,
+        "contributionDays": [
+          20000
+        ],
+        "completedNow": true,
+        "festivalLevel": 2
+      }
+    ],
+    "persistence": "level 2 remains as realm history; rollover performs no reset write"
+  },
+  "rollover": {
+    "clockBefore": 1728086399999,
+    "clockAt": 1728086400000,
+    "oldDay": 20000,
+    "newDay": 20001,
+    "newGoal": {
+      "type": "dailyGoal",
+      "v": 1,
+      "realm": "local",
+      "day": 20001,
+      "date": "2024-10-05",
+      "kind": "delivery",
+      "goalId": "dg1_local_ffl_d_mkb_1m_mkb_1l_12siubf",
+      "offerRx": -731,
+      "offerRy": 58,
+      "targetRx": -731,
+      "targetRy": 57,
+      "targetName": "Upper Briarfell",
+      "required": 5,
+      "endsAt": 1728172800000,
+      "progress": 0,
+      "completed": false,
+      "contributed": false,
+      "contributionDays": [
+        20000
+      ],
+      "revision": 0,
+      "completedNow": false
+    },
+    "clientIdsBefore": [
+      1,
+      2,
+      3
+    ],
+    "clientIdsAfter": [
+      1,
+      2,
+      3
+    ],
+    "connectedPlayers": 3
+  },
+  "privacy": {
+    "publicContributorList": false,
+    "publicLeaderboardExtension": false,
+    "privateContributionDays": {
+      "Aster": [
+        20000
+      ],
+      "Birch": [
+        20000
+      ],
+      "Clover": [
+        20000
+      ]
+    }
+  }
+}
