@@ -1,0 +1,979 @@
+{
+  "verdict": "PASS",
+  "scale": 3,
+  "seed": 1593842689,
+  "realm": "realm-test",
+  "semanticColours": {
+    "panel": "#17243b",
+    "title": "#ffe17a",
+    "ink": "#e8efff",
+    "accent": "#9fd0ff",
+    "selected": "#354968"
+  },
+  "scenes": [
+    {
+      "locale": "en",
+      "viewport": "480x272",
+      "scene": "unread",
+      "requiredText": [
+        "MAILBOX",
+        "Alice",
+        "NEW",
+        "Carol",
+        "READ"
+      ],
+      "fit": [
+        {
+          "text": "MAILBOX",
+          "region": "header",
+          "width": 54,
+          "available": 440
+        },
+        {
+          "text": "Alice",
+          "region": "label",
+          "width": 28,
+          "available": 298
+        },
+        {
+          "text": "NEW",
+          "region": "detail",
+          "width": 28,
+          "available": 120
+        },
+        {
+          "text": "Carol",
+          "region": "label",
+          "width": 31,
+          "available": 298
+        },
+        {
+          "text": "READ",
+          "region": "detail",
+          "width": 32,
+          "available": 120
+        }
+      ],
+      "semanticPixels": {
+        "panel": 93805,
+        "title": 969,
+        "ink": 52,
+        "accent": 50,
+        "selected": 9346
+      },
+      "files": [
+        "postcard-en-unread.480x272.png",
+        "postcard-en-unread.480x272-3x.png"
+      ]
+    },
+    {
+      "locale": "en",
+      "viewport": "480x272",
+      "scene": "read",
+      "requiredText": [
+        "MAILBOX",
+        "FROM",
+        "Alice",
+        "Thank you for helping me on our journey!",
+        "POSTMARK: Ancient Tree",
+        "REPLY"
+      ],
+      "fit": [
+        {
+          "text": "MAILBOX",
+          "region": "header",
+          "width": 54,
+          "available": 440
+        },
+        {
+          "text": "FROM",
+          "region": "label",
+          "width": 35,
+          "available": 298
+        },
+        {
+          "text": "Alice",
+          "region": "detail",
+          "width": 28,
+          "available": 120
+        },
+        {
+          "text": "Thank you for helping me on our journey!",
+          "region": "body",
+          "width": 232,
+          "available": 428
+        },
+        {
+          "text": "POSTMARK: Ancient Tree",
+          "region": "body",
+          "width": 147,
+          "available": 428
+        },
+        {
+          "text": "REPLY",
+          "region": "body",
+          "width": 38,
+          "available": 428
+        }
+      ],
+      "semanticPixels": {
+        "panel": 72685,
+        "title": 969,
+        "ink": 129,
+        "accent": 89,
+        "selected": 9309
+      },
+      "files": [
+        "postcard-en-read.480x272.png",
+        "postcard-en-read.480x272-3x.png"
+      ]
+    },
+    {
+      "locale": "en",
+      "viewport": "480x272",
+      "scene": "reply-review",
+      "requiredText": [
+        "REVIEW POSTCARD",
+        "TO",
+        "Alice",
+        "MESSAGE: Hello from the road — happy travels!",
+        "POSTMARK: NO POSTMARK",
+        "SEND NOW"
+      ],
+      "fit": [
+        {
+          "text": "REVIEW POSTCARD",
+          "region": "header",
+          "width": 115,
+          "available": 440
+        },
+        {
+          "text": "TO",
+          "region": "label",
+          "width": 17,
+          "available": 298
+        },
+        {
+          "text": "Alice",
+          "region": "detail",
+          "width": 28,
+          "available": 120
+        },
+        {
+          "text": "MESSAGE: Hello from the road — happy travels!",
+          "region": "body",
+          "width": 271,
+          "available": 428
+        },
+        {
+          "text": "POSTMARK: NO POSTMARK",
+          "region": "body",
+          "width": 163,
+          "available": 428
+        },
+        {
+          "text": "SEND NOW",
+          "region": "body",
+          "width": 66,
+          "available": 428
+        }
+      ],
+      "semanticPixels": {
+        "panel": 72397,
+        "title": 1012,
+        "ink": 157,
+        "accent": 86,
+        "selected": 9306
+      },
+      "files": [
+        "postcard-en-reply-review.480x272.png",
+        "postcard-en-reply-review.480x272-3x.png"
+      ]
+    },
+    {
+      "locale": "en",
+      "viewport": "480x272",
+      "scene": "review",
+      "requiredText": [
+        "REVIEW POSTCARD",
+        "TO",
+        "Bob",
+        "MESSAGE: Hello from the road — happy travels!",
+        "POSTMARK: NO POSTMARK",
+        "SEND NOW"
+      ],
+      "fit": [
+        {
+          "text": "REVIEW POSTCARD",
+          "region": "header",
+          "width": 115,
+          "available": 440
+        },
+        {
+          "text": "TO",
+          "region": "label",
+          "width": 17,
+          "available": 298
+        },
+        {
+          "text": "Bob",
+          "region": "detail",
+          "width": 22,
+          "available": 120
+        },
+        {
+          "text": "MESSAGE: Hello from the road — happy travels!",
+          "region": "body",
+          "width": 271,
+          "available": 428
+        },
+        {
+          "text": "POSTMARK: NO POSTMARK",
+          "region": "body",
+          "width": 163,
+          "available": 428
+        },
+        {
+          "text": "SEND NOW",
+          "region": "body",
+          "width": 66,
+          "available": 428
+        }
+      ],
+      "semanticPixels": {
+        "panel": 72397,
+        "title": 1012,
+        "ink": 157,
+        "accent": 93,
+        "selected": 9306
+      },
+      "files": [
+        "postcard-en-review.480x272.png",
+        "postcard-en-review.480x272-3x.png"
+      ]
+    },
+    {
+      "locale": "zh",
+      "viewport": "480x272",
+      "scene": "unread",
+      "requiredText": [
+        "信箱",
+        "Alice",
+        "未读",
+        "Carol",
+        "已读"
+      ],
+      "fit": [
+        {
+          "text": "信箱",
+          "region": "header",
+          "width": 24,
+          "available": 440
+        },
+        {
+          "text": "Alice",
+          "region": "label",
+          "width": 28,
+          "available": 298
+        },
+        {
+          "text": "未读",
+          "region": "detail",
+          "width": 24,
+          "available": 120
+        },
+        {
+          "text": "Carol",
+          "region": "label",
+          "width": 31,
+          "available": 298
+        },
+        {
+          "text": "已读",
+          "region": "detail",
+          "width": 24,
+          "available": 120
+        }
+      ],
+      "semanticPixels": {
+        "panel": 93795,
+        "title": 938,
+        "ink": 17,
+        "accent": 18,
+        "selected": 9347
+      },
+      "files": [
+        "postcard-zh-unread.480x272.png",
+        "postcard-zh-unread.480x272-3x.png"
+      ]
+    },
+    {
+      "locale": "zh",
+      "viewport": "480x272",
+      "scene": "read",
+      "requiredText": [
+        "信箱",
+        "寄件人",
+        "Alice",
+        "谢谢你一路上的合作与帮助!",
+        "邮戳: Ancient Tree",
+        "回信"
+      ],
+      "fit": [
+        {
+          "text": "信箱",
+          "region": "header",
+          "width": 24,
+          "available": 440
+        },
+        {
+          "text": "寄件人",
+          "region": "label",
+          "width": 36,
+          "available": 298
+        },
+        {
+          "text": "Alice",
+          "region": "detail",
+          "width": 28,
+          "available": 120
+        },
+        {
+          "text": "谢谢你一路上的合作与帮助!",
+          "region": "body",
+          "width": 147,
+          "available": 428
+        },
+        {
+          "text": "邮戳: Ancient Tree",
+          "region": "body",
+          "width": 103,
+          "available": 428
+        },
+        {
+          "text": "回信",
+          "region": "body",
+          "width": 24,
+          "available": 428
+        }
+      ],
+      "semanticPixels": {
+        "panel": 72675,
+        "title": 938,
+        "ink": 30,
+        "accent": 17,
+        "selected": 9298
+      },
+      "files": [
+        "postcard-zh-read.480x272.png",
+        "postcard-zh-read.480x272-3x.png"
+      ]
+    },
+    {
+      "locale": "zh",
+      "viewport": "480x272",
+      "scene": "reply-review",
+      "requiredText": [
+        "确认明信片",
+        "收件人",
+        "Alice",
+        "正文: 向你问好,祝旅途顺利!",
+        "邮戳: 不附邮戳",
+        "确认寄出"
+      ],
+      "fit": [
+        {
+          "text": "确认明信片",
+          "region": "header",
+          "width": 60,
+          "available": 440
+        },
+        {
+          "text": "收件人",
+          "region": "label",
+          "width": 36,
+          "available": 298
+        },
+        {
+          "text": "Alice",
+          "region": "detail",
+          "width": 28,
+          "available": 120
+        },
+        {
+          "text": "正文: 向你问好,祝旅途顺利!",
+          "region": "body",
+          "width": 144,
+          "available": 428
+        },
+        {
+          "text": "邮戳: 不附邮戳",
+          "region": "body",
+          "width": 78,
+          "available": 428
+        },
+        {
+          "text": "确认寄出",
+          "region": "body",
+          "width": 48,
+          "available": 428
+        }
+      ],
+      "semanticPixels": {
+        "panel": 72481,
+        "title": 938,
+        "ink": 35,
+        "accent": 19,
+        "selected": 9309
+      },
+      "files": [
+        "postcard-zh-reply-review.480x272.png",
+        "postcard-zh-reply-review.480x272-3x.png"
+      ]
+    },
+    {
+      "locale": "zh",
+      "viewport": "480x272",
+      "scene": "review",
+      "requiredText": [
+        "确认明信片",
+        "收件人",
+        "Bob",
+        "正文: 向你问好,祝旅途顺利!",
+        "邮戳: 不附邮戳",
+        "确认寄出"
+      ],
+      "fit": [
+        {
+          "text": "确认明信片",
+          "region": "header",
+          "width": 60,
+          "available": 440
+        },
+        {
+          "text": "收件人",
+          "region": "label",
+          "width": 36,
+          "available": 298
+        },
+        {
+          "text": "Bob",
+          "region": "detail",
+          "width": 22,
+          "available": 120
+        },
+        {
+          "text": "正文: 向你问好,祝旅途顺利!",
+          "region": "body",
+          "width": 144,
+          "available": 428
+        },
+        {
+          "text": "邮戳: 不附邮戳",
+          "region": "body",
+          "width": 78,
+          "available": 428
+        },
+        {
+          "text": "确认寄出",
+          "region": "body",
+          "width": 48,
+          "available": 428
+        }
+      ],
+      "semanticPixels": {
+        "panel": 72481,
+        "title": 938,
+        "ink": 35,
+        "accent": 26,
+        "selected": 9309
+      },
+      "files": [
+        "postcard-zh-review.480x272.png",
+        "postcard-zh-review.480x272-3x.png"
+      ]
+    },
+    {
+      "locale": "en",
+      "viewport": "960x544",
+      "scene": "unread",
+      "requiredText": [
+        "MAILBOX",
+        "Alice",
+        "NEW",
+        "Carol",
+        "READ"
+      ],
+      "fit": [
+        {
+          "text": "MAILBOX",
+          "region": "header",
+          "width": 54,
+          "available": 880
+        },
+        {
+          "text": "Alice",
+          "region": "label",
+          "width": 28,
+          "available": 596
+        },
+        {
+          "text": "NEW",
+          "region": "detail",
+          "width": 28,
+          "available": 240
+        },
+        {
+          "text": "Carol",
+          "region": "label",
+          "width": 31,
+          "available": 596
+        },
+        {
+          "text": "READ",
+          "region": "detail",
+          "width": 32,
+          "available": 240
+        }
+      ],
+      "semanticPixels": {
+        "panel": 378205,
+        "title": 3741,
+        "ink": 52,
+        "accent": 50,
+        "selected": 38254
+      },
+      "files": [
+        "postcard-en-unread.960x544.png",
+        "postcard-en-unread.960x544-3x.png"
+      ]
+    },
+    {
+      "locale": "en",
+      "viewport": "960x544",
+      "scene": "read",
+      "requiredText": [
+        "MAILBOX",
+        "FROM",
+        "Alice",
+        "Thank you for helping me on our journey!",
+        "POSTMARK: Ancient Tree",
+        "REPLY"
+      ],
+      "fit": [
+        {
+          "text": "MAILBOX",
+          "region": "header",
+          "width": 54,
+          "available": 880
+        },
+        {
+          "text": "FROM",
+          "region": "label",
+          "width": 35,
+          "available": 596
+        },
+        {
+          "text": "Alice",
+          "region": "detail",
+          "width": 28,
+          "available": 240
+        },
+        {
+          "text": "Thank you for helping me on our journey!",
+          "region": "body",
+          "width": 232,
+          "available": 856
+        },
+        {
+          "text": "POSTMARK: Ancient Tree",
+          "region": "body",
+          "width": 147,
+          "available": 856
+        },
+        {
+          "text": "REPLY",
+          "region": "body",
+          "width": 38,
+          "available": 856
+        }
+      ],
+      "semanticPixels": {
+        "panel": 293725,
+        "title": 3741,
+        "ink": 129,
+        "accent": 89,
+        "selected": 38217
+      },
+      "files": [
+        "postcard-en-read.960x544.png",
+        "postcard-en-read.960x544-3x.png"
+      ]
+    },
+    {
+      "locale": "en",
+      "viewport": "960x544",
+      "scene": "reply-review",
+      "requiredText": [
+        "REVIEW POSTCARD",
+        "TO",
+        "Alice",
+        "MESSAGE: Hello from the road — happy travels!",
+        "POSTMARK: NO POSTMARK",
+        "SEND NOW"
+      ],
+      "fit": [
+        {
+          "text": "REVIEW POSTCARD",
+          "region": "header",
+          "width": 115,
+          "available": 880
+        },
+        {
+          "text": "TO",
+          "region": "label",
+          "width": 17,
+          "available": 596
+        },
+        {
+          "text": "Alice",
+          "region": "detail",
+          "width": 28,
+          "available": 240
+        },
+        {
+          "text": "MESSAGE: Hello from the road — happy travels!",
+          "region": "body",
+          "width": 271,
+          "available": 856
+        },
+        {
+          "text": "POSTMARK: NO POSTMARK",
+          "region": "body",
+          "width": 163,
+          "available": 856
+        },
+        {
+          "text": "SEND NOW",
+          "region": "body",
+          "width": 66,
+          "available": 856
+        }
+      ],
+      "semanticPixels": {
+        "panel": 293437,
+        "title": 3784,
+        "ink": 157,
+        "accent": 86,
+        "selected": 38214
+      },
+      "files": [
+        "postcard-en-reply-review.960x544.png",
+        "postcard-en-reply-review.960x544-3x.png"
+      ]
+    },
+    {
+      "locale": "en",
+      "viewport": "960x544",
+      "scene": "review",
+      "requiredText": [
+        "REVIEW POSTCARD",
+        "TO",
+        "Bob",
+        "MESSAGE: Hello from the road — happy travels!",
+        "POSTMARK: NO POSTMARK",
+        "SEND NOW"
+      ],
+      "fit": [
+        {
+          "text": "REVIEW POSTCARD",
+          "region": "header",
+          "width": 115,
+          "available": 880
+        },
+        {
+          "text": "TO",
+          "region": "label",
+          "width": 17,
+          "available": 596
+        },
+        {
+          "text": "Bob",
+          "region": "detail",
+          "width": 22,
+          "available": 240
+        },
+        {
+          "text": "MESSAGE: Hello from the road — happy travels!",
+          "region": "body",
+          "width": 271,
+          "available": 856
+        },
+        {
+          "text": "POSTMARK: NO POSTMARK",
+          "region": "body",
+          "width": 163,
+          "available": 856
+        },
+        {
+          "text": "SEND NOW",
+          "region": "body",
+          "width": 66,
+          "available": 856
+        }
+      ],
+      "semanticPixels": {
+        "panel": 293437,
+        "title": 3784,
+        "ink": 157,
+        "accent": 93,
+        "selected": 38214
+      },
+      "files": [
+        "postcard-en-review.960x544.png",
+        "postcard-en-review.960x544-3x.png"
+      ]
+    },
+    {
+      "locale": "zh",
+      "viewport": "960x544",
+      "scene": "unread",
+      "requiredText": [
+        "信箱",
+        "Alice",
+        "未读",
+        "Carol",
+        "已读"
+      ],
+      "fit": [
+        {
+          "text": "信箱",
+          "region": "header",
+          "width": 24,
+          "available": 880
+        },
+        {
+          "text": "Alice",
+          "region": "label",
+          "width": 28,
+          "available": 596
+        },
+        {
+          "text": "未读",
+          "region": "detail",
+          "width": 24,
+          "available": 240
+        },
+        {
+          "text": "Carol",
+          "region": "label",
+          "width": 31,
+          "available": 596
+        },
+        {
+          "text": "已读",
+          "region": "detail",
+          "width": 24,
+          "available": 240
+        }
+      ],
+      "semanticPixels": {
+        "panel": 378195,
+        "title": 3710,
+        "ink": 17,
+        "accent": 18,
+        "selected": 38255
+      },
+      "files": [
+        "postcard-zh-unread.960x544.png",
+        "postcard-zh-unread.960x544-3x.png"
+      ]
+    },
+    {
+      "locale": "zh",
+      "viewport": "960x544",
+      "scene": "read",
+      "requiredText": [
+        "信箱",
+        "寄件人",
+        "Alice",
+        "谢谢你一路上的合作与帮助!",
+        "邮戳: Ancient Tree",
+        "回信"
+      ],
+      "fit": [
+        {
+          "text": "信箱",
+          "region": "header",
+          "width": 24,
+          "available": 880
+        },
+        {
+          "text": "寄件人",
+          "region": "label",
+          "width": 36,
+          "available": 596
+        },
+        {
+          "text": "Alice",
+          "region": "detail",
+          "width": 28,
+          "available": 240
+        },
+        {
+          "text": "谢谢你一路上的合作与帮助!",
+          "region": "body",
+          "width": 147,
+          "available": 856
+        },
+        {
+          "text": "邮戳: Ancient Tree",
+          "region": "body",
+          "width": 103,
+          "available": 856
+        },
+        {
+          "text": "回信",
+          "region": "body",
+          "width": 24,
+          "available": 856
+        }
+      ],
+      "semanticPixels": {
+        "panel": 293715,
+        "title": 3710,
+        "ink": 30,
+        "accent": 17,
+        "selected": 38206
+      },
+      "files": [
+        "postcard-zh-read.960x544.png",
+        "postcard-zh-read.960x544-3x.png"
+      ]
+    },
+    {
+      "locale": "zh",
+      "viewport": "960x544",
+      "scene": "reply-review",
+      "requiredText": [
+        "确认明信片",
+        "收件人",
+        "Alice",
+        "正文: 向你问好,祝旅途顺利!",
+        "邮戳: 不附邮戳",
+        "确认寄出"
+      ],
+      "fit": [
+        {
+          "text": "确认明信片",
+          "region": "header",
+          "width": 60,
+          "available": 880
+        },
+        {
+          "text": "收件人",
+          "region": "label",
+          "width": 36,
+          "available": 596
+        },
+        {
+          "text": "Alice",
+          "region": "detail",
+          "width": 28,
+          "available": 240
+        },
+        {
+          "text": "正文: 向你问好,祝旅途顺利!",
+          "region": "body",
+          "width": 144,
+          "available": 856
+        },
+        {
+          "text": "邮戳: 不附邮戳",
+          "region": "body",
+          "width": 78,
+          "available": 856
+        },
+        {
+          "text": "确认寄出",
+          "region": "body",
+          "width": 48,
+          "available": 856
+        }
+      ],
+      "semanticPixels": {
+        "panel": 293521,
+        "title": 3710,
+        "ink": 35,
+        "accent": 19,
+        "selected": 38217
+      },
+      "files": [
+        "postcard-zh-reply-review.960x544.png",
+        "postcard-zh-reply-review.960x544-3x.png"
+      ]
+    },
+    {
+      "locale": "zh",
+      "viewport": "960x544",
+      "scene": "review",
+      "requiredText": [
+        "确认明信片",
+        "收件人",
+        "Bob",
+        "正文: 向你问好,祝旅途顺利!",
+        "邮戳: 不附邮戳",
+        "确认寄出"
+      ],
+      "fit": [
+        {
+          "text": "确认明信片",
+          "region": "header",
+          "width": 60,
+          "available": 880
+        },
+        {
+          "text": "收件人",
+          "region": "label",
+          "width": 36,
+          "available": 596
+        },
+        {
+          "text": "Bob",
+          "region": "detail",
+          "width": 22,
+          "available": 240
+        },
+        {
+          "text": "正文: 向你问好,祝旅途顺利!",
+          "region": "body",
+          "width": 144,
+          "available": 856
+        },
+        {
+          "text": "邮戳: 不附邮戳",
+          "region": "body",
+          "width": 78,
+          "available": 856
+        },
+        {
+          "text": "确认寄出",
+          "region": "body",
+          "width": 48,
+          "available": 856
+        }
+      ],
+      "semanticPixels": {
+        "panel": 293521,
+        "title": 3710,
+        "ink": 35,
+        "accent": 26,
+        "selected": 38217
+      },
+      "files": [
+        "postcard-zh-review.960x544.png",
+        "postcard-zh-review.960x544-3x.png"
+      ]
+    }
+  ]
+}

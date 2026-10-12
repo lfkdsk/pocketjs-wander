@@ -1,0 +1,4269 @@
+{
+  "verdict": "PASS",
+  "generatedAt": "2026-10-12T05:24:48.720Z",
+  "chrome": "/usr/bin/google-chrome",
+  "gameServer": "ws://localhost:8080/ws",
+  "siteOrigin": "http://127.0.0.1:37707",
+  "failures": [],
+  "consoleErrors": [],
+  "results": {
+    "portrait": {
+      "viewport": "390x844@3",
+      "locale": "en",
+      "name": "Touch Port",
+      "nameTargets": [
+        {
+          "selector": "#auth-name",
+          "label": "character name input",
+          "text": "touch-portra",
+          "visible": true,
+          "rect": {
+            "left": 119.78125,
+            "top": 145.59375,
+            "right": 301.78125,
+            "bottom": 189.59375,
+            "width": 182,
+            "height": 44
+          }
+        },
+        {
+          "selector": "#auth-name-submit",
+          "label": "Create",
+          "text": "Create",
+          "visible": true,
+          "rect": {
+            "left": 307.78125,
+            "top": 145.59375,
+            "right": 369.765625,
+            "bottom": 189.59375,
+            "width": 61.984375,
+            "height": 44
+          }
+        },
+        {
+          "selector": "#auth-signout",
+          "label": "Sign out",
+          "text": "Sign out",
+          "visible": true,
+          "rect": {
+            "left": 237.296875,
+            "top": 93.59375,
+            "right": 317.5625,
+            "bottom": 137.59375,
+            "width": 80.265625,
+            "height": 44
+          }
+        },
+        {
+          "selector": "#fullscreen-toggle",
+          "label": "Fullscreen",
+          "text": "Fullscreen",
+          "visible": true,
+          "rect": {
+            "left": 157.046875,
+            "top": 41.59375,
+            "right": 250.3125,
+            "bottom": 85.59375,
+            "width": 93.265625,
+            "height": 44
+          }
+        }
+      ],
+      "inviteTargets": [
+        {
+          "selector": "#auth-invite",
+          "label": "invite link input",
+          "text": "http://127.0.0.1:37707/wander-online/?mobile=portrait&lang=en#invite=local.4RGYGEQV",
+          "visible": true,
+          "rect": {
+            "left": 81.5,
+            "top": 145.59375,
+            "right": 315.5,
+            "bottom": 189.59375,
+            "width": 234,
+            "height": 44
+          }
+        },
+        {
+          "selector": "#auth-invite-copy",
+          "label": "Copy",
+          "text": "Copy",
+          "visible": true,
+          "rect": {
+            "left": 321.5,
+            "top": 145.59375,
+            "right": 373.953125,
+            "bottom": 189.59375,
+            "width": 52.453125,
+            "height": 44
+          }
+        },
+        {
+          "selector": "#auth-invite-close",
+          "label": "Close",
+          "text": "Close",
+          "visible": true,
+          "rect": {
+            "left": 16,
+            "top": 195.59375,
+            "right": 71,
+            "bottom": 239.59375,
+            "width": 55,
+            "height": 44
+          }
+        },
+        {
+          "selector": "#auth-signout",
+          "label": "Sign out",
+          "text": "Sign out",
+          "visible": true,
+          "rect": {
+            "left": 214.5,
+            "top": 93.59375,
+            "right": 294.765625,
+            "bottom": 137.59375,
+            "width": 80.265625,
+            "height": 44
+          }
+        }
+      ],
+      "invite": "http://127.0.0.1:37707/wander-online/?mobile=portrait&lang=en#invite=local.4RGYGEQV",
+      "controls": {
+        "viewport": {
+          "width": 390,
+          "height": 844,
+          "dpr": 3
+        },
+        "logical": {
+          "width": 537,
+          "height": 304
+        },
+        "screen": {
+          "left": 16,
+          "top": 201.59375,
+          "right": 374,
+          "bottom": 404.25,
+          "width": 358,
+          "height": 202.65625
+        },
+        "controls": [
+          {
+            "selector": "[data-button=\"UP\"]",
+            "label": "UP",
+            "text": "▲",
+            "visible": true,
+            "rect": {
+              "left": 68,
+              "top": 420.25,
+              "right": 116,
+              "bottom": 468.25,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"LEFT\"]",
+            "label": "LEFT",
+            "text": "◀",
+            "visible": true,
+            "rect": {
+              "left": 16,
+              "top": 472.25,
+              "right": 64,
+              "bottom": 520.25,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"RIGHT\"]",
+            "label": "RIGHT",
+            "text": "▶",
+            "visible": true,
+            "rect": {
+              "left": 120,
+              "top": 472.25,
+              "right": 168,
+              "bottom": 520.25,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"DOWN\"]",
+            "label": "DOWN",
+            "text": "▼",
+            "visible": true,
+            "rect": {
+              "left": 68,
+              "top": 524.25,
+              "right": 116,
+              "bottom": 572.25,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"CIRCLE\"]",
+            "label": "CIRCLE",
+            "text": "A",
+            "visible": true,
+            "rect": {
+              "left": 214,
+              "top": 418.25,
+              "right": 262,
+              "bottom": 466.25,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"CROSS\"]",
+            "label": "CROSS",
+            "text": "B",
+            "visible": true,
+            "rect": {
+              "left": 270,
+              "top": 418.25,
+              "right": 318,
+              "bottom": 466.25,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"TRIANGLE\"]",
+            "label": "TRIANGLE",
+            "text": "X",
+            "visible": true,
+            "rect": {
+              "left": 326,
+              "top": 418.25,
+              "right": 374,
+              "bottom": 466.25,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"SQUARE\"]",
+            "label": "SQUARE",
+            "text": "Y",
+            "visible": true,
+            "rect": {
+              "left": 214,
+              "top": 474.25,
+              "right": 262,
+              "bottom": 522.25,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"LTRIGGER\"]",
+            "label": "LTRIGGER",
+            "text": "L",
+            "visible": true,
+            "rect": {
+              "left": 270,
+              "top": 474.25,
+              "right": 318,
+              "bottom": 522.25,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"RTRIGGER\"]",
+            "label": "RTRIGGER",
+            "text": "R",
+            "visible": true,
+            "rect": {
+              "left": 326,
+              "top": 474.25,
+              "right": 374,
+              "bottom": 522.25,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"SELECT\"]",
+            "label": "SELECT",
+            "text": "Select",
+            "visible": true,
+            "rect": {
+              "left": 248.421875,
+              "top": 530.25,
+              "right": 310.265625,
+              "bottom": 574.25,
+              "width": 61.84375,
+              "height": 44
+            }
+          },
+          {
+            "selector": "[data-button=\"START\"]",
+            "label": "START",
+            "text": "Start",
+            "visible": true,
+            "rect": {
+              "left": 318.265625,
+              "top": 530.25,
+              "right": 374,
+              "bottom": 574.25,
+              "width": 55.734375,
+              "height": 44
+            }
+          }
+        ],
+        "critical": [
+          {
+            "name": "status",
+            "rect": {
+              "left": 20,
+              "top": 204.26027960526315,
+              "right": 260,
+              "bottom": 230.92557565789474,
+              "width": 240,
+              "height": 26.66529605263158
+            }
+          },
+          {
+            "name": "daily",
+            "rect": {
+              "left": 20,
+              "top": 341.5865542763158,
+              "right": 370,
+              "bottom": 361.5855263157895,
+              "width": 350,
+              "height": 19.998972039473685
+            }
+          },
+          {
+            "name": "log",
+            "rect": {
+              "left": 20,
+              "top": 364.2520559210526,
+              "right": 370,
+              "bottom": 374.91817434210526,
+              "width": 350,
+              "height": 10.666118421052632
+            }
+          },
+          {
+            "name": "errand",
+            "rect": {
+              "left": 20,
+              "top": 377.58470394736844,
+              "right": 370,
+              "bottom": 388.25082236842104,
+              "width": 350,
+              "height": 10.666118421052632
+            }
+          },
+          {
+            "name": "help",
+            "rect": {
+              "left": 20,
+              "top": 390.9173519736842,
+              "right": 300,
+              "bottom": 401.5834703947369,
+              "width": 280,
+              "height": 10.666118421052632
+            }
+          }
+        ],
+        "overlaps": [],
+        "centreOverlaps": [],
+        "socialPanel": null,
+        "socialOverlaps": []
+      },
+      "dailyGoal": {
+        "snapshot": {
+          "realm": "local",
+          "day": 20738,
+          "date": "2026-10-12",
+          "kind": "landmark",
+          "goalId": "dg1_local_g02_l_n_n_miq_m5o_1j1574l",
+          "offerRx": null,
+          "offerRy": null,
+          "targetRx": -674,
+          "targetRy": -204,
+          "targetName": "Great Galeferry",
+          "progress": 0,
+          "required": 4,
+          "completed": false,
+          "endsAt": 1791849600000,
+          "contributed": false,
+          "contributionDays": [],
+          "revision": 0
+        },
+        "text": "DAILY LANDMARK FESTIVAL · Great Galeferry · 0/4",
+        "countdown": "ENDS 18:35:40 UTC",
+        "remaining": 66940,
+        "textPixels": 1497,
+        "countdownPixels": 1296
+      },
+      "coopPartnerFinding": {
+        "board": {
+          "offer": {
+            "rx": -1,
+            "ry": 0
+          },
+          "query": {
+            "type": "coopBoardGet",
+            "offerRx": -1,
+            "offerRy": 0,
+            "v": 1
+          },
+          "dialogPixels": 125385,
+          "textPixels": 5026,
+          "layout": {
+            "viewport": {
+              "width": 390,
+              "height": 844,
+              "dpr": 3
+            },
+            "logical": {
+              "width": 537,
+              "height": 304
+            },
+            "screen": {
+              "left": 16,
+              "top": 201.59375,
+              "right": 374,
+              "bottom": 404.25,
+              "width": 358,
+              "height": 202.65625
+            },
+            "controls": [
+              {
+                "selector": "[data-button=\"UP\"]",
+                "label": "UP",
+                "text": "▲",
+                "visible": true,
+                "rect": {
+                  "left": 68,
+                  "top": 420.25,
+                  "right": 116,
+                  "bottom": 468.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LEFT\"]",
+                "label": "LEFT",
+                "text": "◀",
+                "visible": true,
+                "rect": {
+                  "left": 16,
+                  "top": 472.25,
+                  "right": 64,
+                  "bottom": 520.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RIGHT\"]",
+                "label": "RIGHT",
+                "text": "▶",
+                "visible": true,
+                "rect": {
+                  "left": 120,
+                  "top": 472.25,
+                  "right": 168,
+                  "bottom": 520.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"DOWN\"]",
+                "label": "DOWN",
+                "text": "▼",
+                "visible": true,
+                "rect": {
+                  "left": 68,
+                  "top": 524.25,
+                  "right": 116,
+                  "bottom": 572.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CIRCLE\"]",
+                "label": "CIRCLE",
+                "text": "A",
+                "visible": true,
+                "rect": {
+                  "left": 214,
+                  "top": 418.25,
+                  "right": 262,
+                  "bottom": 466.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CROSS\"]",
+                "label": "CROSS",
+                "text": "B",
+                "visible": true,
+                "rect": {
+                  "left": 270,
+                  "top": 418.25,
+                  "right": 318,
+                  "bottom": 466.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"TRIANGLE\"]",
+                "label": "TRIANGLE",
+                "text": "X",
+                "visible": true,
+                "rect": {
+                  "left": 326,
+                  "top": 418.25,
+                  "right": 374,
+                  "bottom": 466.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SQUARE\"]",
+                "label": "SQUARE",
+                "text": "Y",
+                "visible": true,
+                "rect": {
+                  "left": 214,
+                  "top": 474.25,
+                  "right": 262,
+                  "bottom": 522.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LTRIGGER\"]",
+                "label": "LTRIGGER",
+                "text": "L",
+                "visible": true,
+                "rect": {
+                  "left": 270,
+                  "top": 474.25,
+                  "right": 318,
+                  "bottom": 522.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RTRIGGER\"]",
+                "label": "RTRIGGER",
+                "text": "R",
+                "visible": true,
+                "rect": {
+                  "left": 326,
+                  "top": 474.25,
+                  "right": 374,
+                  "bottom": 522.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SELECT\"]",
+                "label": "SELECT",
+                "text": "Select",
+                "visible": true,
+                "rect": {
+                  "left": 248.421875,
+                  "top": 530.25,
+                  "right": 310.265625,
+                  "bottom": 574.25,
+                  "width": 61.84375,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "[data-button=\"START\"]",
+                "label": "START",
+                "text": "Start",
+                "visible": true,
+                "rect": {
+                  "left": 318.265625,
+                  "top": 530.25,
+                  "right": 374,
+                  "bottom": 574.25,
+                  "width": 55.734375,
+                  "height": 44
+                }
+              }
+            ],
+            "critical": [
+              {
+                "name": "status",
+                "rect": {
+                  "left": 20,
+                  "top": 204.26027960526315,
+                  "right": 260,
+                  "bottom": 230.92557565789474,
+                  "width": 240,
+                  "height": 26.66529605263158
+                }
+              },
+              {
+                "name": "daily",
+                "rect": {
+                  "left": 20,
+                  "top": 341.5865542763158,
+                  "right": 370,
+                  "bottom": 361.5855263157895,
+                  "width": 350,
+                  "height": 19.998972039473685
+                }
+              },
+              {
+                "name": "log",
+                "rect": {
+                  "left": 20,
+                  "top": 364.2520559210526,
+                  "right": 370,
+                  "bottom": 374.91817434210526,
+                  "width": 350,
+                  "height": 10.666118421052632
+                }
+              },
+              {
+                "name": "errand",
+                "rect": {
+                  "left": 20,
+                  "top": 377.58470394736844,
+                  "right": 370,
+                  "bottom": 388.25082236842104,
+                  "width": 350,
+                  "height": 10.666118421052632
+                }
+              },
+              {
+                "name": "help",
+                "rect": {
+                  "left": 20,
+                  "top": 390.9173519736842,
+                  "right": 300,
+                  "bottom": 401.5834703947369,
+                  "width": 280,
+                  "height": 10.666118421052632
+                }
+              }
+            ],
+            "overlaps": [],
+            "centreOverlaps": [],
+            "socialPanel": null,
+            "socialOverlaps": []
+          }
+        },
+        "friend": {
+          "notice": "COOP · Mia · Moss · parcel",
+          "waiting": 1,
+          "noticePixels": 1043,
+          "selectedRowPixels": 37170,
+          "worldLayout": {
+            "viewport": {
+              "width": 390,
+              "height": 844,
+              "dpr": 3
+            },
+            "logical": {
+              "width": 537,
+              "height": 304
+            },
+            "screen": {
+              "left": 16,
+              "top": 201.59375,
+              "right": 374,
+              "bottom": 404.25,
+              "width": 358,
+              "height": 202.65625
+            },
+            "controls": [
+              {
+                "selector": "[data-button=\"UP\"]",
+                "label": "UP",
+                "text": "▲",
+                "visible": true,
+                "rect": {
+                  "left": 68,
+                  "top": 420.25,
+                  "right": 116,
+                  "bottom": 468.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LEFT\"]",
+                "label": "LEFT",
+                "text": "◀",
+                "visible": true,
+                "rect": {
+                  "left": 16,
+                  "top": 472.25,
+                  "right": 64,
+                  "bottom": 520.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RIGHT\"]",
+                "label": "RIGHT",
+                "text": "▶",
+                "visible": true,
+                "rect": {
+                  "left": 120,
+                  "top": 472.25,
+                  "right": 168,
+                  "bottom": 520.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"DOWN\"]",
+                "label": "DOWN",
+                "text": "▼",
+                "visible": true,
+                "rect": {
+                  "left": 68,
+                  "top": 524.25,
+                  "right": 116,
+                  "bottom": 572.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CIRCLE\"]",
+                "label": "CIRCLE",
+                "text": "A",
+                "visible": true,
+                "rect": {
+                  "left": 214,
+                  "top": 418.25,
+                  "right": 262,
+                  "bottom": 466.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CROSS\"]",
+                "label": "CROSS",
+                "text": "B",
+                "visible": true,
+                "rect": {
+                  "left": 270,
+                  "top": 418.25,
+                  "right": 318,
+                  "bottom": 466.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"TRIANGLE\"]",
+                "label": "TRIANGLE",
+                "text": "X",
+                "visible": true,
+                "rect": {
+                  "left": 326,
+                  "top": 418.25,
+                  "right": 374,
+                  "bottom": 466.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SQUARE\"]",
+                "label": "SQUARE",
+                "text": "Y",
+                "visible": true,
+                "rect": {
+                  "left": 214,
+                  "top": 474.25,
+                  "right": 262,
+                  "bottom": 522.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LTRIGGER\"]",
+                "label": "LTRIGGER",
+                "text": "L",
+                "visible": true,
+                "rect": {
+                  "left": 270,
+                  "top": 474.25,
+                  "right": 318,
+                  "bottom": 522.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RTRIGGER\"]",
+                "label": "RTRIGGER",
+                "text": "R",
+                "visible": true,
+                "rect": {
+                  "left": 326,
+                  "top": 474.25,
+                  "right": 374,
+                  "bottom": 522.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SELECT\"]",
+                "label": "SELECT",
+                "text": "Select",
+                "visible": true,
+                "rect": {
+                  "left": 248.421875,
+                  "top": 530.25,
+                  "right": 310.265625,
+                  "bottom": 574.25,
+                  "width": 61.84375,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "[data-button=\"START\"]",
+                "label": "START",
+                "text": "Start",
+                "visible": true,
+                "rect": {
+                  "left": 318.265625,
+                  "top": 530.25,
+                  "right": 374,
+                  "bottom": 574.25,
+                  "width": 55.734375,
+                  "height": 44
+                }
+              }
+            ],
+            "critical": [
+              {
+                "name": "status",
+                "rect": {
+                  "left": 20,
+                  "top": 204.26027960526315,
+                  "right": 260,
+                  "bottom": 230.92557565789474,
+                  "width": 240,
+                  "height": 26.66529605263158
+                }
+              },
+              {
+                "name": "daily",
+                "rect": {
+                  "left": 20,
+                  "top": 341.5865542763158,
+                  "right": 370,
+                  "bottom": 361.5855263157895,
+                  "width": 350,
+                  "height": 19.998972039473685
+                }
+              },
+              {
+                "name": "log",
+                "rect": {
+                  "left": 20,
+                  "top": 364.2520559210526,
+                  "right": 370,
+                  "bottom": 374.91817434210526,
+                  "width": 350,
+                  "height": 10.666118421052632
+                }
+              },
+              {
+                "name": "errand",
+                "rect": {
+                  "left": 20,
+                  "top": 377.58470394736844,
+                  "right": 370,
+                  "bottom": 388.25082236842104,
+                  "width": 350,
+                  "height": 10.666118421052632
+                }
+              },
+              {
+                "name": "help",
+                "rect": {
+                  "left": 20,
+                  "top": 390.9173519736842,
+                  "right": 300,
+                  "bottom": 401.5834703947369,
+                  "width": 280,
+                  "height": 10.666118421052632
+                }
+              }
+            ],
+            "overlaps": [],
+            "centreOverlaps": [],
+            "socialPanel": null,
+            "socialOverlaps": []
+          }
+        },
+        "ready": {
+          "remaining": 30,
+          "countdownPixels": 726,
+          "noticePixels": 855,
+          "layout": {
+            "viewport": {
+              "width": 390,
+              "height": 844,
+              "dpr": 3
+            },
+            "logical": {
+              "width": 537,
+              "height": 304
+            },
+            "screen": {
+              "left": 16,
+              "top": 201.59375,
+              "right": 374,
+              "bottom": 404.25,
+              "width": 358,
+              "height": 202.65625
+            },
+            "controls": [
+              {
+                "selector": "[data-button=\"UP\"]",
+                "label": "UP",
+                "text": "▲",
+                "visible": true,
+                "rect": {
+                  "left": 68,
+                  "top": 420.25,
+                  "right": 116,
+                  "bottom": 468.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LEFT\"]",
+                "label": "LEFT",
+                "text": "◀",
+                "visible": true,
+                "rect": {
+                  "left": 16,
+                  "top": 472.25,
+                  "right": 64,
+                  "bottom": 520.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RIGHT\"]",
+                "label": "RIGHT",
+                "text": "▶",
+                "visible": true,
+                "rect": {
+                  "left": 120,
+                  "top": 472.25,
+                  "right": 168,
+                  "bottom": 520.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"DOWN\"]",
+                "label": "DOWN",
+                "text": "▼",
+                "visible": true,
+                "rect": {
+                  "left": 68,
+                  "top": 524.25,
+                  "right": 116,
+                  "bottom": 572.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CIRCLE\"]",
+                "label": "CIRCLE",
+                "text": "A",
+                "visible": true,
+                "rect": {
+                  "left": 214,
+                  "top": 418.25,
+                  "right": 262,
+                  "bottom": 466.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CROSS\"]",
+                "label": "CROSS",
+                "text": "B",
+                "visible": true,
+                "rect": {
+                  "left": 270,
+                  "top": 418.25,
+                  "right": 318,
+                  "bottom": 466.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"TRIANGLE\"]",
+                "label": "TRIANGLE",
+                "text": "X",
+                "visible": true,
+                "rect": {
+                  "left": 326,
+                  "top": 418.25,
+                  "right": 374,
+                  "bottom": 466.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SQUARE\"]",
+                "label": "SQUARE",
+                "text": "Y",
+                "visible": true,
+                "rect": {
+                  "left": 214,
+                  "top": 474.25,
+                  "right": 262,
+                  "bottom": 522.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LTRIGGER\"]",
+                "label": "LTRIGGER",
+                "text": "L",
+                "visible": true,
+                "rect": {
+                  "left": 270,
+                  "top": 474.25,
+                  "right": 318,
+                  "bottom": 522.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RTRIGGER\"]",
+                "label": "RTRIGGER",
+                "text": "R",
+                "visible": true,
+                "rect": {
+                  "left": 326,
+                  "top": 474.25,
+                  "right": 374,
+                  "bottom": 522.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SELECT\"]",
+                "label": "SELECT",
+                "text": "Select",
+                "visible": true,
+                "rect": {
+                  "left": 248.421875,
+                  "top": 530.25,
+                  "right": 310.265625,
+                  "bottom": 574.25,
+                  "width": 61.84375,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "[data-button=\"START\"]",
+                "label": "START",
+                "text": "Start",
+                "visible": true,
+                "rect": {
+                  "left": 318.265625,
+                  "top": 530.25,
+                  "right": 374,
+                  "bottom": 574.25,
+                  "width": 55.734375,
+                  "height": 44
+                }
+              }
+            ],
+            "critical": [
+              {
+                "name": "status",
+                "rect": {
+                  "left": 20,
+                  "top": 204.26027960526315,
+                  "right": 260,
+                  "bottom": 230.92557565789474,
+                  "width": 240,
+                  "height": 26.66529605263158
+                }
+              },
+              {
+                "name": "daily",
+                "rect": {
+                  "left": 20,
+                  "top": 341.5865542763158,
+                  "right": 370,
+                  "bottom": 361.5855263157895,
+                  "width": 350,
+                  "height": 19.998972039473685
+                }
+              },
+              {
+                "name": "log",
+                "rect": {
+                  "left": 20,
+                  "top": 364.2520559210526,
+                  "right": 370,
+                  "bottom": 374.91817434210526,
+                  "width": 350,
+                  "height": 10.666118421052632
+                }
+              },
+              {
+                "name": "errand",
+                "rect": {
+                  "left": 20,
+                  "top": 377.58470394736844,
+                  "right": 370,
+                  "bottom": 388.25082236842104,
+                  "width": 350,
+                  "height": 10.666118421052632
+                }
+              },
+              {
+                "name": "help",
+                "rect": {
+                  "left": 20,
+                  "top": 390.9173519736842,
+                  "right": 300,
+                  "bottom": 401.5834703947369,
+                  "width": 280,
+                  "height": 10.666118421052632
+                }
+              }
+            ],
+            "overlaps": [],
+            "centreOverlaps": [],
+            "socialPanel": null,
+            "socialOverlaps": []
+          }
+        },
+        "cancelled": {
+          "notice": "COOP · CANCELLED",
+          "noticePixels": 1044
+        }
+      },
+      "postcards": {
+        "unread": 1,
+        "replyRecipient": {
+          "postcardId": "pc_mobile_portrait",
+          "name": "Nia"
+        },
+        "readRequest": {
+          "type": "postcardRead",
+          "id": "pc_mobile_portrait",
+          "v": 1
+        },
+        "replySendAttempts": [
+          {
+            "type": "postcardSend",
+            "replyToPostcardId": "pc_mobile_portrait",
+            "sentenceId": "thanks",
+            "postmark": null,
+            "requestId": "pc_mv4t4y12_1dd6qbk1i5okxy",
+            "v": 1
+          },
+          {
+            "type": "postcardSend",
+            "replyToPostcardId": "pc_mobile_portrait",
+            "sentenceId": "thanks",
+            "postmark": null,
+            "requestId": "pc_mv4t4y12_1dd6qbk1i5okxy",
+            "v": 1
+          }
+        ],
+        "badgePixels": 3224,
+        "badgeTextPixels": 186,
+        "homeLayout": {
+          "viewport": {
+            "width": 390,
+            "height": 844,
+            "dpr": 3
+          },
+          "logical": {
+            "width": 537,
+            "height": 304
+          },
+          "screen": {
+            "left": 16,
+            "top": 201.59375,
+            "right": 374,
+            "bottom": 404.25,
+            "width": 358,
+            "height": 202.65625
+          },
+          "controls": [
+            {
+              "selector": "[data-button=\"UP\"]",
+              "label": "UP",
+              "text": "▲",
+              "visible": true,
+              "rect": {
+                "left": 68,
+                "top": 420.25,
+                "right": 116,
+                "bottom": 468.25,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"LEFT\"]",
+              "label": "LEFT",
+              "text": "◀",
+              "visible": true,
+              "rect": {
+                "left": 16,
+                "top": 472.25,
+                "right": 64,
+                "bottom": 520.25,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"RIGHT\"]",
+              "label": "RIGHT",
+              "text": "▶",
+              "visible": true,
+              "rect": {
+                "left": 120,
+                "top": 472.25,
+                "right": 168,
+                "bottom": 520.25,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"DOWN\"]",
+              "label": "DOWN",
+              "text": "▼",
+              "visible": true,
+              "rect": {
+                "left": 68,
+                "top": 524.25,
+                "right": 116,
+                "bottom": 572.25,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"CIRCLE\"]",
+              "label": "CIRCLE",
+              "text": "A",
+              "visible": true,
+              "rect": {
+                "left": 214,
+                "top": 418.25,
+                "right": 262,
+                "bottom": 466.25,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"CROSS\"]",
+              "label": "CROSS",
+              "text": "B",
+              "visible": true,
+              "rect": {
+                "left": 270,
+                "top": 418.25,
+                "right": 318,
+                "bottom": 466.25,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"TRIANGLE\"]",
+              "label": "TRIANGLE",
+              "text": "X",
+              "visible": true,
+              "rect": {
+                "left": 326,
+                "top": 418.25,
+                "right": 374,
+                "bottom": 466.25,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"SQUARE\"]",
+              "label": "SQUARE",
+              "text": "Y",
+              "visible": true,
+              "rect": {
+                "left": 214,
+                "top": 474.25,
+                "right": 262,
+                "bottom": 522.25,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"LTRIGGER\"]",
+              "label": "LTRIGGER",
+              "text": "L",
+              "visible": true,
+              "rect": {
+                "left": 270,
+                "top": 474.25,
+                "right": 318,
+                "bottom": 522.25,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"RTRIGGER\"]",
+              "label": "RTRIGGER",
+              "text": "R",
+              "visible": true,
+              "rect": {
+                "left": 326,
+                "top": 474.25,
+                "right": 374,
+                "bottom": 522.25,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"SELECT\"]",
+              "label": "SELECT",
+              "text": "Select",
+              "visible": true,
+              "rect": {
+                "left": 248.421875,
+                "top": 530.25,
+                "right": 310.265625,
+                "bottom": 574.25,
+                "width": 61.84375,
+                "height": 44
+              }
+            },
+            {
+              "selector": "[data-button=\"START\"]",
+              "label": "START",
+              "text": "Start",
+              "visible": true,
+              "rect": {
+                "left": 318.265625,
+                "top": 530.25,
+                "right": 374,
+                "bottom": 574.25,
+                "width": 55.734375,
+                "height": 44
+              }
+            }
+          ],
+          "critical": [
+            {
+              "name": "status",
+              "rect": {
+                "left": 20,
+                "top": 204.26027960526315,
+                "right": 260,
+                "bottom": 230.92557565789474,
+                "width": 240,
+                "height": 26.66529605263158
+              }
+            },
+            {
+              "name": "daily",
+              "rect": {
+                "left": 20,
+                "top": 341.5865542763158,
+                "right": 370,
+                "bottom": 361.5855263157895,
+                "width": 350,
+                "height": 19.998972039473685
+              }
+            },
+            {
+              "name": "log",
+              "rect": {
+                "left": 20,
+                "top": 364.2520559210526,
+                "right": 370,
+                "bottom": 374.91817434210526,
+                "width": 350,
+                "height": 10.666118421052632
+              }
+            },
+            {
+              "name": "errand",
+              "rect": {
+                "left": 20,
+                "top": 377.58470394736844,
+                "right": 370,
+                "bottom": 388.25082236842104,
+                "width": 350,
+                "height": 10.666118421052632
+              }
+            },
+            {
+              "name": "help",
+              "rect": {
+                "left": 20,
+                "top": 390.9173519736842,
+                "right": 300,
+                "bottom": 401.5834703947369,
+                "width": 280,
+                "height": 10.666118421052632
+              }
+            }
+          ],
+          "overlaps": [],
+          "centreOverlaps": [],
+          "socialPanel": {
+            "left": 40,
+            "top": 217.59292763157896,
+            "right": 349.3333333333333,
+            "bottom": 388.25082236842104,
+            "width": 309.3333333333333,
+            "height": 170.6578947368421
+          },
+          "socialOverlaps": []
+        },
+        "read": {
+          "panelPixels": 291782,
+          "titlePixels": 4015,
+          "inkPixels": 1260,
+          "accentPixels": 554,
+          "selectedPixels": 37638,
+          "layout": {
+            "viewport": {
+              "width": 390,
+              "height": 844,
+              "dpr": 3
+            },
+            "logical": {
+              "width": 537,
+              "height": 304
+            },
+            "screen": {
+              "left": 16,
+              "top": 201.59375,
+              "right": 374,
+              "bottom": 404.25,
+              "width": 358,
+              "height": 202.65625
+            },
+            "controls": [
+              {
+                "selector": "[data-button=\"UP\"]",
+                "label": "UP",
+                "text": "▲",
+                "visible": true,
+                "rect": {
+                  "left": 68,
+                  "top": 420.25,
+                  "right": 116,
+                  "bottom": 468.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LEFT\"]",
+                "label": "LEFT",
+                "text": "◀",
+                "visible": true,
+                "rect": {
+                  "left": 16,
+                  "top": 472.25,
+                  "right": 64,
+                  "bottom": 520.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RIGHT\"]",
+                "label": "RIGHT",
+                "text": "▶",
+                "visible": true,
+                "rect": {
+                  "left": 120,
+                  "top": 472.25,
+                  "right": 168,
+                  "bottom": 520.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"DOWN\"]",
+                "label": "DOWN",
+                "text": "▼",
+                "visible": true,
+                "rect": {
+                  "left": 68,
+                  "top": 524.25,
+                  "right": 116,
+                  "bottom": 572.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CIRCLE\"]",
+                "label": "CIRCLE",
+                "text": "A",
+                "visible": true,
+                "rect": {
+                  "left": 214,
+                  "top": 418.25,
+                  "right": 262,
+                  "bottom": 466.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CROSS\"]",
+                "label": "CROSS",
+                "text": "B",
+                "visible": true,
+                "rect": {
+                  "left": 270,
+                  "top": 418.25,
+                  "right": 318,
+                  "bottom": 466.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"TRIANGLE\"]",
+                "label": "TRIANGLE",
+                "text": "X",
+                "visible": true,
+                "rect": {
+                  "left": 326,
+                  "top": 418.25,
+                  "right": 374,
+                  "bottom": 466.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SQUARE\"]",
+                "label": "SQUARE",
+                "text": "Y",
+                "visible": true,
+                "rect": {
+                  "left": 214,
+                  "top": 474.25,
+                  "right": 262,
+                  "bottom": 522.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LTRIGGER\"]",
+                "label": "LTRIGGER",
+                "text": "L",
+                "visible": true,
+                "rect": {
+                  "left": 270,
+                  "top": 474.25,
+                  "right": 318,
+                  "bottom": 522.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RTRIGGER\"]",
+                "label": "RTRIGGER",
+                "text": "R",
+                "visible": true,
+                "rect": {
+                  "left": 326,
+                  "top": 474.25,
+                  "right": 374,
+                  "bottom": 522.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SELECT\"]",
+                "label": "SELECT",
+                "text": "Select",
+                "visible": true,
+                "rect": {
+                  "left": 248.421875,
+                  "top": 530.25,
+                  "right": 310.265625,
+                  "bottom": 574.25,
+                  "width": 61.84375,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "[data-button=\"START\"]",
+                "label": "START",
+                "text": "Start",
+                "visible": true,
+                "rect": {
+                  "left": 318.265625,
+                  "top": 530.25,
+                  "right": 374,
+                  "bottom": 574.25,
+                  "width": 55.734375,
+                  "height": 44
+                }
+              }
+            ],
+            "critical": [
+              {
+                "name": "status",
+                "rect": {
+                  "left": 20,
+                  "top": 204.26027960526315,
+                  "right": 260,
+                  "bottom": 230.92557565789474,
+                  "width": 240,
+                  "height": 26.66529605263158
+                }
+              },
+              {
+                "name": "daily",
+                "rect": {
+                  "left": 20,
+                  "top": 341.5865542763158,
+                  "right": 370,
+                  "bottom": 361.5855263157895,
+                  "width": 350,
+                  "height": 19.998972039473685
+                }
+              },
+              {
+                "name": "log",
+                "rect": {
+                  "left": 20,
+                  "top": 364.2520559210526,
+                  "right": 370,
+                  "bottom": 374.91817434210526,
+                  "width": 350,
+                  "height": 10.666118421052632
+                }
+              },
+              {
+                "name": "errand",
+                "rect": {
+                  "left": 20,
+                  "top": 377.58470394736844,
+                  "right": 370,
+                  "bottom": 388.25082236842104,
+                  "width": 350,
+                  "height": 10.666118421052632
+                }
+              },
+              {
+                "name": "help",
+                "rect": {
+                  "left": 20,
+                  "top": 390.9173519736842,
+                  "right": 300,
+                  "bottom": 401.5834703947369,
+                  "width": 280,
+                  "height": 10.666118421052632
+                }
+              }
+            ],
+            "overlaps": [],
+            "centreOverlaps": [],
+            "socialPanel": {
+              "left": 40,
+              "top": 217.59292763157896,
+              "right": 349.3333333333333,
+              "bottom": 388.25082236842104,
+              "width": 309.3333333333333,
+              "height": 170.6578947368421
+            },
+            "socialOverlaps": []
+          }
+        },
+        "replyReview": {
+          "panelPixels": 290887,
+          "titlePixels": 4343,
+          "inkPixels": 1630,
+          "selectedPixels": 37491,
+          "layout": {
+            "viewport": {
+              "width": 390,
+              "height": 844,
+              "dpr": 3
+            },
+            "logical": {
+              "width": 537,
+              "height": 304
+            },
+            "screen": {
+              "left": 16,
+              "top": 201.59375,
+              "right": 374,
+              "bottom": 404.25,
+              "width": 358,
+              "height": 202.65625
+            },
+            "controls": [
+              {
+                "selector": "[data-button=\"UP\"]",
+                "label": "UP",
+                "text": "▲",
+                "visible": true,
+                "rect": {
+                  "left": 68,
+                  "top": 420.25,
+                  "right": 116,
+                  "bottom": 468.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LEFT\"]",
+                "label": "LEFT",
+                "text": "◀",
+                "visible": true,
+                "rect": {
+                  "left": 16,
+                  "top": 472.25,
+                  "right": 64,
+                  "bottom": 520.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RIGHT\"]",
+                "label": "RIGHT",
+                "text": "▶",
+                "visible": true,
+                "rect": {
+                  "left": 120,
+                  "top": 472.25,
+                  "right": 168,
+                  "bottom": 520.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"DOWN\"]",
+                "label": "DOWN",
+                "text": "▼",
+                "visible": true,
+                "rect": {
+                  "left": 68,
+                  "top": 524.25,
+                  "right": 116,
+                  "bottom": 572.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CIRCLE\"]",
+                "label": "CIRCLE",
+                "text": "A",
+                "visible": true,
+                "rect": {
+                  "left": 214,
+                  "top": 418.25,
+                  "right": 262,
+                  "bottom": 466.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CROSS\"]",
+                "label": "CROSS",
+                "text": "B",
+                "visible": true,
+                "rect": {
+                  "left": 270,
+                  "top": 418.25,
+                  "right": 318,
+                  "bottom": 466.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"TRIANGLE\"]",
+                "label": "TRIANGLE",
+                "text": "X",
+                "visible": true,
+                "rect": {
+                  "left": 326,
+                  "top": 418.25,
+                  "right": 374,
+                  "bottom": 466.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SQUARE\"]",
+                "label": "SQUARE",
+                "text": "Y",
+                "visible": true,
+                "rect": {
+                  "left": 214,
+                  "top": 474.25,
+                  "right": 262,
+                  "bottom": 522.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LTRIGGER\"]",
+                "label": "LTRIGGER",
+                "text": "L",
+                "visible": true,
+                "rect": {
+                  "left": 270,
+                  "top": 474.25,
+                  "right": 318,
+                  "bottom": 522.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RTRIGGER\"]",
+                "label": "RTRIGGER",
+                "text": "R",
+                "visible": true,
+                "rect": {
+                  "left": 326,
+                  "top": 474.25,
+                  "right": 374,
+                  "bottom": 522.25,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SELECT\"]",
+                "label": "SELECT",
+                "text": "Select",
+                "visible": true,
+                "rect": {
+                  "left": 248.421875,
+                  "top": 530.25,
+                  "right": 310.265625,
+                  "bottom": 574.25,
+                  "width": 61.84375,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "[data-button=\"START\"]",
+                "label": "START",
+                "text": "Start",
+                "visible": true,
+                "rect": {
+                  "left": 318.265625,
+                  "top": 530.25,
+                  "right": 374,
+                  "bottom": 574.25,
+                  "width": 55.734375,
+                  "height": 44
+                }
+              }
+            ],
+            "critical": [
+              {
+                "name": "status",
+                "rect": {
+                  "left": 20,
+                  "top": 204.26027960526315,
+                  "right": 260,
+                  "bottom": 230.92557565789474,
+                  "width": 240,
+                  "height": 26.66529605263158
+                }
+              },
+              {
+                "name": "daily",
+                "rect": {
+                  "left": 20,
+                  "top": 341.5865542763158,
+                  "right": 370,
+                  "bottom": 361.5855263157895,
+                  "width": 350,
+                  "height": 19.998972039473685
+                }
+              },
+              {
+                "name": "log",
+                "rect": {
+                  "left": 20,
+                  "top": 364.2520559210526,
+                  "right": 370,
+                  "bottom": 374.91817434210526,
+                  "width": 350,
+                  "height": 10.666118421052632
+                }
+              },
+              {
+                "name": "errand",
+                "rect": {
+                  "left": 20,
+                  "top": 377.58470394736844,
+                  "right": 370,
+                  "bottom": 388.25082236842104,
+                  "width": 350,
+                  "height": 10.666118421052632
+                }
+              },
+              {
+                "name": "help",
+                "rect": {
+                  "left": 20,
+                  "top": 390.9173519736842,
+                  "right": 300,
+                  "bottom": 401.5834703947369,
+                  "width": 280,
+                  "height": 10.666118421052632
+                }
+              }
+            ],
+            "overlaps": [],
+            "centreOverlaps": [],
+            "socialPanel": {
+              "left": 40,
+              "top": 217.59292763157896,
+              "right": 349.3333333333333,
+              "bottom": 388.25082236842104,
+              "width": 309.3333333333333,
+              "height": 170.6578947368421
+            },
+            "socialOverlaps": []
+          }
+        }
+      },
+      "socialPanel": {
+        "left": 40,
+        "top": 217.59292763157896,
+        "right": 349.3333333333333,
+        "bottom": 388.25082236842104,
+        "width": 309.3333333333333,
+        "height": 170.6578947368421
+      },
+      "socialOverlaps": [],
+      "socialFriendsPanel": {
+        "left": 40,
+        "top": 217.59292763157896,
+        "right": 349.3333333333333,
+        "bottom": 388.25082236842104,
+        "width": 309.3333333333333,
+        "height": 170.6578947368421
+      },
+      "socialFriendsOverlaps": [],
+      "screenshots": [
+        "portrait-390x844-name.png",
+        "portrait-390x844-daily-en-progress.png",
+        "portrait-390x844-daily-en-board.png",
+        "portrait-390x844-coop-en-board-count.png",
+        "portrait-390x844-coop-en-friend-waiting.png",
+        "portrait-390x844-social.png",
+        "portrait-390x844-social-friends.png",
+        "portrait-390x844-coop-en-friend-list.png",
+        "portrait-390x844-postcard-en-unread.png",
+        "portrait-390x844-postcard-en-read.png",
+        "portrait-390x844-postcard-en-reply-review.png",
+        "portrait-390x844-coop-en-ready-countdown.png",
+        "portrait-390x844-coop-en-cancelled.png",
+        "portrait-390x844-emote.png",
+        "portrait-390x844-invite.png",
+        "portrait-390x844-signed-out.png"
+      ]
+    },
+    "landscape": {
+      "viewport": "844x390@3",
+      "locale": "zh",
+      "name": "Touch Land",
+      "nameTargets": [
+        {
+          "selector": "#auth-name",
+          "label": "character name input",
+          "text": "touch-landsc",
+          "visible": true,
+          "rect": {
+            "left": 61.015625,
+            "top": 64,
+            "right": 243.015625,
+            "bottom": 108,
+            "width": 182,
+            "height": 44
+          }
+        },
+        {
+          "selector": "#auth-name-submit",
+          "label": "Create",
+          "text": "创建",
+          "visible": true,
+          "rect": {
+            "left": 249.015625,
+            "top": 64,
+            "right": 297.03125,
+            "bottom": 108,
+            "width": 48.015625,
+            "height": 44
+          }
+        },
+        {
+          "selector": "#auth-signout",
+          "label": "Sign out",
+          "text": "退出登录",
+          "visible": true,
+          "rect": {
+            "left": 718.046875,
+            "top": 12,
+            "right": 800.0625,
+            "bottom": 56,
+            "width": 82.015625,
+            "height": 44
+          }
+        },
+        {
+          "selector": "#fullscreen-toggle",
+          "label": "Fullscreen",
+          "text": "全屏",
+          "visible": true,
+          "rect": {
+            "left": 443.703125,
+            "top": 12,
+            "right": 495.71875,
+            "bottom": 56,
+            "width": 52.015625,
+            "height": 44
+          }
+        }
+      ],
+      "inviteTargets": [
+        {
+          "selector": "#auth-invite",
+          "label": "invite link input",
+          "text": "http://127.0.0.1:37707/wander-online/?mobile=landscape&lang=zh#invite=local.8SBXJ3FV",
+          "visible": true,
+          "rect": {
+            "left": 74.015625,
+            "top": 64,
+            "right": 386.015625,
+            "bottom": 108,
+            "width": 312,
+            "height": 44
+          }
+        },
+        {
+          "selector": "#auth-invite-copy",
+          "label": "Copy",
+          "text": "复制",
+          "visible": true,
+          "rect": {
+            "left": 392.015625,
+            "top": 64,
+            "right": 440.03125,
+            "bottom": 108,
+            "width": 48.015625,
+            "height": 44
+          }
+        },
+        {
+          "selector": "#auth-invite-close",
+          "label": "Close",
+          "text": "关闭",
+          "visible": true,
+          "rect": {
+            "left": 446.03125,
+            "top": 64,
+            "right": 494.046875,
+            "bottom": 108,
+            "width": 48.015625,
+            "height": 44
+          }
+        },
+        {
+          "selector": "#auth-signout",
+          "label": "Sign out",
+          "text": "退出登录",
+          "visible": true,
+          "rect": {
+            "left": 682.5,
+            "top": 12,
+            "right": 764.515625,
+            "bottom": 56,
+            "width": 82.015625,
+            "height": 44
+          }
+        }
+      ],
+      "invite": "http://127.0.0.1:37707/wander-online/?mobile=landscape&lang=zh#invite=local.8SBXJ3FV",
+      "controls": {
+        "viewport": {
+          "width": 844,
+          "height": 390,
+          "dpr": 3
+        },
+        "logical": {
+          "width": 633,
+          "height": 292
+        },
+        "screen": {
+          "left": 0,
+          "top": 0.328125,
+          "right": 844,
+          "bottom": 389.65625,
+          "width": 844,
+          "height": 389.328125
+        },
+        "controls": [
+          {
+            "selector": "[data-button=\"UP\"]",
+            "label": "UP",
+            "text": "▲",
+            "visible": true,
+            "rect": {
+              "left": 64,
+              "top": 98,
+              "right": 112,
+              "bottom": 146,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"LEFT\"]",
+            "label": "LEFT",
+            "text": "◀",
+            "visible": true,
+            "rect": {
+              "left": 12,
+              "top": 150,
+              "right": 60,
+              "bottom": 198,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"RIGHT\"]",
+            "label": "RIGHT",
+            "text": "▶",
+            "visible": true,
+            "rect": {
+              "left": 116,
+              "top": 150,
+              "right": 164,
+              "bottom": 198,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"DOWN\"]",
+            "label": "DOWN",
+            "text": "▼",
+            "visible": true,
+            "rect": {
+              "left": 64,
+              "top": 202,
+              "right": 112,
+              "bottom": 250,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"CIRCLE\"]",
+            "label": "CIRCLE",
+            "text": "A",
+            "visible": true,
+            "rect": {
+              "left": 672,
+              "top": 96,
+              "right": 720,
+              "bottom": 144,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"CROSS\"]",
+            "label": "CROSS",
+            "text": "B",
+            "visible": true,
+            "rect": {
+              "left": 728,
+              "top": 96,
+              "right": 776,
+              "bottom": 144,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"TRIANGLE\"]",
+            "label": "TRIANGLE",
+            "text": "X",
+            "visible": true,
+            "rect": {
+              "left": 784,
+              "top": 96,
+              "right": 832,
+              "bottom": 144,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"SQUARE\"]",
+            "label": "SQUARE",
+            "text": "Y",
+            "visible": true,
+            "rect": {
+              "left": 672,
+              "top": 152,
+              "right": 720,
+              "bottom": 200,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"LTRIGGER\"]",
+            "label": "LTRIGGER",
+            "text": "L",
+            "visible": true,
+            "rect": {
+              "left": 728,
+              "top": 152,
+              "right": 776,
+              "bottom": 200,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"RTRIGGER\"]",
+            "label": "RTRIGGER",
+            "text": "R",
+            "visible": true,
+            "rect": {
+              "left": 784,
+              "top": 152,
+              "right": 832,
+              "bottom": 200,
+              "width": 48,
+              "height": 48
+            }
+          },
+          {
+            "selector": "[data-button=\"SELECT\"]",
+            "label": "SELECT",
+            "text": "Select",
+            "visible": true,
+            "rect": {
+              "left": 706.421875,
+              "top": 208,
+              "right": 768.265625,
+              "bottom": 252,
+              "width": 61.84375,
+              "height": 44
+            }
+          },
+          {
+            "selector": "[data-button=\"START\"]",
+            "label": "START",
+            "text": "Start",
+            "visible": true,
+            "rect": {
+              "left": 776.265625,
+              "top": 208,
+              "right": 832,
+              "bottom": 252,
+              "width": 55.734375,
+              "height": 44
+            }
+          },
+          {
+            "selector": "#pad-toggle",
+            "label": "pad-toggle",
+            "text": "隐藏按键",
+            "visible": true,
+            "rect": {
+              "left": 671.96875,
+              "top": 8,
+              "right": 749.984375,
+              "bottom": 52,
+              "width": 78.015625,
+              "height": 44
+            }
+          },
+          {
+            "selector": "#immersive-exit",
+            "label": "immersive-exit",
+            "text": "退出全屏",
+            "visible": true,
+            "rect": {
+              "left": 757.984375,
+              "top": 8,
+              "right": 836,
+              "bottom": 52,
+              "width": 78.015625,
+              "height": 44
+            }
+          }
+        ],
+        "critical": [
+          {
+            "name": "status",
+            "rect": {
+              "left": 8,
+              "top": 5.66138698630137,
+              "right": 488,
+              "bottom": 58.99400684931507,
+              "width": 480,
+              "height": 53.3326198630137
+            }
+          },
+          {
+            "name": "daily",
+            "rect": {
+              "left": 8,
+              "top": 264.3245933219178,
+              "right": 836,
+              "bottom": 304.3240582191781,
+              "width": 828,
+              "height": 39.999464897260275
+            }
+          },
+          {
+            "name": "log",
+            "rect": {
+              "left": 8,
+              "top": 309.65732020547944,
+              "right": 836,
+              "bottom": 330.99036815068496,
+              "width": 828,
+              "height": 21.33304794520548
+            }
+          },
+          {
+            "name": "errand",
+            "rect": {
+              "left": 8,
+              "top": 336.3236301369863,
+              "right": 836,
+              "bottom": 357.6566780821918,
+              "width": 828,
+              "height": 21.33304794520548
+            }
+          },
+          {
+            "name": "help",
+            "rect": {
+              "left": 8,
+              "top": 362.9899400684931,
+              "right": 568,
+              "bottom": 384.32298801369865,
+              "width": 560,
+              "height": 21.33304794520548
+            }
+          }
+        ],
+        "overlaps": [],
+        "centreOverlaps": [],
+        "socialPanel": null,
+        "socialOverlaps": []
+      },
+      "dailyGoal": {
+        "snapshot": {
+          "realm": "local",
+          "day": 20738,
+          "date": "2026-10-12",
+          "kind": "landmark",
+          "goalId": "dg1_local_g02_l_n_n_miq_m5o_1j1574l",
+          "offerRx": null,
+          "offerRy": null,
+          "targetRx": -674,
+          "targetRy": -204,
+          "targetName": "Great Galeferry",
+          "progress": 0,
+          "required": 4,
+          "completed": false,
+          "endsAt": 1791849600000,
+          "contributed": false,
+          "contributionDays": [],
+          "revision": 0
+        },
+        "text": "每日 地标庆典 · Great Galeferry · 0/4",
+        "countdown": "剩余 18:35:25 UTC",
+        "remaining": 66925,
+        "textPixels": 1100,
+        "countdownPixels": 1261
+      },
+      "coopPartnerFinding": {
+        "board": {
+          "offer": {
+            "rx": -1,
+            "ry": 0
+          },
+          "query": {
+            "type": "coopBoardGet",
+            "offerRx": -1,
+            "offerRy": 0,
+            "v": 1
+          },
+          "dialogPixels": 150017,
+          "textPixels": 4629,
+          "layout": {
+            "viewport": {
+              "width": 844,
+              "height": 390,
+              "dpr": 3
+            },
+            "logical": {
+              "width": 633,
+              "height": 292
+            },
+            "screen": {
+              "left": 0,
+              "top": 0.328125,
+              "right": 844,
+              "bottom": 389.65625,
+              "width": 844,
+              "height": 389.328125
+            },
+            "controls": [
+              {
+                "selector": "[data-button=\"UP\"]",
+                "label": "UP",
+                "text": "▲",
+                "visible": true,
+                "rect": {
+                  "left": 64,
+                  "top": 98,
+                  "right": 112,
+                  "bottom": 146,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LEFT\"]",
+                "label": "LEFT",
+                "text": "◀",
+                "visible": true,
+                "rect": {
+                  "left": 12,
+                  "top": 150,
+                  "right": 60,
+                  "bottom": 198,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RIGHT\"]",
+                "label": "RIGHT",
+                "text": "▶",
+                "visible": true,
+                "rect": {
+                  "left": 116,
+                  "top": 150,
+                  "right": 164,
+                  "bottom": 198,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"DOWN\"]",
+                "label": "DOWN",
+                "text": "▼",
+                "visible": true,
+                "rect": {
+                  "left": 64,
+                  "top": 202,
+                  "right": 112,
+                  "bottom": 250,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CIRCLE\"]",
+                "label": "CIRCLE",
+                "text": "A",
+                "visible": true,
+                "rect": {
+                  "left": 672,
+                  "top": 96,
+                  "right": 720,
+                  "bottom": 144,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CROSS\"]",
+                "label": "CROSS",
+                "text": "B",
+                "visible": true,
+                "rect": {
+                  "left": 728,
+                  "top": 96,
+                  "right": 776,
+                  "bottom": 144,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"TRIANGLE\"]",
+                "label": "TRIANGLE",
+                "text": "X",
+                "visible": true,
+                "rect": {
+                  "left": 784,
+                  "top": 96,
+                  "right": 832,
+                  "bottom": 144,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SQUARE\"]",
+                "label": "SQUARE",
+                "text": "Y",
+                "visible": true,
+                "rect": {
+                  "left": 672,
+                  "top": 152,
+                  "right": 720,
+                  "bottom": 200,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LTRIGGER\"]",
+                "label": "LTRIGGER",
+                "text": "L",
+                "visible": true,
+                "rect": {
+                  "left": 728,
+                  "top": 152,
+                  "right": 776,
+                  "bottom": 200,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RTRIGGER\"]",
+                "label": "RTRIGGER",
+                "text": "R",
+                "visible": true,
+                "rect": {
+                  "left": 784,
+                  "top": 152,
+                  "right": 832,
+                  "bottom": 200,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SELECT\"]",
+                "label": "SELECT",
+                "text": "Select",
+                "visible": true,
+                "rect": {
+                  "left": 706.421875,
+                  "top": 208,
+                  "right": 768.265625,
+                  "bottom": 252,
+                  "width": 61.84375,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "[data-button=\"START\"]",
+                "label": "START",
+                "text": "Start",
+                "visible": true,
+                "rect": {
+                  "left": 776.265625,
+                  "top": 208,
+                  "right": 832,
+                  "bottom": 252,
+                  "width": 55.734375,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "#pad-toggle",
+                "label": "pad-toggle",
+                "text": "隐藏按键",
+                "visible": true,
+                "rect": {
+                  "left": 671.96875,
+                  "top": 8,
+                  "right": 749.984375,
+                  "bottom": 52,
+                  "width": 78.015625,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "#immersive-exit",
+                "label": "immersive-exit",
+                "text": "退出全屏",
+                "visible": true,
+                "rect": {
+                  "left": 757.984375,
+                  "top": 8,
+                  "right": 836,
+                  "bottom": 52,
+                  "width": 78.015625,
+                  "height": 44
+                }
+              }
+            ],
+            "critical": [
+              {
+                "name": "status",
+                "rect": {
+                  "left": 8,
+                  "top": 5.66138698630137,
+                  "right": 488,
+                  "bottom": 58.99400684931507,
+                  "width": 480,
+                  "height": 53.3326198630137
+                }
+              },
+              {
+                "name": "daily",
+                "rect": {
+                  "left": 8,
+                  "top": 264.3245933219178,
+                  "right": 836,
+                  "bottom": 304.3240582191781,
+                  "width": 828,
+                  "height": 39.999464897260275
+                }
+              },
+              {
+                "name": "log",
+                "rect": {
+                  "left": 8,
+                  "top": 309.65732020547944,
+                  "right": 836,
+                  "bottom": 330.99036815068496,
+                  "width": 828,
+                  "height": 21.33304794520548
+                }
+              },
+              {
+                "name": "errand",
+                "rect": {
+                  "left": 8,
+                  "top": 336.3236301369863,
+                  "right": 836,
+                  "bottom": 357.6566780821918,
+                  "width": 828,
+                  "height": 21.33304794520548
+                }
+              },
+              {
+                "name": "help",
+                "rect": {
+                  "left": 8,
+                  "top": 362.9899400684931,
+                  "right": 568,
+                  "bottom": 384.32298801369865,
+                  "width": 560,
+                  "height": 21.33304794520548
+                }
+              }
+            ],
+            "overlaps": [],
+            "centreOverlaps": [],
+            "socialPanel": null,
+            "socialOverlaps": []
+          }
+        },
+        "friend": {
+          "notice": "协作 · 山友 · 苔山 · 包裹",
+          "waiting": 1,
+          "noticePixels": 612,
+          "selectedRowPixels": 28035,
+          "worldLayout": {
+            "viewport": {
+              "width": 844,
+              "height": 390,
+              "dpr": 3
+            },
+            "logical": {
+              "width": 633,
+              "height": 292
+            },
+            "screen": {
+              "left": 0,
+              "top": 0.328125,
+              "right": 844,
+              "bottom": 389.65625,
+              "width": 844,
+              "height": 389.328125
+            },
+            "controls": [
+              {
+                "selector": "[data-button=\"UP\"]",
+                "label": "UP",
+                "text": "▲",
+                "visible": true,
+                "rect": {
+                  "left": 64,
+                  "top": 98,
+                  "right": 112,
+                  "bottom": 146,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LEFT\"]",
+                "label": "LEFT",
+                "text": "◀",
+                "visible": true,
+                "rect": {
+                  "left": 12,
+                  "top": 150,
+                  "right": 60,
+                  "bottom": 198,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RIGHT\"]",
+                "label": "RIGHT",
+                "text": "▶",
+                "visible": true,
+                "rect": {
+                  "left": 116,
+                  "top": 150,
+                  "right": 164,
+                  "bottom": 198,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"DOWN\"]",
+                "label": "DOWN",
+                "text": "▼",
+                "visible": true,
+                "rect": {
+                  "left": 64,
+                  "top": 202,
+                  "right": 112,
+                  "bottom": 250,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CIRCLE\"]",
+                "label": "CIRCLE",
+                "text": "A",
+                "visible": true,
+                "rect": {
+                  "left": 672,
+                  "top": 96,
+                  "right": 720,
+                  "bottom": 144,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CROSS\"]",
+                "label": "CROSS",
+                "text": "B",
+                "visible": true,
+                "rect": {
+                  "left": 728,
+                  "top": 96,
+                  "right": 776,
+                  "bottom": 144,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"TRIANGLE\"]",
+                "label": "TRIANGLE",
+                "text": "X",
+                "visible": true,
+                "rect": {
+                  "left": 784,
+                  "top": 96,
+                  "right": 832,
+                  "bottom": 144,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SQUARE\"]",
+                "label": "SQUARE",
+                "text": "Y",
+                "visible": true,
+                "rect": {
+                  "left": 672,
+                  "top": 152,
+                  "right": 720,
+                  "bottom": 200,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LTRIGGER\"]",
+                "label": "LTRIGGER",
+                "text": "L",
+                "visible": true,
+                "rect": {
+                  "left": 728,
+                  "top": 152,
+                  "right": 776,
+                  "bottom": 200,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RTRIGGER\"]",
+                "label": "RTRIGGER",
+                "text": "R",
+                "visible": true,
+                "rect": {
+                  "left": 784,
+                  "top": 152,
+                  "right": 832,
+                  "bottom": 200,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SELECT\"]",
+                "label": "SELECT",
+                "text": "Select",
+                "visible": true,
+                "rect": {
+                  "left": 706.421875,
+                  "top": 208,
+                  "right": 768.265625,
+                  "bottom": 252,
+                  "width": 61.84375,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "[data-button=\"START\"]",
+                "label": "START",
+                "text": "Start",
+                "visible": true,
+                "rect": {
+                  "left": 776.265625,
+                  "top": 208,
+                  "right": 832,
+                  "bottom": 252,
+                  "width": 55.734375,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "#pad-toggle",
+                "label": "pad-toggle",
+                "text": "隐藏按键",
+                "visible": true,
+                "rect": {
+                  "left": 671.96875,
+                  "top": 8,
+                  "right": 749.984375,
+                  "bottom": 52,
+                  "width": 78.015625,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "#immersive-exit",
+                "label": "immersive-exit",
+                "text": "退出全屏",
+                "visible": true,
+                "rect": {
+                  "left": 757.984375,
+                  "top": 8,
+                  "right": 836,
+                  "bottom": 52,
+                  "width": 78.015625,
+                  "height": 44
+                }
+              }
+            ],
+            "critical": [
+              {
+                "name": "status",
+                "rect": {
+                  "left": 8,
+                  "top": 5.66138698630137,
+                  "right": 488,
+                  "bottom": 58.99400684931507,
+                  "width": 480,
+                  "height": 53.3326198630137
+                }
+              },
+              {
+                "name": "daily",
+                "rect": {
+                  "left": 8,
+                  "top": 264.3245933219178,
+                  "right": 836,
+                  "bottom": 304.3240582191781,
+                  "width": 828,
+                  "height": 39.999464897260275
+                }
+              },
+              {
+                "name": "log",
+                "rect": {
+                  "left": 8,
+                  "top": 309.65732020547944,
+                  "right": 836,
+                  "bottom": 330.99036815068496,
+                  "width": 828,
+                  "height": 21.33304794520548
+                }
+              },
+              {
+                "name": "errand",
+                "rect": {
+                  "left": 8,
+                  "top": 336.3236301369863,
+                  "right": 836,
+                  "bottom": 357.6566780821918,
+                  "width": 828,
+                  "height": 21.33304794520548
+                }
+              },
+              {
+                "name": "help",
+                "rect": {
+                  "left": 8,
+                  "top": 362.9899400684931,
+                  "right": 568,
+                  "bottom": 384.32298801369865,
+                  "width": 560,
+                  "height": 21.33304794520548
+                }
+              }
+            ],
+            "overlaps": [],
+            "centreOverlaps": [],
+            "socialPanel": null,
+            "socialOverlaps": []
+          }
+        },
+        "ready": {
+          "remaining": 30,
+          "countdownPixels": 589,
+          "noticePixels": 377,
+          "layout": {
+            "viewport": {
+              "width": 844,
+              "height": 390,
+              "dpr": 3
+            },
+            "logical": {
+              "width": 633,
+              "height": 292
+            },
+            "screen": {
+              "left": 0,
+              "top": 0.328125,
+              "right": 844,
+              "bottom": 389.65625,
+              "width": 844,
+              "height": 389.328125
+            },
+            "controls": [
+              {
+                "selector": "[data-button=\"UP\"]",
+                "label": "UP",
+                "text": "▲",
+                "visible": true,
+                "rect": {
+                  "left": 64,
+                  "top": 98,
+                  "right": 112,
+                  "bottom": 146,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LEFT\"]",
+                "label": "LEFT",
+                "text": "◀",
+                "visible": true,
+                "rect": {
+                  "left": 12,
+                  "top": 150,
+                  "right": 60,
+                  "bottom": 198,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RIGHT\"]",
+                "label": "RIGHT",
+                "text": "▶",
+                "visible": true,
+                "rect": {
+                  "left": 116,
+                  "top": 150,
+                  "right": 164,
+                  "bottom": 198,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"DOWN\"]",
+                "label": "DOWN",
+                "text": "▼",
+                "visible": true,
+                "rect": {
+                  "left": 64,
+                  "top": 202,
+                  "right": 112,
+                  "bottom": 250,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CIRCLE\"]",
+                "label": "CIRCLE",
+                "text": "A",
+                "visible": true,
+                "rect": {
+                  "left": 672,
+                  "top": 96,
+                  "right": 720,
+                  "bottom": 144,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CROSS\"]",
+                "label": "CROSS",
+                "text": "B",
+                "visible": true,
+                "rect": {
+                  "left": 728,
+                  "top": 96,
+                  "right": 776,
+                  "bottom": 144,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"TRIANGLE\"]",
+                "label": "TRIANGLE",
+                "text": "X",
+                "visible": true,
+                "rect": {
+                  "left": 784,
+                  "top": 96,
+                  "right": 832,
+                  "bottom": 144,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SQUARE\"]",
+                "label": "SQUARE",
+                "text": "Y",
+                "visible": true,
+                "rect": {
+                  "left": 672,
+                  "top": 152,
+                  "right": 720,
+                  "bottom": 200,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LTRIGGER\"]",
+                "label": "LTRIGGER",
+                "text": "L",
+                "visible": true,
+                "rect": {
+                  "left": 728,
+                  "top": 152,
+                  "right": 776,
+                  "bottom": 200,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RTRIGGER\"]",
+                "label": "RTRIGGER",
+                "text": "R",
+                "visible": true,
+                "rect": {
+                  "left": 784,
+                  "top": 152,
+                  "right": 832,
+                  "bottom": 200,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SELECT\"]",
+                "label": "SELECT",
+                "text": "Select",
+                "visible": true,
+                "rect": {
+                  "left": 706.421875,
+                  "top": 208,
+                  "right": 768.265625,
+                  "bottom": 252,
+                  "width": 61.84375,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "[data-button=\"START\"]",
+                "label": "START",
+                "text": "Start",
+                "visible": true,
+                "rect": {
+                  "left": 776.265625,
+                  "top": 208,
+                  "right": 832,
+                  "bottom": 252,
+                  "width": 55.734375,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "#pad-toggle",
+                "label": "pad-toggle",
+                "text": "隐藏按键",
+                "visible": true,
+                "rect": {
+                  "left": 671.96875,
+                  "top": 8,
+                  "right": 749.984375,
+                  "bottom": 52,
+                  "width": 78.015625,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "#immersive-exit",
+                "label": "immersive-exit",
+                "text": "退出全屏",
+                "visible": true,
+                "rect": {
+                  "left": 757.984375,
+                  "top": 8,
+                  "right": 836,
+                  "bottom": 52,
+                  "width": 78.015625,
+                  "height": 44
+                }
+              }
+            ],
+            "critical": [
+              {
+                "name": "status",
+                "rect": {
+                  "left": 8,
+                  "top": 5.66138698630137,
+                  "right": 488,
+                  "bottom": 58.99400684931507,
+                  "width": 480,
+                  "height": 53.3326198630137
+                }
+              },
+              {
+                "name": "daily",
+                "rect": {
+                  "left": 8,
+                  "top": 264.3245933219178,
+                  "right": 836,
+                  "bottom": 304.3240582191781,
+                  "width": 828,
+                  "height": 39.999464897260275
+                }
+              },
+              {
+                "name": "log",
+                "rect": {
+                  "left": 8,
+                  "top": 309.65732020547944,
+                  "right": 836,
+                  "bottom": 330.99036815068496,
+                  "width": 828,
+                  "height": 21.33304794520548
+                }
+              },
+              {
+                "name": "errand",
+                "rect": {
+                  "left": 8,
+                  "top": 336.3236301369863,
+                  "right": 836,
+                  "bottom": 357.6566780821918,
+                  "width": 828,
+                  "height": 21.33304794520548
+                }
+              },
+              {
+                "name": "help",
+                "rect": {
+                  "left": 8,
+                  "top": 362.9899400684931,
+                  "right": 568,
+                  "bottom": 384.32298801369865,
+                  "width": 560,
+                  "height": 21.33304794520548
+                }
+              }
+            ],
+            "overlaps": [],
+            "centreOverlaps": [],
+            "socialPanel": null,
+            "socialOverlaps": []
+          }
+        },
+        "cancelled": {
+          "notice": "协作 · 已取消",
+          "noticePixels": 386
+        }
+      },
+      "postcards": {
+        "unread": 1,
+        "replyRecipient": {
+          "postcardId": "pc_mobile_landscape",
+          "name": "旅友"
+        },
+        "readRequest": {
+          "type": "postcardRead",
+          "id": "pc_mobile_landscape",
+          "v": 1
+        },
+        "replySendAttempts": [
+          {
+            "type": "postcardSend",
+            "replyToPostcardId": "pc_mobile_landscape",
+            "sentenceId": "thanks",
+            "postmark": null,
+            "requestId": "pc_mv4t59o1_1jfe2ze1uceesy",
+            "v": 1
+          },
+          {
+            "type": "postcardSend",
+            "replyToPostcardId": "pc_mobile_landscape",
+            "sentenceId": "thanks",
+            "postmark": null,
+            "requestId": "pc_mv4t59o1_1jfe2ze1uceesy",
+            "v": 1
+          }
+        ],
+        "badgePixels": 3427,
+        "badgeTextPixels": 77,
+        "homeLayout": {
+          "viewport": {
+            "width": 844,
+            "height": 390,
+            "dpr": 3
+          },
+          "logical": {
+            "width": 633,
+            "height": 292
+          },
+          "screen": {
+            "left": 0,
+            "top": 0.328125,
+            "right": 844,
+            "bottom": 389.65625,
+            "width": 844,
+            "height": 389.328125
+          },
+          "controls": [
+            {
+              "selector": "[data-button=\"UP\"]",
+              "label": "UP",
+              "text": "▲",
+              "visible": true,
+              "rect": {
+                "left": 64,
+                "top": 98,
+                "right": 112,
+                "bottom": 146,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"LEFT\"]",
+              "label": "LEFT",
+              "text": "◀",
+              "visible": true,
+              "rect": {
+                "left": 12,
+                "top": 150,
+                "right": 60,
+                "bottom": 198,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"RIGHT\"]",
+              "label": "RIGHT",
+              "text": "▶",
+              "visible": true,
+              "rect": {
+                "left": 116,
+                "top": 150,
+                "right": 164,
+                "bottom": 198,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"DOWN\"]",
+              "label": "DOWN",
+              "text": "▼",
+              "visible": true,
+              "rect": {
+                "left": 64,
+                "top": 202,
+                "right": 112,
+                "bottom": 250,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"CIRCLE\"]",
+              "label": "CIRCLE",
+              "text": "A",
+              "visible": true,
+              "rect": {
+                "left": 672,
+                "top": 96,
+                "right": 720,
+                "bottom": 144,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"CROSS\"]",
+              "label": "CROSS",
+              "text": "B",
+              "visible": true,
+              "rect": {
+                "left": 728,
+                "top": 96,
+                "right": 776,
+                "bottom": 144,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"TRIANGLE\"]",
+              "label": "TRIANGLE",
+              "text": "X",
+              "visible": true,
+              "rect": {
+                "left": 784,
+                "top": 96,
+                "right": 832,
+                "bottom": 144,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"SQUARE\"]",
+              "label": "SQUARE",
+              "text": "Y",
+              "visible": true,
+              "rect": {
+                "left": 672,
+                "top": 152,
+                "right": 720,
+                "bottom": 200,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"LTRIGGER\"]",
+              "label": "LTRIGGER",
+              "text": "L",
+              "visible": true,
+              "rect": {
+                "left": 728,
+                "top": 152,
+                "right": 776,
+                "bottom": 200,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"RTRIGGER\"]",
+              "label": "RTRIGGER",
+              "text": "R",
+              "visible": true,
+              "rect": {
+                "left": 784,
+                "top": 152,
+                "right": 832,
+                "bottom": 200,
+                "width": 48,
+                "height": 48
+              }
+            },
+            {
+              "selector": "[data-button=\"SELECT\"]",
+              "label": "SELECT",
+              "text": "Select",
+              "visible": true,
+              "rect": {
+                "left": 706.421875,
+                "top": 208,
+                "right": 768.265625,
+                "bottom": 252,
+                "width": 61.84375,
+                "height": 44
+              }
+            },
+            {
+              "selector": "[data-button=\"START\"]",
+              "label": "START",
+              "text": "Start",
+              "visible": true,
+              "rect": {
+                "left": 776.265625,
+                "top": 208,
+                "right": 832,
+                "bottom": 252,
+                "width": 55.734375,
+                "height": 44
+              }
+            },
+            {
+              "selector": "#pad-toggle",
+              "label": "pad-toggle",
+              "text": "隐藏按键",
+              "visible": true,
+              "rect": {
+                "left": 671.96875,
+                "top": 8,
+                "right": 749.984375,
+                "bottom": 52,
+                "width": 78.015625,
+                "height": 44
+              }
+            },
+            {
+              "selector": "#immersive-exit",
+              "label": "immersive-exit",
+              "text": "退出全屏",
+              "visible": true,
+              "rect": {
+                "left": 757.984375,
+                "top": 8,
+                "right": 836,
+                "bottom": 52,
+                "width": 78.015625,
+                "height": 44
+              }
+            }
+          ],
+          "critical": [
+            {
+              "name": "status",
+              "rect": {
+                "left": 8,
+                "top": 5.66138698630137,
+                "right": 488,
+                "bottom": 58.99400684931507,
+                "width": 480,
+                "height": 53.3326198630137
+              }
+            },
+            {
+              "name": "daily",
+              "rect": {
+                "left": 8,
+                "top": 264.3245933219178,
+                "right": 836,
+                "bottom": 304.3240582191781,
+                "width": 828,
+                "height": 39.999464897260275
+              }
+            },
+            {
+              "name": "log",
+              "rect": {
+                "left": 8,
+                "top": 309.65732020547944,
+                "right": 836,
+                "bottom": 330.99036815068496,
+                "width": 828,
+                "height": 21.33304794520548
+              }
+            },
+            {
+              "name": "errand",
+              "rect": {
+                "left": 8,
+                "top": 336.3236301369863,
+                "right": 836,
+                "bottom": 357.6566780821918,
+                "width": 828,
+                "height": 21.33304794520548
+              }
+            },
+            {
+              "name": "help",
+              "rect": {
+                "left": 8,
+                "top": 362.9899400684931,
+                "right": 568,
+                "bottom": 384.32298801369865,
+                "width": 560,
+                "height": 21.33304794520548
+              }
+            }
+          ],
+          "overlaps": [],
+          "centreOverlaps": [],
+          "socialPanel": {
+            "left": 181.33333333333334,
+            "top": 24.327803938356166,
+            "right": 661.3333333333334,
+            "bottom": 365.65657106164383,
+            "width": 480,
+            "height": 341.32876712328766
+          },
+          "socialOverlaps": []
+        },
+        "read": {
+          "panelPixels": 226726,
+          "titlePixels": 3001,
+          "inkPixels": 872,
+          "accentPixels": 518,
+          "selectedPixels": 28249,
+          "layout": {
+            "viewport": {
+              "width": 844,
+              "height": 390,
+              "dpr": 3
+            },
+            "logical": {
+              "width": 633,
+              "height": 292
+            },
+            "screen": {
+              "left": 0,
+              "top": 0.328125,
+              "right": 844,
+              "bottom": 389.65625,
+              "width": 844,
+              "height": 389.328125
+            },
+            "controls": [
+              {
+                "selector": "[data-button=\"UP\"]",
+                "label": "UP",
+                "text": "▲",
+                "visible": true,
+                "rect": {
+                  "left": 64,
+                  "top": 98,
+                  "right": 112,
+                  "bottom": 146,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LEFT\"]",
+                "label": "LEFT",
+                "text": "◀",
+                "visible": true,
+                "rect": {
+                  "left": 12,
+                  "top": 150,
+                  "right": 60,
+                  "bottom": 198,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RIGHT\"]",
+                "label": "RIGHT",
+                "text": "▶",
+                "visible": true,
+                "rect": {
+                  "left": 116,
+                  "top": 150,
+                  "right": 164,
+                  "bottom": 198,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"DOWN\"]",
+                "label": "DOWN",
+                "text": "▼",
+                "visible": true,
+                "rect": {
+                  "left": 64,
+                  "top": 202,
+                  "right": 112,
+                  "bottom": 250,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CIRCLE\"]",
+                "label": "CIRCLE",
+                "text": "A",
+                "visible": true,
+                "rect": {
+                  "left": 672,
+                  "top": 96,
+                  "right": 720,
+                  "bottom": 144,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CROSS\"]",
+                "label": "CROSS",
+                "text": "B",
+                "visible": true,
+                "rect": {
+                  "left": 728,
+                  "top": 96,
+                  "right": 776,
+                  "bottom": 144,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"TRIANGLE\"]",
+                "label": "TRIANGLE",
+                "text": "X",
+                "visible": true,
+                "rect": {
+                  "left": 784,
+                  "top": 96,
+                  "right": 832,
+                  "bottom": 144,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SQUARE\"]",
+                "label": "SQUARE",
+                "text": "Y",
+                "visible": true,
+                "rect": {
+                  "left": 672,
+                  "top": 152,
+                  "right": 720,
+                  "bottom": 200,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LTRIGGER\"]",
+                "label": "LTRIGGER",
+                "text": "L",
+                "visible": true,
+                "rect": {
+                  "left": 728,
+                  "top": 152,
+                  "right": 776,
+                  "bottom": 200,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RTRIGGER\"]",
+                "label": "RTRIGGER",
+                "text": "R",
+                "visible": true,
+                "rect": {
+                  "left": 784,
+                  "top": 152,
+                  "right": 832,
+                  "bottom": 200,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SELECT\"]",
+                "label": "SELECT",
+                "text": "Select",
+                "visible": true,
+                "rect": {
+                  "left": 706.421875,
+                  "top": 208,
+                  "right": 768.265625,
+                  "bottom": 252,
+                  "width": 61.84375,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "[data-button=\"START\"]",
+                "label": "START",
+                "text": "Start",
+                "visible": true,
+                "rect": {
+                  "left": 776.265625,
+                  "top": 208,
+                  "right": 832,
+                  "bottom": 252,
+                  "width": 55.734375,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "#pad-toggle",
+                "label": "pad-toggle",
+                "text": "隐藏按键",
+                "visible": true,
+                "rect": {
+                  "left": 671.96875,
+                  "top": 8,
+                  "right": 749.984375,
+                  "bottom": 52,
+                  "width": 78.015625,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "#immersive-exit",
+                "label": "immersive-exit",
+                "text": "退出全屏",
+                "visible": true,
+                "rect": {
+                  "left": 757.984375,
+                  "top": 8,
+                  "right": 836,
+                  "bottom": 52,
+                  "width": 78.015625,
+                  "height": 44
+                }
+              }
+            ],
+            "critical": [
+              {
+                "name": "status",
+                "rect": {
+                  "left": 8,
+                  "top": 5.66138698630137,
+                  "right": 488,
+                  "bottom": 58.99400684931507,
+                  "width": 480,
+                  "height": 53.3326198630137
+                }
+              },
+              {
+                "name": "daily",
+                "rect": {
+                  "left": 8,
+                  "top": 264.3245933219178,
+                  "right": 836,
+                  "bottom": 304.3240582191781,
+                  "width": 828,
+                  "height": 39.999464897260275
+                }
+              },
+              {
+                "name": "log",
+                "rect": {
+                  "left": 8,
+                  "top": 309.65732020547944,
+                  "right": 836,
+                  "bottom": 330.99036815068496,
+                  "width": 828,
+                  "height": 21.33304794520548
+                }
+              },
+              {
+                "name": "errand",
+                "rect": {
+                  "left": 8,
+                  "top": 336.3236301369863,
+                  "right": 836,
+                  "bottom": 357.6566780821918,
+                  "width": 828,
+                  "height": 21.33304794520548
+                }
+              },
+              {
+                "name": "help",
+                "rect": {
+                  "left": 8,
+                  "top": 362.9899400684931,
+                  "right": 568,
+                  "bottom": 384.32298801369865,
+                  "width": 560,
+                  "height": 21.33304794520548
+                }
+              }
+            ],
+            "overlaps": [],
+            "centreOverlaps": [],
+            "socialPanel": {
+              "left": 181.33333333333334,
+              "top": 24.327803938356166,
+              "right": 661.3333333333334,
+              "bottom": 365.65657106164383,
+              "width": 480,
+              "height": 341.32876712328766
+            },
+            "socialOverlaps": []
+          }
+        },
+        "replyReview": {
+          "panelPixels": 226109,
+          "titlePixels": 3249,
+          "inkPixels": 1054,
+          "selectedPixels": 28389,
+          "layout": {
+            "viewport": {
+              "width": 844,
+              "height": 390,
+              "dpr": 3
+            },
+            "logical": {
+              "width": 633,
+              "height": 292
+            },
+            "screen": {
+              "left": 0,
+              "top": 0.328125,
+              "right": 844,
+              "bottom": 389.65625,
+              "width": 844,
+              "height": 389.328125
+            },
+            "controls": [
+              {
+                "selector": "[data-button=\"UP\"]",
+                "label": "UP",
+                "text": "▲",
+                "visible": true,
+                "rect": {
+                  "left": 64,
+                  "top": 98,
+                  "right": 112,
+                  "bottom": 146,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LEFT\"]",
+                "label": "LEFT",
+                "text": "◀",
+                "visible": true,
+                "rect": {
+                  "left": 12,
+                  "top": 150,
+                  "right": 60,
+                  "bottom": 198,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RIGHT\"]",
+                "label": "RIGHT",
+                "text": "▶",
+                "visible": true,
+                "rect": {
+                  "left": 116,
+                  "top": 150,
+                  "right": 164,
+                  "bottom": 198,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"DOWN\"]",
+                "label": "DOWN",
+                "text": "▼",
+                "visible": true,
+                "rect": {
+                  "left": 64,
+                  "top": 202,
+                  "right": 112,
+                  "bottom": 250,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CIRCLE\"]",
+                "label": "CIRCLE",
+                "text": "A",
+                "visible": true,
+                "rect": {
+                  "left": 672,
+                  "top": 96,
+                  "right": 720,
+                  "bottom": 144,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"CROSS\"]",
+                "label": "CROSS",
+                "text": "B",
+                "visible": true,
+                "rect": {
+                  "left": 728,
+                  "top": 96,
+                  "right": 776,
+                  "bottom": 144,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"TRIANGLE\"]",
+                "label": "TRIANGLE",
+                "text": "X",
+                "visible": true,
+                "rect": {
+                  "left": 784,
+                  "top": 96,
+                  "right": 832,
+                  "bottom": 144,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SQUARE\"]",
+                "label": "SQUARE",
+                "text": "Y",
+                "visible": true,
+                "rect": {
+                  "left": 672,
+                  "top": 152,
+                  "right": 720,
+                  "bottom": 200,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"LTRIGGER\"]",
+                "label": "LTRIGGER",
+                "text": "L",
+                "visible": true,
+                "rect": {
+                  "left": 728,
+                  "top": 152,
+                  "right": 776,
+                  "bottom": 200,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"RTRIGGER\"]",
+                "label": "RTRIGGER",
+                "text": "R",
+                "visible": true,
+                "rect": {
+                  "left": 784,
+                  "top": 152,
+                  "right": 832,
+                  "bottom": 200,
+                  "width": 48,
+                  "height": 48
+                }
+              },
+              {
+                "selector": "[data-button=\"SELECT\"]",
+                "label": "SELECT",
+                "text": "Select",
+                "visible": true,
+                "rect": {
+                  "left": 706.421875,
+                  "top": 208,
+                  "right": 768.265625,
+                  "bottom": 252,
+                  "width": 61.84375,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "[data-button=\"START\"]",
+                "label": "START",
+                "text": "Start",
+                "visible": true,
+                "rect": {
+                  "left": 776.265625,
+                  "top": 208,
+                  "right": 832,
+                  "bottom": 252,
+                  "width": 55.734375,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "#pad-toggle",
+                "label": "pad-toggle",
+                "text": "隐藏按键",
+                "visible": true,
+                "rect": {
+                  "left": 671.96875,
+                  "top": 8,
+                  "right": 749.984375,
+                  "bottom": 52,
+                  "width": 78.015625,
+                  "height": 44
+                }
+              },
+              {
+                "selector": "#immersive-exit",
+                "label": "immersive-exit",
+                "text": "退出全屏",
+                "visible": true,
+                "rect": {
+                  "left": 757.984375,
+                  "top": 8,
+                  "right": 836,
+                  "bottom": 52,
+                  "width": 78.015625,
+                  "height": 44
+                }
+              }
+            ],
+            "critical": [
+              {
+                "name": "status",
+                "rect": {
+                  "left": 8,
+                  "top": 5.66138698630137,
+                  "right": 488,
+                  "bottom": 58.99400684931507,
+                  "width": 480,
+                  "height": 53.3326198630137
+                }
+              },
+              {
+                "name": "daily",
+                "rect": {
+                  "left": 8,
+                  "top": 264.3245933219178,
+                  "right": 836,
+                  "bottom": 304.3240582191781,
+                  "width": 828,
+                  "height": 39.999464897260275
+                }
+              },
+              {
+                "name": "log",
+                "rect": {
+                  "left": 8,
+                  "top": 309.65732020547944,
+                  "right": 836,
+                  "bottom": 330.99036815068496,
+                  "width": 828,
+                  "height": 21.33304794520548
+                }
+              },
+              {
+                "name": "errand",
+                "rect": {
+                  "left": 8,
+                  "top": 336.3236301369863,
+                  "right": 836,
+                  "bottom": 357.6566780821918,
+                  "width": 828,
+                  "height": 21.33304794520548
+                }
+              },
+              {
+                "name": "help",
+                "rect": {
+                  "left": 8,
+                  "top": 362.9899400684931,
+                  "right": 568,
+                  "bottom": 384.32298801369865,
+                  "width": 560,
+                  "height": 21.33304794520548
+                }
+              }
+            ],
+            "overlaps": [],
+            "centreOverlaps": [],
+            "socialPanel": {
+              "left": 181.33333333333334,
+              "top": 24.327803938356166,
+              "right": 661.3333333333334,
+              "bottom": 365.65657106164383,
+              "width": 480,
+              "height": 341.32876712328766
+            },
+            "socialOverlaps": []
+          }
+        }
+      },
+      "socialPanel": {
+        "left": 181.33333333333334,
+        "top": 24.327803938356166,
+        "right": 661.3333333333334,
+        "bottom": 365.65657106164383,
+        "width": 480,
+        "height": 341.32876712328766
+      },
+      "socialOverlaps": [],
+      "socialFriendsPanel": {
+        "left": 181.33333333333334,
+        "top": 24.327803938356166,
+        "right": 661.3333333333334,
+        "bottom": 365.65657106164383,
+        "width": 480,
+        "height": 341.32876712328766
+      },
+      "socialFriendsOverlaps": [],
+      "screenshots": [
+        "landscape-844x390-name.png",
+        "landscape-844x390-daily-zh-progress.png",
+        "landscape-844x390-daily-zh-board.png",
+        "landscape-844x390-coop-zh-board-count.png",
+        "landscape-844x390-coop-zh-friend-waiting.png",
+        "landscape-844x390-social.png",
+        "landscape-844x390-social-friends.png",
+        "landscape-844x390-coop-zh-friend-list.png",
+        "landscape-844x390-postcard-zh-unread.png",
+        "landscape-844x390-postcard-zh-read.png",
+        "landscape-844x390-postcard-zh-reply-review.png",
+        "landscape-844x390-coop-zh-ready-countdown.png",
+        "landscape-844x390-coop-zh-cancelled.png",
+        "landscape-844x390-emote.png",
+        "landscape-844x390-invite.png",
+        "landscape-844x390-signed-out.png"
+      ]
+    }
+  }
+}

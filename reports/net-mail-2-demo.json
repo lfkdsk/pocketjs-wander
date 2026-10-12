@@ -1,0 +1,70 @@
+{
+  "schema": "net-mail-2-real-workerd-demo",
+  "schemaVersion": 1,
+  "protocolVersion": 1,
+  "transport": "real-workerd-websocket",
+  "responseLoss": {
+    "requestId": "pc_response_loss_0001",
+    "firstRealm": "plaza-1",
+    "retryRealm": "plaza-2",
+    "firstResponseDiscarded": true,
+    "firstAttempt": {
+      "operation": "send",
+      "ok": true,
+      "id": "pc_mv4t23kv_1toc6ls049p48b"
+    },
+    "retry": {
+      "operation": "send",
+      "ok": true,
+      "id": "pc_mv4t23kv_1toc6ls049p48b"
+    },
+    "samePostcardId": true
+  },
+  "senderQuota": {
+    "before": 5,
+    "afterRetry": 4,
+    "consumed": 1
+  },
+  "offlineRecipient": {
+    "unreadOnReconnect": 1,
+    "totalOnReconnect": 1,
+    "postcardIds": [
+      "pc_mv4t23kv_1toc6ls049p48b"
+    ],
+    "sentenceId": "thanks"
+  },
+  "reply": {
+    "requestId": "pc_reply_bob_000001",
+    "replyToPostcardId": "pc_mv4t23kv_1toc6ls049p48b",
+    "operation": "send",
+    "ok": true,
+    "id": "pc_mv4t25cm_0tcfkj81xg1nhd",
+    "recipientUnread": 1,
+    "recipientTotal": 1,
+    "sentenceId": "meet-again"
+  },
+  "pendingFriend": {
+    "requestId": "pc_pending_cara_0001",
+    "ok": false,
+    "reason": "not-friends"
+  },
+  "afterRead": {
+    "unread": 0,
+    "revision": 2
+  },
+  "statusFields": [
+    "revision",
+    "unread",
+    "total",
+    "dailyRemaining"
+  ],
+  "publicPostcardKeys": [
+    "expiresAt",
+    "id",
+    "postmark",
+    "read",
+    "senderName",
+    "sentAt",
+    "sentenceId"
+  ]
+}
