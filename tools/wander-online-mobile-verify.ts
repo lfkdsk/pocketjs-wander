@@ -680,6 +680,18 @@ async function main(): Promise<void> {
       item: friend.item,
       expiresAt,
     });
+    const coopLabel = locale === "zh" ? han(0x534f, 0x4f5c) : "COOP";
+    const friendNotice = `${coopLabel} · ${friend.name} · ${friend.targetTown} · ${friend.item}`;
+    const friendState = await waitFor<OnlineState | null>(
+      "friend READY hint",
+      "globalThis.__onlineState ?? null",
+      (candidate) => candidate?.notice === friendNotice && candidate.coopWaitingFriends === 1,
+    );
+    check(`${phase}: friend READY is counted once`, friendState!.coopWaitingFriends === 1, friendNotice);
+    const friendPromptLayout = await layoutReport();
+    const friendPromptPixels = await checkScreenColor("friend READY notice", [0x8a, 0xd0, 0xff], 10);
+    const friendPromptShot = await screenshot(`${label}-${width}x${height}-coop-${locale}-friend-waiting`);
+
     const postcardSentAt = Date.now() - 60_000;
     await pushJson({
       type: "postcardMailbox",
@@ -765,18 +777,6 @@ async function main(): Promise<void> {
     }
     await touch('[data-button="CROSS"]', 140);
     await waitFor<boolean>("post office closed", "globalThis.__onlineState?.postcard === false", Boolean);
-
-    const coopLabel = locale === "zh" ? han(0x534f, 0x4f5c) : "COOP";
-    const friendNotice = `${coopLabel} · ${friend.name} · ${friend.targetTown} · ${friend.item}`;
-    const friendState = await waitFor<OnlineState | null>(
-      "friend READY hint",
-      "globalThis.__onlineState ?? null",
-      (candidate) => candidate?.notice === friendNotice && candidate.coopWaitingFriends === 1,
-    );
-    check(`${phase}: friend READY is counted once`, friendState!.coopWaitingFriends === 1, friendNotice);
-    const friendPromptLayout = await layoutReport();
-    const friendPromptPixels = await checkScreenColor("friend READY notice", [0x8a, 0xd0, 0xff], 10);
-    const friendPromptShot = await screenshot(`${label}-${width}x${height}-coop-${locale}-friend-waiting`);
 
     // Open the in-game menu and choose its social row with real touch input.
     // The injected snapshot is the hosted-only privacy-filtered friend view;

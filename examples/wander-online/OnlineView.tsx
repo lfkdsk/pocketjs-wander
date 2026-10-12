@@ -2011,7 +2011,6 @@ export function OnlineView() {
       pageLog(c, seed);
       return;
     }
-    if (tryOpenPostOffice(c)) return;
     const move = predictor.current.move;
     const rx = regionOf(move.tx), ry = regionOf(move.ty);
     const currentCoop = coopErrand();
@@ -2019,6 +2018,7 @@ export function OnlineView() {
       c.sendCommand({ kind: COMMAND.cancelCoopErrand, rx, ry, extra: 0 });
       return;
     }
+    if (tryOpenPostOffice(c)) return;
     const plan = predictor.world.plans.get(realmRegionKey(rx, ry));
     const nearPlaza = plan !== undefined && plan.hub.town
       && Math.abs(move.tx - plan.hub.x) + Math.abs(move.ty - plan.hub.y) <= PLAZA_RADIUS;
