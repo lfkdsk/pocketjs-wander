@@ -13,6 +13,7 @@ import {
   type SocialRowTone,
 } from "./social-model.ts";
 import {
+  fitPostcardWideText,
   postcardMenuView,
   postcardPanelLayout,
   postcardPanelRowRect,
@@ -126,7 +127,9 @@ export function PostcardPanel(props: PostcardPanelProps) {
                     textColor: textColour(item.tone),
                   }}
                 >
-                  {fitSocialText(item.label, item.wide ? 54 : socialPanelLabelCells(layout()))}
+                  {item.wide
+                    ? fitPostcardWideText(item.label, layout())
+                    : fitSocialText(item.label, socialPanelLabelCells(layout()))}
                 </Text>
                 <Text
                   class="absolute text-xs"
@@ -148,7 +151,7 @@ export function PostcardPanel(props: PostcardPanelProps) {
           }}
         </For>
         <Text
-          class="absolute text-2xs"
+          class={props.data.locale === "zh" ? "absolute text-xs" : "absolute text-2xs"}
           style={{ ...relative(layout().footer, layout().panel), textColor: COLOURS.dim, lineHeight: 12 * layout().scale, height: 12 * layout().scale }}
           debugName="postcard-panel-footer"
         >

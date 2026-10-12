@@ -10,10 +10,15 @@ import {
 } from "../examples/wander-online/shared/postcard.ts";
 import {
   createPostcardMenuState,
+  fitPostcardWideText,
   postcardMenuRows,
+  postcardMenuView,
+  postcardPanelLayout,
+  postcardPanelWideCells,
   reducePostcardMenu,
   type PostcardMenuData,
 } from "../examples/wander-online/postcard-model.ts";
+import { measureSocialCells } from "../examples/wander-online/social-model.ts";
 
 describe("postcard shared contract", () => {
   test("only preset sentence ids and int32 discovery coordinates form a draft", () => {
@@ -39,6 +44,7 @@ describe("postcard shared contract", () => {
       expect(formatPostcardSentence(id, "en").length).toBeGreaterThan(10);
       expect(formatPostcardSentence(id, "zh").length).toBeGreaterThan(6);
       expect(formatPostcardSentence(id, "en")).not.toBe(formatPostcardSentence(id, "zh"));
+      expect(formatPostcardSentence(id, "zh")).not.toMatch(/[，！。]/);
     }
   });
 
@@ -149,7 +155,33 @@ describe("postcard controller flow", () => {
       "寄一张明信片",
       "离开邮局",
     ]);
+    expect(postcardMenuRows({ ...createPostcardMenuState(), screen: "recipients" }, zh)[0]?.detail).toBe("离线");
     const phrases = postcardMenuRows({ ...createPostcardMenuState(), screen: "phrases" }, zh);
     expect(phrases.map((entry) => entry.label)).toContain(formatPostcardSentence("recommend", "zh"));
+    expect(postcardMenuView(createPostcardMenuState(), zh).footer).toBe("CIRCLE 打开 · CROSS 关闭");
+    expect(postcardMenuView({ ...createPostcardMenuState(), screen: "phrases" }, zh).footer).toBe("CIRCLE 选择 · CROSS 返回");
+  });
+
+  test("wide postcard rows ellipsize to each responsive panel's real text width", () => {
+    const state = {
+      ...createPostcardMenuState(),
+      screen: "review" as const,
+      recipient: { githubId: 7, name: "Bob" },
+      sentenceId: "thanks" as const,
+    };
+    const message = postcardMenuRows(state, data).find((entry) => entry.key === "review-message")!.label;
+    const portrait = postcardPanelLayout(390, 844);
+    const landscape = postcardPanelLayout(844, 390);
+    const baseline = postcardPanelLayout(480, 272);
+
+    expect(postcardPanelWideCells(portrait)).toBe(42);
+    expect(postcardPanelWideCells(landscape)).toBe(40);
+    expect(postcardPanelWideCells(baseline)).toBe(53);
+    for (const layout of [portrait, landscape]) {
+      const fitted = fitPostcardWideText(message, layout);
+      expect(fitted.endsWith("…")).toBe(true);
+      expect(measureSocialCells(fitted)).toBeLessThanOrEqual(postcardPanelWideCells(layout));
+    }
+    expect(fitPostcardWideText(message, baseline)).toBe(message);
   });
 });

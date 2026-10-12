@@ -59,27 +59,30 @@ export interface PostcardMailbox extends PostcardStatus {
 const SENTENCES: Record<PostcardSentenceId, Record<PostcardLocale, string>> = {
   hello: {
     en: "Hello from the road — happy travels!",
-    zh: "向你问好，祝旅途顺利！",
+    // The bundled 12 px CJK face covers common Han, while punctuation comes
+    // from the ASCII face. Keep preset punctuation inside that shared set so
+    // every supported host draws the same sentence without replacement boxes.
+    zh: "向你问好,祝旅途顺利!",
   },
   recommend: {
     en: "I found a place worth seeing.",
-    zh: "我发现了一处值得去看的风景。",
+    zh: "我发现了一处值得去看的风景.",
   },
   thanks: {
     en: "Thank you for helping me on our journey!",
-    zh: "谢谢你一路上的合作与帮助！",
+    zh: "谢谢你一路上的合作与帮助!",
   },
   memory: {
     en: "I was remembering the roads we shared.",
-    zh: "我想起了我们一起走过的路。",
+    zh: "我想起了我们一起走过的路.",
   },
   cheer: {
     en: "May today bring you a new discovery!",
-    zh: "愿你今天也有新的发现！",
+    zh: "愿你今天也有新的发现!",
   },
   "meet-again": {
     en: "I hope our paths cross again soon!",
-    zh: "期待不久后在路上再次相见！",
+    zh: "期待不久后在路上再次相见!",
   },
 };
 

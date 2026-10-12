@@ -27,6 +27,18 @@ import {
 export { socialPanelLayout as postcardPanelLayout, socialPanelRowRect as postcardPanelRowRect };
 export type { SocialPanelLayout as PostcardPanelLayout, SocialRect as PostcardRect };
 
+/** Wide postcard rows use both social-panel columns. Derive their conservative
+ * display-cell budget from the actual responsive body width, including the
+ * 360 px phone-landscape lane, instead of assuming the 480 px baseline. */
+export function postcardPanelWideCells(layout: SocialPanelLayout): number {
+  const textWidth = Math.max(0, layout.body.w - 12 * layout.scale);
+  return Math.max(1, Math.floor(textWidth / (8 * layout.scale)));
+}
+
+export function fitPostcardWideText(value: string, layout: SocialPanelLayout): string {
+  return fitSocialText(value, postcardPanelWideCells(layout));
+}
+
 export type PostcardScreen = "home" | "inbox" | "read" | "recipients" | "phrases" | "postmarks" | "review";
 export type PostcardInput = "up" | "down" | "confirm" | "back";
 
@@ -109,6 +121,13 @@ const COPY = {
     read: "READ",
     new: "NEW",
     from: "FROM",
+    open: "OPEN",
+    select: "SELECT",
+    close: "CLOSE",
+    back: "BACK",
+    online: "ONLINE",
+    offline: "OFFLINE",
+    hidden: "HIDDEN",
   },
   zh: {
     postOffice: "邮局",
@@ -131,6 +150,13 @@ const COPY = {
     read: "已读",
     new: "未读",
     from: "寄件人",
+    open: "打开",
+    select: "选择",
+    close: "关闭",
+    back: "返回",
+    online: "在线",
+    offline: "离线",
+    hidden: "隐藏",
   },
 } as const;
 
@@ -187,7 +213,7 @@ export function postcardMenuRows(state: PostcardMenuState, data: PostcardMenuDat
         ? data.friends.map((friend) => row(
           `recipient-${friend.githubId}`,
           friend.name,
-          friend.presence.toUpperCase(),
+          words[friend.presence],
           friend.presence === "online" ? "accent" : "normal",
           { friend },
         ))
@@ -331,7 +357,9 @@ export function postcardMenuView(state: PostcardMenuState, data: PostcardMenuDat
     rows: rows.slice(start, start + SOCIAL_PAGE_ROWS),
     page: normalized.page,
     pages,
-    footer: normalized.screen === "home" ? "CIRCLE OPEN · CROSS CLOSE" : "CIRCLE SELECT · CROSS BACK",
+    footer: normalized.screen === "home"
+      ? `CIRCLE ${words.open} · CROSS ${words.close}`
+      : `CIRCLE ${words.select} · CROSS ${words.back}`,
   };
 }
 
