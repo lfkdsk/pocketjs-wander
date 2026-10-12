@@ -6,7 +6,7 @@ import type { PocketSocket } from "@pocketjs/framework/socket";
 import { bootWorld, treeHasText } from "../vendor/pocket-rpgkit/vendor/pocketjs/hosts/sim/sim.ts";
 import { appBundle, appPreflight } from "./helpers/boot.ts";
 import { fakeOnlineSocketFactory, type FakeOnlineOpts } from "./lib/fake-online-socket.ts";
-import { dailyGoalLayout } from "../examples/wander-online/hud.ts";
+import { dailyGoalLayout, dialogRect, logBarRect, type HudRect } from "../examples/wander-online/hud.ts";
 import type { OnlinePublished } from "../examples/wander-online/OnlineView.tsx";
 import { encodeWelcome4 } from "../examples/wander-online/net/protocol.ts";
 import {
@@ -24,10 +24,15 @@ const SEED = 1593842689;
 const REALM = "realm-test";
 const TOWN = { board: { x: 439, y: 43 } };
 const GROWN_MS = 10_000_000;
+// Semantic colours intentionally match the opaque progress layers in
+// OnlineView. Exact matching proves the pixels came from those layers.
+const DAILY_GOAL_TRACK_COLOR = "#203047";
+const DAILY_GOAL_FILL_COLOR = "#2d7658";
 
 interface World {
   frame: (buttons: number) => void;
   tick: () => void;
+  render: () => Uint8Array;
   getTree: () => unknown;
   ticksPerFrame: number;
 }
@@ -137,6 +142,22 @@ function dailyMessage(goal: DailyGoalSnapshot, completedNow = false): Record<str
 const measure = (text: string): number =>
   (globalThis as unknown as { ui: { measureText(value: string, slot: number): number } }).ui.measureText(text, 0);
 
+function colorChannels(hex: string): readonly [number, number, number] {
+  return [Number.parseInt(hex.slice(1, 3), 16), Number.parseInt(hex.slice(3, 5), 16), Number.parseInt(hex.slice(5, 7), 16)];
+}
+
+function countColor(framebuffer: Uint8Array, width: number, bounds: HudRect, color: string): number {
+  const [red, green, blue] = colorChannels(color);
+  let count = 0;
+  for (let y = bounds.y0; y < bounds.y1; y++) {
+    for (let x = bounds.x0; x < bounds.x1; x++) {
+      const offset = (y * width + x) * 4;
+      if (framebuffer[offset] === red && framebuffer[offset + 1] === green && framebuffer[offset + 2] === blue) count++;
+    }
+  }
+  return count;
+}
+
 simDescribe("wander-online daily-goal client", () => {
   test("accepts only current capable snapshots, stays monotonic within a day, rolls over, and clears on realm change", async () => {
     const f = fixture();
@@ -228,9 +249,9 @@ simDescribe("wander-online daily-goal client", () => {
     expect(state().notice).toBe("");
   }, 30_000);
 
-  for (const [width, height] of [[480, 272], [960, 544]] as const) {
+  for (const [width, height] of [[480, 272], [960, 544], [390, 844], [844, 390]] as const) {
     for (const locale of ["en", "zh"] as const) {
-      test(`${width}x${height}: ${locale} HUD and ordinary notice board show the complete daily copy without truncation`, async () => {
+      test(`${width}x${height}: ${locale} HUD and ordinary notice board show progress without truncation or overlap`, async () => {
         const f = fixture();
         const world = await boot(f.opts, width, height, locale);
         await enterWorld(world);
@@ -246,13 +267,74 @@ simDescribe("wander-online daily-goal client", () => {
         expect(treeHasText(world.getTree(), state().dailyGoalCountdown)).toBe(true);
         expect(measure(expected)).toBeLessThanOrEqual(layout.goalText.x1 - layout.goalText.x0);
         expect(measure(state().dailyGoalCountdown)).toBeLessThanOrEqual(layout.countdownText.x1 - layout.countdownText.x0);
+        expect(layout.panel.x0).toBeGreaterThanOrEqual(0);
+        expect(layout.panel.x1).toBeLessThanOrEqual(width);
+        expect(layout.panel.y0).toBeGreaterThanOrEqual(0);
+        expect(layout.panel.y1).toBeLessThanOrEqual(logBarRect(width, height).y0);
+
+        const hudFrame = world.render();
+        expect(countColor(hudFrame, width, layout.goalText, DAILY_GOAL_FILL_COLOR), "HUD fill pixels").toBeGreaterThan(0);
+        expect(countColor(hudFrame, width, layout.goalText, DAILY_GOAL_TRACK_COLOR), "HUD unfilled track pixels").toBeGreaterThan(0);
 
         // Partner finding is disabled, proving the daily line is not limited
         // to the co-op-board branch.
         press(world, BTN.CIRCLE);
         expect(state().dialog).toBe(true);
         expect(treeHasText(world.getTree(), expected)).toBe(true);
+        const board = dialogRect(width, height);
+        expect(measure(expected)).toBeLessThanOrEqual(board.x1 - board.x0 - 20);
+        expect(board.x0).toBeGreaterThanOrEqual(0);
+        expect(board.x1).toBeLessThanOrEqual(width);
+        expect(board.y0).toBeGreaterThanOrEqual(0);
+        expect(board.y1).toBeLessThanOrEqual(height);
+        const boardFrame = world.render();
+        expect(countColor(boardFrame, width, board, DAILY_GOAL_FILL_COLOR), "notice-board fill pixels").toBeGreaterThan(0);
+        expect(countColor(boardFrame, width, board, DAILY_GOAL_TRACK_COLOR), "notice-board unfilled track pixels").toBeGreaterThan(0);
       }, 30_000);
     }
   }
+
+  test("HUD and notice-board pixels distinguish zero, partial, and full progress", async () => {
+    const width = 480, height = 272;
+    const f = fixture();
+    const world = await boot(f.opts, width, height, "en");
+    await enterWorld(world);
+    pushText(f, features(true));
+    const empty = snapshot(0);
+    const partial = { ...empty, progress: 2, revision: 1 };
+    const complete = { ...empty, progress: empty.required, completed: true, revision: 2 };
+    const hudBounds = dailyGoalLayout(width, height).goalText;
+
+    pushText(f, dailyMessage(empty));
+    pump(world, 2);
+    const emptyHud = world.render();
+    expect(countColor(emptyHud, width, hudBounds, DAILY_GOAL_FILL_COLOR), "empty HUD fill").toBe(0);
+    expect(countColor(emptyHud, width, hudBounds, DAILY_GOAL_TRACK_COLOR), "empty HUD track").toBeGreaterThan(0);
+
+    pushText(f, dailyMessage(partial));
+    pump(world, 2);
+    const partialHudFill = countColor(world.render(), width, hudBounds, DAILY_GOAL_FILL_COLOR);
+    expect(partialHudFill, "partial HUD fill").toBeGreaterThan(0);
+
+    pushText(f, dailyMessage(complete));
+    pump(world, 2);
+    const completeHud = world.render();
+    expect(countColor(completeHud, width, hudBounds, DAILY_GOAL_FILL_COLOR), "complete HUD fill").toBeGreaterThan(partialHudFill);
+    expect(treeHasText(world.getTree(), formatDailyGoal(complete, "en"))).toBe(true);
+
+    press(world, BTN.CIRCLE);
+    const boardBounds = dialogRect(width, height);
+    const completeBoardFill = countColor(world.render(), width, boardBounds, DAILY_GOAL_FILL_COLOR);
+    expect(completeBoardFill, "complete notice-board fill").toBeGreaterThan(0);
+
+    // Updating the still-open board redraws the same row against a fresh
+    // day's empty track, proving this surface is not a static decoration.
+    const nextEmpty = snapshot(1);
+    pushText(f, dailyMessage(nextEmpty));
+    pump(world, 2);
+    const emptyBoard = world.render();
+    expect(countColor(emptyBoard, width, boardBounds, DAILY_GOAL_FILL_COLOR), "empty notice-board fill").toBe(0);
+    expect(countColor(emptyBoard, width, boardBounds, DAILY_GOAL_TRACK_COLOR), "empty notice-board track").toBeGreaterThan(0);
+    expect(treeHasText(world.getTree(), formatDailyGoal(nextEmpty, "en"))).toBe(true);
+  }, 30_000);
 });

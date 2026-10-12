@@ -1,5 +1,6 @@
 // Capture the realm daily goal on the live HUD and an ordinary town notice
-// board in English and Chinese at the two supported desktop viewports.
+// board in English and Chinese at the desktop and phone-orientation
+// viewports used by the focused UI checks.
 // Native frames and nearest-neighbour 3x inspection copies are retained,
 // together with semantic text, width and pixel evidence.
 //
@@ -32,6 +33,10 @@ const REALM = "realm-test";
 const DAY = 0;
 const SERVER_TIME_MS = 10_000_000;
 const BOARD = { x: 439, y: 43 };
+// Semantic colours intentionally match the opaque progress layers in
+// OnlineView. Exact matching proves the pixels came from those layers.
+const DAILY_GOAL_TRACK_COLOR = "#203047";
+const DAILY_GOAL_FILL_COLOR = "#2d7658";
 
 interface World {
   frame: (buttons: number) => void;
@@ -56,11 +61,19 @@ interface SceneEvidence {
   goalAvailable: number;
   countdownWidth: number;
   countdownAvailable: number;
+  progressTrackWidth: number;
+  progressFillWidth: number;
   semanticPixels: Record<string, number>;
   files: string[];
 }
 
 const report: SceneEvidence[] = [];
+
+function dailyGoalFillWidth(progress: number, required: number, trackWidth: number): number {
+  const innerWidth = Math.max(0, Math.floor(trackWidth) - 2);
+  if (innerWidth === 0 || required <= 0) return 0;
+  return Math.round(innerWidth * Math.max(0, Math.min(1, progress / required)));
+}
 
 function fixture(): Fixture {
   let socket: PocketSocket | null = null;
@@ -194,6 +207,13 @@ function countNear(
   return count;
 }
 
+function countColor(framebuffer: Uint8Array, width: number, rect: HudRect, hex: string): number {
+  const red = Number.parseInt(hex.slice(1, 3), 16);
+  const green = Number.parseInt(hex.slice(3, 5), 16);
+  const blue = Number.parseInt(hex.slice(5, 7), 16);
+  return countNear(framebuffer, width, rect, red, green, blue, 0);
+}
+
 function writeShot(name: string, width: number, height: number, framebuffer: Uint8Array): string[] {
   const native = `${name}.${width}x${height}.png`;
   const zoomed = `${name}.${width}x${height}-3x.png`;
@@ -244,11 +264,16 @@ async function capture(width: number, height: number, locale: "en" | "zh"): Prom
   }
 
   const progressFrame = world.render();
+  const progressTrackWidth = layout.goalText.x1 - layout.goalText.x0;
+  const progressFillWidth = dailyGoalFillWidth(goal.progress, goal.required, progressTrackWidth);
   const progressPixels = {
+    progressTrack: countColor(progressFrame, width, layout.goalText, DAILY_GOAL_TRACK_COLOR),
+    progressFill: countColor(progressFrame, width, layout.goalText, DAILY_GOAL_FILL_COLOR),
     goalGreen: countNear(progressFrame, width, layout.goalText, 0x8f, 0xe3, 0xb0),
     countdownBlue: countNear(progressFrame, width, layout.countdownText, 0x9f, 0xd0, 0xff),
   };
-  if (progressPixels.goalGreen < 8 || progressPixels.countdownBlue < 8) {
+  if (progressPixels.progressTrack < 8 || progressPixels.progressFill < progressFillWidth
+    || progressPixels.goalGreen < 8 || progressPixels.countdownBlue < 8) {
     throw new Error(`${locale} ${width}x${height}: daily HUD semantic colors did not paint`);
   }
   const progressFiles = writeShot(`daily-${locale}-progress`, width, height, progressFrame);
@@ -262,6 +287,8 @@ async function capture(width: number, height: number, locale: "en" | "zh"): Prom
     goalAvailable,
     countdownWidth,
     countdownAvailable,
+    progressTrackWidth,
+    progressFillWidth,
     semanticPixels: progressPixels,
     files: progressFiles,
   });
@@ -273,12 +300,17 @@ async function capture(width: number, height: number, locale: "en" | "zh"): Prom
   }
   const boardFrame = world.render();
   const boardBox = dialogRect(width, height);
+  const boardTrackWidth = boardBox.x1 - boardBox.x0 - 16;
+  const boardFillWidth = dailyGoalFillWidth(goal.progress, goal.required, boardTrackWidth);
   const boardPixels = {
+    progressTrack: countColor(boardFrame, width, boardBox, DAILY_GOAL_TRACK_COLOR),
+    progressFill: countColor(boardFrame, width, boardBox, DAILY_GOAL_FILL_COLOR),
     dialogText: countNear(boardFrame, width, boardBox, 0xe7, 0xed, 0xf8),
     nextLegendBlue: countNear(boardFrame, width, boardBox, 0x8a, 0xd0, 0xff),
     opaquePanel: countNear(boardFrame, width, boardBox, 0x0b, 0x16, 0x26, 0),
   };
-  if (boardPixels.dialogText < 20 || boardPixels.nextLegendBlue < 4 || boardPixels.opaquePanel < 500) {
+  if (boardPixels.progressTrack < 8 || boardPixels.progressFill < boardFillWidth
+    || boardPixels.dialogText < 20 || boardPixels.nextLegendBlue < 4 || boardPixels.opaquePanel < 500) {
     throw new Error(`${locale} ${width}x${height}: notice-board dialog did not paint`);
   }
   const boardFiles = writeShot(`daily-${locale}-board`, width, height, boardFrame);
@@ -292,6 +324,8 @@ async function capture(width: number, height: number, locale: "en" | "zh"): Prom
     goalAvailable,
     countdownWidth,
     countdownAvailable,
+    progressTrackWidth: boardTrackWidth,
+    progressFillWidth: boardFillWidth,
     semanticPixels: boardPixels,
     files: boardFiles,
   });
@@ -299,7 +333,7 @@ async function capture(width: number, height: number, locale: "en" | "zh"): Prom
 }
 
 mkdirSync(OUT, { recursive: true });
-for (const [width, height] of [[480, 272], [960, 544]] as const) {
+for (const [width, height] of [[480, 272], [960, 544], [390, 844], [844, 390]] as const) {
   for (const locale of ["en", "zh"] as const) await capture(width, height, locale);
 }
 writeFileSync(join(OUT, "report.json"), `${JSON.stringify({

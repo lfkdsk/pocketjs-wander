@@ -375,6 +375,21 @@ function rect(style: HudRect): Record<string, number> {
   return { posType: 1, insetL: style.x0, insetT: style.y0, width: style.x1 - style.x0, height: style.y1 - style.y0 };
 }
 
+/** Opaque, intentionally distinct progress colours: screenshot checks can
+ * distinguish the unfilled track from the filled share without depending on
+ * whichever terrain happens to sit behind the HUD. */
+const DAILY_GOAL_TRACK_COLOR = "#203047";
+const DAILY_GOAL_FILL_COLOR = "#2d7658";
+
+/** Width of the fill inside a progress track. The one-pixel inset keeps the
+ * track visible as an outline even at 100%, while rounding gives stable
+ * logical-pixel widths at every supported viewport. */
+function dailyGoalFillWidth(progress: number, required: number, trackWidth: number): number {
+  const innerWidth = Math.max(0, Math.floor(trackWidth) - 2);
+  if (innerWidth === 0 || !Number.isFinite(progress) || !Number.isFinite(required) || required <= 0) return 0;
+  return Math.round(innerWidth * Math.max(0, Math.min(1, progress / required)));
+}
+
 interface SpriteRec {
   tileRef: string | null;
   tileIdx: number;
@@ -2383,6 +2398,26 @@ export function OnlineView() {
   const dailyLayout = () => dailyGoalLayout(viewport().w, viewport().h);
   const dialogBox = () => dialogRect(viewport().w, viewport().h);
   const emoteBar = () => emoteBarRect(viewport().w, viewport().h, debugOn());
+  const progressFill = (track: HudRect): HudRect => {
+    const goal = dailyGoal();
+    const width = dailyGoalFillWidth(goal?.progress ?? 0, goal?.required ?? 0, track.x1 - track.x0);
+    return { x0: track.x0 + 1, y0: track.y0 + 1, x1: track.x0 + 1 + width, y1: track.y1 - 1 };
+  };
+  const dialogDailyGoalRow = (): number => {
+    const goal = dailyGoal();
+    if (!openNoticeBoard || realmFeatures()?.dailyGoals !== true || !goal || goal.realm !== openNoticeBoard.realm) return -1;
+    return dialogRows().indexOf(dailyLine(goal));
+  };
+  const dialogDailyGoalTrack = (): HudRect => {
+    const box = dialogBox();
+    const row = dialogDailyGoalRow();
+    return {
+      x0: box.x0 + 8,
+      y0: box.y0 + 6 + row * DIALOG_ROW_H,
+      x1: box.x1 - 8,
+      y1: box.y0 + 18 + row * DIALOG_ROW_H,
+    };
+  };
 
   return (
     <View class="w-full h-full overflow-hidden bg-black">
@@ -2406,6 +2441,8 @@ export function OnlineView() {
           <Show when={realmOn()}>
             <Show when={dailyGoal() !== null && !menuOpen() && !socialOpen()}>
               <View class="absolute" style={{ posType: 1, ...rect(dailyLayout().panel), bgColor: "#0b1626", opacity: 0.76 }} debugName="online-daily-goal" />
+              <View class="absolute" style={{ ...rect(dailyLayout().goalText), bgColor: DAILY_GOAL_TRACK_COLOR }} debugName="online-daily-goal-progress-track" />
+              <View class="absolute" style={{ ...rect(progressFill(dailyLayout().goalText)), bgColor: DAILY_GOAL_FILL_COLOR }} debugName="online-daily-goal-progress-fill" />
               <Text class="text-xs" style={{ ...rect(dailyLayout().goalText), textColor: "#8fe3b0", lineHeight: 12 }} debugName="online-daily-goal-text">
                 {dailyLine()}
               </Text>
@@ -2425,6 +2462,10 @@ export function OnlineView() {
         </Show>
         <Show when={dialogOpen()}>
           <View class="absolute" style={{ posType: 1, ...rect(dialogBox()), bgColor: "#0b1626", borderWidth: 1, borderColor: "#3a4a6a" }} debugName="online-dialog" />
+          <Show when={dialogDailyGoalRow() >= 0}>
+            <View class="absolute" style={{ ...rect(dialogDailyGoalTrack()), bgColor: DAILY_GOAL_TRACK_COLOR }} debugName="online-dialog-daily-goal-progress-track" />
+            <View class="absolute" style={{ ...rect(progressFill(dialogDailyGoalTrack())), bgColor: DAILY_GOAL_FILL_COLOR }} debugName="online-dialog-daily-goal-progress-fill" />
+          </Show>
           {Array.from({ length: DIALOG_ROWS }, (_, i) => (
             <Text class="text-xs" style={{ posType: 1, insetT: dialogBox().y0 + 6 + i * DIALOG_ROW_H, insetL: dialogBox().x0 + 10, width: dialogBox().x1 - dialogBox().x0 - 20, textColor: "#e7edf8", lineHeight: 12, height: 12 }}>
               {dialogRows()[i] ?? ""}
