@@ -47,8 +47,8 @@
     "idempotentReplayRowReads": 100,
     "postmarkRowReads": 250,
     "readReceiptRowReads": 3500,
-    "expiryCleanupRowReads": 150,
-    "storageRowReads": 55650,
+    "expiryCleanupRowReads": 175,
+    "storageRowReads": 55675,
     "sendRowWrites": 3500,
     "readReceiptRowWrites": 1000,
     "expiryCleanupBatches": 25,
@@ -64,9 +64,9 @@
     "overageEquivalentUsd": {
       "requests": 0.001183125,
       "gbSeconds": 0.0002368,
-      "storageRowReads": 0.00005565,
+      "storageRowReads": 0.000055675,
       "storageRowWrites": 0.004725,
-      "total": 0.006200575
+      "total": 0.0062006
     },
     "overage": {
       "requests": false,

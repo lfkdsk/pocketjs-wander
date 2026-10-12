@@ -105,17 +105,18 @@ Durable Object、SQLite 或 Room 路由。
 
 ## 5. Cloudflare 扫描行预算与停机线
 
-更新后的模型把回信 source 精确读取、幂等重放、expiry alarm wake、Meter 请求、索引读取和实际
-删除行全部加入 ledger，并继续按 Cloudflare **扫描行** 口径计费。常见月度点为 31 天、100 DAU、
+更新后的模型把回信 source 精确读取、幂等重放、expiry alarm wake、Meter 请求、索引读取、每批
+一次 migration cursor 探针和实际删除行全部加入 ledger，并继续按 Cloudflare **扫描行** 口径计费。
+常见月度点为 31 天、100 DAU、
 500 次成功寄件（其中 250 次回信）、50 次幂等重放、50 张卡分 25 批主动过期：
 
 | 月度增量 | 常见负载 |
 | --- | ---: |
 | inbound controls / internal DO requests / request units | 7,250 / 7,525 / 7,887.5 |
 | short wakes / short-wake seconds / GB-s | 14,800 / 148 / 18.944 |
-| storage row reads / writes | 55,650 / 4,725 |
+| storage row reads / writes | 55,675 / 4,725 |
 | Workers Paid 包含池内增量 | **$0** |
-| 全部用量按 overage 单价的等价值 | **$0.006200575/月** |
+| 全部用量按 overage 单价的等价值 | **$0.0062006/月** |
 | hard stop | **false** |
 
 `reports/net-mail-2-budget.json` 是模型的精确输入与输出。模型分别比较 request、GB-s、row reads、
