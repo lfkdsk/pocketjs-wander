@@ -24,6 +24,7 @@
     "shots:online": "bun tools/wander-online-shots.ts",
     "shots:meet": "bun tools/wander-online-meet-shots.ts",
     "shots:social": "bun tools/wander-online-social-shots.ts",
+    "shots:postcard": "bun tools/wander-online-postcard-shots.ts",
     "bench:online": "bun tools/wander-online-quickjs-bench.ts",
     "online:demo": "bash examples/wander-online/demo.sh"
   },

@@ -70,6 +70,15 @@ and town boards show progress and time to midnight in English or Chinese; the
 single completion crossing announces to the realm and leaves a permanent
 festival market at the target town as a record of the achievement.
 
+On hosted realms, a town notice board is also a post office. Friends can leave
+each other offline postcards using six bilingual preset messages and an
+optional server-validated landmark-FIRST postmark; free text and sender
+location never enter a card. The hosted service owns unread counts, expiry,
+mailbox and daily-send limits, unfriend cleanup and account-deletion cleanup.
+The loopback server has no durable mailbox and does not advertise this feature.
+Controls and verification commands are in the
+[Wander Online guide](examples/wander-online/README.md#friend-postcards).
+
 For local development, start the loopback-only Bun server with its explicit
 guest switch, then launch clients with matching guest credentials:
 

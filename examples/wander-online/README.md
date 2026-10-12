@@ -42,7 +42,7 @@ the same words.
 | --- | --- |
 | D-pad | walk (takes over from auto-walk) |
 | CIRCLE | talk to the resident in front (the server records the conversation), read the notice board in front, page/close the open dialog |
-| CROSS | near a town hub: accept its errand, deliver a solo errand, or mark this courier ready for a cooperative delivery; elsewhere: page the travel log |
+| CROSS | at a born town notice board on a hosted postcard realm: open the post office; otherwise near a town hub: accept its errand, deliver a solo errand, or mark this courier ready for a cooperative delivery; elsewhere: page the travel log |
 | TRIANGLE | request fast mode; the HUD says `FAST` once a snapshot confirms it |
 | R | the emote picker: LEFT/RIGHT choose one of five presets, CIRCLE sends it, CROSS or R closes |
 | SELECT | open/close the menu: CIRCLE links a device, SQUARE twice deletes all account data, TRIANGLE toggles debug, START toggles auto-walk, L mints an invite to this world, R leaves for any world, DOWN opens friends/worlds/my data |
@@ -224,6 +224,44 @@ hosted social records.
   view an explicit `NO PROFILE` summary and use the same two-press deletion;
   creating a throwaway character is not required.
 
+### Friend postcards
+
+When a hosted realm advertises `realmFeatures.postcards`, every born town
+notice board doubles as a postal counter. Face the board and press CROSS to
+open it; CIRCLE still opens the ordinary notice-board dialog. The HUD shows a
+small `MAIL n` / `信 n` badge whenever the server reports unread cards.
+
+The post office has two controller-first paths. Mailbox opens stored cards and
+marks the selected unread card through the server. Send chooses a mutual
+friend, one of six English/Chinese preset phrases, and either no postmark or a
+landmark from the private travel log. The client sends only a friend id,
+sentence id and optional region coordinate. The hosted Room verifies the
+physical board, rejects a forged phrase or coordinate, and accepts a postmark
+only when that exact landmark FIRST belongs to the sender's current account
+incarnation. It derives the public landmark kind itself; a recipient never
+receives the coordinate, realm, account id, token or sender position. There is
+no free-text field.
+
+Auth owns offline delivery and all limits: 32 live cards per mailbox, five
+successful sends per sender per UTC day and a 30-day TTL. A recipient sees the
+card on the next mailbox open even if no socket was connected when it was
+sent; an online cross-realm unread update is only a best-effort hint, and the
+next status request is authoritative. Removing a friendship immediately
+deletes unread cards in both directions, retains already-read recipient history
+until expiry and does not refund send quota. Complete account deletion removes
+both received cards and sender-side references.
+
+The loopback Bun server deliberately does not advertise postcards: it has no
+durable identity or mailbox store and must not masquerade as hosted offline
+delivery. Client/controller tests use bounded protocol fixtures; the server
+repository's workerd integration test proves a real A-to-offline-B delivery
+and a nonfriend C rejection. After building, capture the bilingual native-size
+and nearest-neighbour 3x review frames with:
+
+```sh
+bun run shots:postcard -- ./wander-online-postcard-shots
+```
+
 The social panel has bounded responsive layouts. Its row details are deliberate
 single-line short labels (`REQUESTS`, `POPULATION`, `PRIVACY`) because PocketJS
 text wraps only at explicit newlines; the detail column retains a 120 px text
@@ -241,10 +279,10 @@ bun run shots:social -- ./wander-online-social-shots
 ```
 
 For the real browser controls, build the web app and run the DPR 3 phone
-verifier. It exercises the social-menu touch path in 390x844 portrait and
-844x390 landscape, projects the open panel through the live logical canvas,
-fails if any visible floating game-pad control overlaps it, and retains its
-screenshots and JSON layout report:
+verifier. It exercises the post-office read/review and social-menu touch paths
+in 390x844 portrait and 844x390 landscape, projects each open panel through the
+live logical canvas, fails if any visible floating game-pad control overlaps
+it, and retains its screenshots and JSON layout report:
 
 ```sh
 bun run web
@@ -265,9 +303,10 @@ marker that is not refreshed for three seconds disappears.
 most one per player per second and echoes an `EMOTE` frame to everyone
 whose AOI holds the sender (sender included), and each client draws the
 glyph above that walker's name tag for five seconds. Nothing is stored:
-a player who arrives later never sees it. There is no free-text message
-of any kind; the only things a player can send are inputs, these
-one-byte commands and the fixed auth, invite and social requests.
+a player who arrives later never sees it. There is no free-text message of
+any kind. Postcards carry one of six fixed sentence ids; all other player
+controls are inputs, one-byte commands or fixed auth, invite and social
+requests.
 
 ### Names and the name font
 
