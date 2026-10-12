@@ -3,6 +3,7 @@ import {
   SOCIAL_DETAIL_CELLS,
   SOCIAL_LABEL_CELLS,
   SOCIAL_PAGE_ROWS,
+  SOCIAL_PROFILE_COPY_CELLS,
   SOCIAL_WIDE_PHONE_PANEL_W,
   createSocialMenuState,
   friendRealmCandidates,
@@ -16,11 +17,13 @@ import {
   socialPanelRowRect,
   socialMenuRows,
   socialMenuView,
+  wrapSocialText,
   type SocialMenuData,
   type SocialMenuState,
   type SocialRect,
 } from "../examples/wander-online/social-model.ts";
 import { fitViewport } from "../vendor/pocket-rpgkit/tools/web/fit.ts";
+import { achievementCopy } from "../examples/wander-online/shared/profile.ts";
 
 function fixture(): SocialMenuData {
   return {
@@ -50,6 +53,18 @@ function fixture(): SocialMenuData {
       visible: false,
       realms: [{ realm: "plaza-2", discoveries: 12, helped: 3, updatedAt: 1234 }],
     },
+    profile: {
+      self: true,
+      card: {
+        name: "Alice",
+        look: 7,
+        joinedAt: Date.UTC(2026, 9, 12) / 1000,
+        achievements: ["errands-1", "shared-days-1"],
+        showcasePostmark: "old stones beside the river",
+        postmarkOptions: ["old stones beside the river", "lone tower"],
+      },
+      newAchievements: [],
+    },
   };
 }
 
@@ -70,6 +85,7 @@ describe("wander-online social menu model", () => {
     expect(rows.map((row) => row.detail)).toEqual([
       "REQUESTS",
       "POPULATION",
+      "ACHIEVEMENTS",
       "PRIVACY",
     ]);
     for (const row of rows) {
@@ -88,14 +104,21 @@ describe("wander-online social menu model", () => {
     expect(transition).toEqual({ state: screen("home"), action: null });
     expect(reduceSocialMenu(transition.state, "back", data).action).toEqual({ type: "close" });
 
-    const myData = reduceSocialMenu(screen("home", 2), "confirm", data);
+    const profile = reduceSocialMenu(screen("home", 2), "confirm", data);
+    expect(profile).toEqual({
+      state: { ...screen("profile"), profileReturn: "home" },
+      action: { type: "view-profile", githubId: null },
+    });
+    expect(reduceSocialMenu(profile.state, "back", data)).toEqual({ state: screen("home"), action: null });
+
+    const myData = reduceSocialMenu(screen("home", 3), "confirm", data);
     expect(myData.state).toEqual(screen("my-data"));
   });
 
   test("Discovery route is capability-gated and toggles public listing without hiding private YOU", () => {
     const legacy = fixture();
     expect(socialMenuRows(screen("home"), legacy).map((row) => row.key)).toEqual([
-      "route-friends", "route-worlds", "route-my-data",
+      "route-friends", "route-worlds", "route-profile", "route-my-data",
     ]);
     legacy.features = { realm: "plaza-2", coopErrands: true, discoveryLeaderboard: false };
     expect(socialMenuRows(screen("home"), legacy).map((row) => row.key)).not.toContain("route-discovery");
@@ -113,9 +136,9 @@ describe("wander-online social menu model", () => {
       ],
     };
     expect(socialMenuRows(screen("home"), data).map((row) => row.key)).toEqual([
-      "route-friends", "route-worlds", "route-discovery", "route-my-data",
+      "route-friends", "route-worlds", "route-profile", "route-discovery", "route-my-data",
     ]);
-    const opened = reduceSocialMenu(screen("home", 2), "confirm", data);
+    const opened = reduceSocialMenu(screen("home", 3), "confirm", data);
     expect(opened).toEqual({ state: screen("discovery"), action: null });
     expect(socialMenuRows(opened.state, data).map((row) => [row.label, row.detail])).toEqual([
       ["YOU · #31", "7 FIRSTS"],
@@ -163,7 +186,7 @@ describe("wander-online social menu model", () => {
     expect(resolveOnlineLocale(undefined, "fr")).toBe("en");
     expect(onlineNoticeTypography("zh")).toEqual({ className: "text-xs", lineHeight: 12 });
     expect(onlineNoticeTypography("en")).toEqual({ className: "text-sm", lineHeight: 18 });
-    expect(socialMenuRows(screen("home"), data)[2]).toMatchObject({ label: discovery, detail: firstFinders });
+    expect(socialMenuRows(screen("home"), data)[3]).toMatchObject({ label: discovery, detail: firstFinders });
     const view = socialMenuView(screen("discovery"), data);
     expect(view.title).toBe("FIRST FINDERS");
     expect([...`${view.title}${view.footer}`].every((ch) => {
@@ -192,6 +215,12 @@ describe("wander-online social menu model", () => {
       .toEqual({ type: "join-realm", realm: "plaza-2" });
     expect(reduceSocialMenu(screen("friends", 1), "delete", data).action)
       .toEqual({ type: "remove-friend", githubId: 1 });
+    expect(reduceSocialMenu(screen("friends", 1), "privacy", data)).toEqual({
+      state: { ...screen("profile"), profileReturn: "friends" },
+      action: { type: "view-profile", githubId: 1 },
+    });
+    expect(reduceSocialMenu({ ...screen("profile"), profileReturn: "friends" }, "back", data))
+      .toEqual({ state: screen("friends"), action: null });
     expect(reduceSocialMenu(screen("friends", 4), "delete", data).action)
       .toEqual({ type: "cancel-friend-request", githubId: 11 });
     expect(reduceSocialMenu(screen("friends", 5), "confirm", data).action)
@@ -224,7 +253,55 @@ describe("wander-online social menu model", () => {
 
   test("the friends footer keeps complete controller copy inside the narrow panel", () => {
     expect(socialMenuView(screen("friends"), fixture()).footer)
-      .toBe("CIRCLE ACT · SQUARE REMOVE · CROSS BACK");
+      .toBe("CIRCLE ACT · TRIANGLE CARD · SQUARE REMOVE · CROSS BACK");
+  });
+
+  test("profile rows preserve bilingual achievement copy and owner stamp selection", () => {
+    const data = fixture();
+    for (const locale of ["en", "zh"] as const) {
+      data.locale = locale;
+      const rows = socialMenuRows(screen("profile"), data);
+      expect(rows[0]).toMatchObject({ key: "profile-name", label: "Alice", detail: "LOOK 07" });
+      expect(rows[1]).toMatchObject({ detail: "2026-10-12" });
+      expect(rows.find((item) => item.key === "profile-achievements")?.detail).toBe("2");
+      for (const id of data.profile!.card.achievements) {
+        const copy = achievementCopy(id, locale);
+        expect(rows.find((item) => item.key === `profile-achievement-${id}`)?.label).toBe(copy.name);
+        const rendered = rows
+          .filter((item) => item.key.startsWith(`profile-achievement-${id}-copy-`))
+          .map((item) => item.label)
+          .join("");
+          expect(rendered.replace(/\s/g, "")).toBe(copy.description.replace(/\s/g, ""));
+      }
+      expect(rows.every((item) => measureSocialCells(item.label) <= SOCIAL_LABEL_CELLS)).toBe(true);
+      expect(rows.filter((item) => item.kind === "description")
+        .every((item) => measureSocialCells(item.label) <= SOCIAL_PROFILE_COPY_CELLS)).toBe(true);
+    }
+
+    const rows = socialMenuRows(screen("profile"), data);
+    const stamp = rows.findIndex((item) => item.key === "profile-postmark");
+    expect(reduceSocialMenu(screen("profile", stamp), "confirm", data).action)
+      .toEqual({ type: "set-showcase-postmark", postmark: "lone tower" });
+    data.profile!.card.showcasePostmark = "lone tower";
+    expect(reduceSocialMenu(screen("profile", stamp), "confirm", data).action)
+      .toEqual({ type: "set-showcase-postmark", postmark: null });
+
+    data.profile = {
+      ...data.profile!,
+      self: false,
+      card: { ...data.profile!.card, postmarkOptions: [] },
+    };
+    expect(reduceSocialMenu(screen("profile", stamp), "confirm", data).action).toBeNull();
+    expect(socialMenuView(screen("profile"), data).footer).toBe("CROSS BACK");
+  });
+
+  test("profile prose wrapper keeps all text without control characters or ellipses", () => {
+    const value = "Twenty-five plazas remember your footsteps. 山路记得每一步。";
+    const lines = wrapSocialText(`${value}\n`, SOCIAL_PROFILE_COPY_CELLS);
+    expect(lines.join("").replace(/\s/g, "")).toBe(value.replace(/\s/g, ""));
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines.every((line) => measureSocialCells(line) <= SOCIAL_PROFILE_COPY_CELLS)).toBe(true);
+    expect(lines.some((line) => line.includes("…"))).toBe(false);
   });
 
   test("worlds expose coarse bands, friend candidates and refuse non-joinable rows", () => {

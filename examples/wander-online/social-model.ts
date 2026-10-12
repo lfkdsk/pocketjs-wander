@@ -14,19 +14,28 @@ import {
   type SelfDataSummary,
   type SocialSnapshot,
 } from "./shared/social.ts";
+import {
+  achievementCopy,
+  achievementDefinition,
+  joinedDate,
+  type ProfileSnapshot,
+} from "./shared/profile.ts";
 
 export const SOCIAL_PAGE_ROWS = 7;
 export const SOCIAL_WORLD_LIMIT = SOCIAL_MAX_WORLD_CHOICES;
 /** Conservative text-cell budgets for the 480 px layout. */
 export const SOCIAL_LABEL_CELLS = 34;
 export const SOCIAL_DETAIL_CELLS = 14;
+/** Profile prose is wrapped to the narrow hosted-phone label column so the
+ * same rows remain complete at every supported viewport. */
+export const SOCIAL_PROFILE_COPY_CELLS = 24;
 /** The hosted landscape phone uses a wide 1x logical viewport while its touch
  * clusters float over both screen edges. Keep the panel inside their central
  * lane; wider/2x hosts have no persistent overlay and retain the full panel. */
 export const SOCIAL_WIDE_PHONE_PANEL_W = 360;
 
 export type OnlineLocale = "en" | "zh";
-export type SocialScreen = "home" | "friends" | "worlds" | "discovery" | "my-data" | "delete-confirm";
+export type SocialScreen = "home" | "friends" | "worlds" | "discovery" | "profile" | "my-data" | "delete-confirm";
 export type SocialInput = "up" | "down" | "confirm" | "back" | "delete" | "privacy";
 
 export interface SocialMenuState {
@@ -34,6 +43,8 @@ export interface SocialMenuState {
   /** Absolute row within the current screen, not merely the visible page. */
   cursor: number;
   page: number;
+  /** A card can be entered from home (self) or the friends list. */
+  profileReturn?: "home" | "friends";
 }
 
 export interface SocialMenuData {
@@ -42,6 +53,7 @@ export interface SocialMenuData {
   self: SelfDataSummary | null;
   features?: RealmFeatures | null;
   leaderboard?: DiscoveryLeaderboard | null;
+  profile?: ProfileSnapshot | null;
   locale?: OnlineLocale;
   /** Temporary ids from the current realm roster. They are never durable
    * GitHub ids; the server resolves them inside the joined Room. */
@@ -76,6 +88,8 @@ export type SocialAction =
   | { type: "cancel-friend-request"; githubId: number }
   | { type: "remove-friend"; githubId: number }
   | { type: "join-realm"; realm: string }
+  | { type: "view-profile"; githubId: number | null }
+  | { type: "set-showcase-postmark"; postmark: string | null }
   | { type: "set-visibility"; visible: boolean }
   | { type: "set-discovery-listing"; listed: boolean }
   | { type: "delete-profile" };
@@ -89,6 +103,10 @@ export type SocialRowKind =
   | "realm"
   | "leaderboard"
   | "summary"
+  | "profile"
+  | "postmark"
+  | "achievement"
+  | "description"
   | "warning"
   | "empty";
 
@@ -130,6 +148,7 @@ const SCREEN_TITLES: Record<Exclude<SocialScreen, "discovery">, string> = {
   home: "SOCIAL",
   friends: "FRIENDS",
   worlds: "WORLDS",
+  profile: "PLAYER CARD",
   "my-data": "MY DATA",
   "delete-confirm": "DELETE ALL DATA?",
 };
@@ -165,6 +184,13 @@ const ZH = {
   count: han(0x6b21),
   unavailable: han(0x6682, 0x65e0, 0x6392, 0x884c),
   coopWaiting: han(0x5408, 0x4f5c, 0x7b49, 0x5f85),
+  myCard: han(0x6211, 0x7684, 0x540d, 0x7247),
+  joined: han(0x52a0, 0x5165, 0x65e5, 0x671f),
+  showcaseStamp: han(0x5c55, 0x793a, 0x90ae, 0x6233),
+  change: han(0x66f4, 0x6362),
+  none: han(0x65e0),
+  achievements: han(0x6210, 0x5c31),
+  tier: han(0x9636),
 } as const;
 
 function discoveryAvailable(data: SocialMenuData): boolean {
@@ -185,6 +211,9 @@ function homeRows(data: SocialMenuData): SocialMenuRow[] {
   const rows = [
     row("route-friends", "route", "FRIENDS", "REQUESTS", "accent"),
     row("route-worlds", "route", "WORLDS", "POPULATION", "accent"),
+    data.locale === "zh"
+      ? row("route-profile", "route", ZH.myCard, ZH.achievements, "accent")
+      : row("route-profile", "route", "MY CARD", "ACHIEVEMENTS", "accent"),
   ];
   if (discoveryAvailable(data)) {
     rows.push(data.locale === "zh"
@@ -220,6 +249,36 @@ export function fitSocialText(value: string, maxCells: number): string {
     cells += width;
   }
   return `${out}${ellipsis}`;
+}
+
+/** Wrap trusted or untrusted prose without dropping characters. Word
+ * boundaries are preferred for Latin copy; CJK naturally wraps by glyph. */
+export function wrapSocialText(value: string, maxCells: number): string[] {
+  if (maxCells <= 0) return [];
+  let remaining = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  if (!remaining) return [];
+  const lines: string[] = [];
+  while (remaining) {
+    if (measureSocialCells(remaining) <= maxCells) {
+      lines.push(remaining);
+      break;
+    }
+    let cells = 0;
+    let end = 0;
+    let space = -1;
+    for (const ch of remaining) {
+      const width = (ch.codePointAt(0) ?? 0) <= 0x7f ? 1 : 2;
+      if (cells + width > maxCells) break;
+      cells += width;
+      end += ch.length;
+      if (ch === " ") space = end - 1;
+    }
+    if (end <= 0) break;
+    const split = space > 0 ? space : end;
+    lines.push(remaining.slice(0, split).trim());
+    remaining = remaining.slice(space > 0 ? space + 1 : end).trim();
+  }
+  return lines;
 }
 
 /** Responsive geometry uses the same integer 1x/2x scale as the game HUD.
@@ -419,6 +478,55 @@ function selfRows(summary: SelfDataSummary | null): SocialMenuRow[] {
   return rows;
 }
 
+function profileRows(snapshot: ProfileSnapshot | null, locale: OnlineLocale = "en"): SocialMenuRow[] {
+  if (!snapshot) return [row("profile-loading", "empty", "CARD UNAVAILABLE", "", "muted")];
+  const zh = locale === "zh";
+  const { card } = snapshot;
+  const rows: SocialMenuRow[] = [
+    row("profile-name", "profile", card.name, `LOOK ${String(card.look).padStart(2, "0")}`, "accent"),
+    row("profile-joined", "profile", zh ? ZH.joined : "JOINED", joinedDate(card.joinedAt)),
+    row(
+      "profile-postmark",
+      "postmark",
+      zh ? ZH.showcaseStamp : "SHOWCASE STAMP",
+      snapshot.self && card.postmarkOptions.length > 0
+        ? (zh ? ZH.change : "CHANGE")
+        : card.showcasePostmark ? "" : (zh ? ZH.none : "NONE"),
+      snapshot.self && card.postmarkOptions.length > 0 ? "accent" : "muted",
+    ),
+  ];
+  if (card.showcasePostmark) {
+    for (const [index, line] of wrapSocialText(card.showcasePostmark, SOCIAL_PROFILE_COPY_CELLS).entries()) {
+      rows.push(row(`profile-postmark-copy-${index}`, "description", line, "", "muted"));
+    }
+  }
+  rows.push(row(
+    "profile-achievements",
+    "profile",
+    zh ? ZH.achievements : "ACHIEVEMENTS",
+    String(card.achievements.length),
+    "accent",
+  ));
+  if (card.achievements.length === 0) {
+    rows.push(row("profile-achievements-empty", "empty", zh ? ZH.none : "NONE YET", "", "muted"));
+  }
+  for (const id of card.achievements) {
+    const definition = achievementDefinition(id)!;
+    const copy = achievementCopy(id, locale);
+    rows.push(row(
+      `profile-achievement-${id}`,
+      "achievement",
+      copy.name,
+      zh ? `${definition.tier}${ZH.tier}` : `TIER ${definition.tier}`,
+      "accent",
+    ));
+    for (const [index, line] of wrapSocialText(copy.description, SOCIAL_PROFILE_COPY_CELLS).entries()) {
+      rows.push(row(`profile-achievement-${id}-copy-${index}`, "description", line, "", "muted"));
+    }
+  }
+  return rows;
+}
+
 function discoveryRows(data: SocialMenuData): SocialMenuRow[] {
   const board = currentDiscoveryLeaderboard(data);
   if (!board) {
@@ -459,6 +567,7 @@ export function socialMenuRows(state: SocialMenuState, data: SocialMenuData): So
     case "friends": return friendRows(data.social, data.nearby, data.locale);
     case "worlds": return worldRows(data);
     case "discovery": return discoveryRows(data);
+    case "profile": return profileRows(data.profile ?? null, data.locale);
     case "my-data": return selfRows(data.self);
     case "delete-confirm": return deleteRows();
   }
@@ -474,8 +583,10 @@ export function normalizeSocialMenuState(state: SocialMenuState, data: SocialMen
   return { ...state, cursor, page: Math.floor(cursor / SOCIAL_PAGE_ROWS) };
 }
 
-function enter(screen: SocialScreen): SocialMenuState {
-  return { screen, cursor: 0, page: 0 };
+function enter(screen: SocialScreen, profileReturn?: "home" | "friends"): SocialMenuState {
+  return profileReturn === undefined
+    ? { screen, cursor: 0, page: 0 }
+    : { screen, cursor: 0, page: 0, profileReturn };
 }
 
 function selectedRow(state: SocialMenuState, data: SocialMenuData): SocialMenuRow | null {
@@ -499,9 +610,22 @@ export function reduceSocialMenu(
   if (input === "back") {
     return current.screen === "home"
       ? { state: current, action: { type: "close" } }
-      : { state: enter(current.screen === "delete-confirm" ? "my-data" : "home"), action: null };
+      : { state: enter(
+        current.screen === "delete-confirm"
+          ? "my-data"
+          : current.screen === "profile" ? current.profileReturn ?? "home" : "home",
+      ), action: null };
   }
   if (input === "privacy") {
+    if (current.screen === "friends") {
+      const selected = selectedRow(current, data);
+      return selected?.kind === "friend" && selected.githubId !== undefined
+        ? {
+          state: enter("profile", "friends"),
+          action: { type: "view-profile", githubId: selected.githubId },
+        }
+        : { state: current, action: null };
+    }
     if (current.screen === "discovery") {
       const board = currentDiscoveryLeaderboard(data);
       return board
@@ -538,8 +662,15 @@ export function reduceSocialMenu(
   if (current.screen === "home") {
     const destination = selected?.key === "route-friends" ? "friends"
       : selected?.key === "route-worlds" ? "worlds"
+        : selected?.key === "route-profile" ? "profile"
         : selected?.key === "route-discovery" ? "discovery"
           : selected?.key === "route-my-data" ? "my-data" : null;
+    if (destination === "profile") {
+      return {
+        state: enter("profile", "home"),
+        action: { type: "view-profile", githubId: null },
+      };
+    }
     return destination ? { state: enter(destination), action: null } : { state: current, action: null };
   }
   if (current.screen === "friends") {
@@ -556,6 +687,15 @@ export function reduceSocialMenu(
   if (current.screen === "worlds" && selected?.kind === "realm" && selected.joinable && selected.realm) {
     return { state: current, action: { type: "join-realm", realm: selected.realm } };
   }
+  if (current.screen === "profile" && selected?.kind === "postmark" && data.profile?.self) {
+    const options: (string | null)[] = [null, ...data.profile.card.postmarkOptions];
+    if (options.length <= 1) return { state: current, action: null };
+    const index = options.indexOf(data.profile.card.showcasePostmark);
+    return {
+      state: current,
+      action: { type: "set-showcase-postmark", postmark: options[(index + 1) % options.length]! },
+    };
+  }
   return { state: current, action: null };
 }
 
@@ -568,11 +708,13 @@ export function socialMenuView(state: SocialMenuState, data: SocialMenuData): So
   const footer = normalized.screen === "home"
     ? "CIRCLE OPEN · CROSS CLOSE"
     : normalized.screen === "friends"
-      ? "CIRCLE ACT · SQUARE REMOVE · CROSS BACK"
+      ? "CIRCLE ACT · TRIANGLE CARD · SQUARE REMOVE · CROSS BACK"
       : normalized.screen === "worlds"
         ? "CIRCLE JOIN · CROSS BACK"
         : normalized.screen === "discovery"
           ? `TRIANGLE ${leaderboard?.listed ? "UNLIST" : "LIST"} · CROSS BACK`
+        : normalized.screen === "profile"
+          ? data.profile?.self ? "CIRCLE CHANGE STAMP · CROSS BACK" : "CROSS BACK"
         : normalized.screen === "my-data"
           ? "TRIANGLE PRIVACY · SQUARE DELETE · CROSS BACK"
           : "SQUARE DELETE FOREVER · CROSS CANCEL";
