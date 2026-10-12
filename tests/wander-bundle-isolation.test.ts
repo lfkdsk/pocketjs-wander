@@ -2,15 +2,25 @@ import { describe, expect, test } from "bun:test";
 
 const APPS = ["wander", "wander-online"] as const;
 const BATTLE_MODULE_DIRS = ["/src/rpgmaker-battle/", "/src/ui/rpgmaker-battle/"] as const;
+const OPTIONAL_IMPLEMENTATION_PATHS = [
+  "/src/engine/rpgmaker-screen.ts",
+  "/src/engine/rpgmaker-text.ts",
+  "/src/engine/travel-session.ts",
+  "/src/engine/travel.ts",
+  "/src/ui/ChoiceColourLine.tsx",
+  "/src/ui/TravelActors.tsx",
+  "/src/ui/choice-colour.ts",
+  "/src/ui/travel-actors.ts",
+] as const;
 const BATTLE_BUNDLE_NEEDLES = [
   "rpgmaker-battle-state/v1",
   "rpgmaker-battle-scene",
   "Math.max(0, a.atk * 4 - b.def * 2)",
 ] as const;
 
-describe("optional RPG Maker battle bundle isolation", () => {
+describe("optional RPG Maker capability bundle isolation", () => {
   for (const app of APPS) {
-    test(`${app} does not bundle the optional battle rules or UI`, async () => {
+    test(`${app} excludes optional battle, text, screen, choice and travel implementations`, async () => {
       const inputsPath = new URL(`../dist/${app}.inputs.json`, import.meta.url);
       const bundlePath = new URL(`../dist/${app}.js`, import.meta.url);
       if (!(await Bun.file(inputsPath).exists()) || !(await Bun.file(bundlePath).exists())) {
@@ -19,14 +29,18 @@ describe("optional RPG Maker battle bundle isolation", () => {
 
       const inputs = await Bun.file(inputsPath).json() as unknown[];
       const normalized = inputs.map((entry) => String(entry).replaceAll("\\", "/"));
-      const battleModules = normalized.filter((entry) =>
-        BATTLE_MODULE_DIRS.some((directory) => entry.includes(directory))
+      const optionalModules = normalized.filter((entry) =>
+        BATTLE_MODULE_DIRS.some((directory) => entry.includes(directory)) ||
+        OPTIONAL_IMPLEMENTATION_PATHS.some((path) => entry.includes(path))
       );
       const bundle = await Bun.file(bundlePath).text();
-      const battleNeedles = BATTLE_BUNDLE_NEEDLES.filter((needle) => bundle.includes(needle));
+      const optionalNeedles = [
+        ...OPTIONAL_IMPLEMENTATION_PATHS.map((path) => path.slice(1)),
+        ...BATTLE_BUNDLE_NEEDLES,
+      ].filter((needle) => bundle.includes(needle));
 
-      expect(battleModules).toEqual([]);
-      expect(battleNeedles).toEqual([]);
+      expect(optionalModules).toEqual([]);
+      expect(optionalNeedles).toEqual([]);
     });
   }
 });
