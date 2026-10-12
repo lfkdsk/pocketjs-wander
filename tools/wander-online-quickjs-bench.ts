@@ -1,10 +1,12 @@
-// tools/wander-online-quickjs-bench.ts — one reproducible 32-player frame
-// timing slot for the wander-online desktop app in the real QuickJS host.
-// Build the named checkout first, then run four slots in A-B-B-A order.
+// tools/wander-online-quickjs-bench.ts — one reproducible cold-start and
+// auto-roam frame-timing slot for Wander or the 32-player Wander Online app
+// in the real QuickJS host. Build the named checkout first, then run four
+// slots in A-B-B-A order.
 //
 //   bun tools/wander-online-quickjs-bench.ts \
 //     --root /path/to/checkout --label candidate --out /path/to/results \
-//     [--players 32] [--ticks 480] [--warmup 120] [--port 18181] [--cpu 2]
+//     [--app wander-online] [--players 32] [--ticks 480] [--warmup 120] \
+//     [--port 18181] [--cpu 2]
 //
 // The local server's explicitly gated --allow-guests mode is used only on
 // 127.0.0.1. The generated wrapper injects one guest credential before the
@@ -23,6 +25,7 @@ const runnerRoot = resolve(import.meta.dir, "..");
 const root = resolve(option("root", runnerRoot));
 const label = option("label", "candidate");
 const out = resolve(option("out", join(runnerRoot, "reports", "wander-online-quickjs")));
+const app = option("app", "wander-online");
 const players = Number(option("players", "32"));
 const ticks = Number(option("ticks", "480"));
 const warmup = Number(option("warmup", "120"));
@@ -33,12 +36,14 @@ function fail(message: string): never {
   throw new Error(`wander-online-quickjs-bench: ${message}`);
 }
 
-if (!Number.isInteger(players) || players < 2 || players > 128) fail(`invalid --players ${players}`);
+if (app !== "wander" && app !== "wander-online") fail(`invalid --app ${app}`);
+const online = app === "wander-online";
+if (online && (!Number.isInteger(players) || players < 2 || players > 128)) fail(`invalid --players ${players}`);
 if (!Number.isInteger(ticks) || ticks <= warmup) fail(`--ticks must exceed --warmup (${ticks} <= ${warmup})`);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) fail(`invalid --port ${port}`);
 
-const js = join(root, "dist", "linux-app", "wander-online.js");
-const pak = join(root, "dist", "linux-app", "wander-online.pak");
+const js = join(root, "dist", "linux-app", `${app}.js`);
+const pak = join(root, "dist", "linux-app", `${app}.pak`);
 const host = join(runnerRoot, "vendor", "pocket-rpgkit", "vendor", "pocketjs", "hosts", "desktop", "target", "release", "pocket-desktop-host");
 for (const path of [js, pak, host]) if (!existsSync(path)) fail(`missing ${path}; build the desktop app/host first`);
 
@@ -50,16 +55,18 @@ const dataRoot = join(out, `${safeLabel}-data`);
 rmSync(dataRoot, { recursive: true, force: true });
 mkdirSync(dataRoot, { recursive: true });
 const socketUrl = `ws://127.0.0.1:${port}/ws`;
-writeFileSync(
-  wrapper,
-  `globalThis.__onlineUrl=${JSON.stringify(socketUrl)};globalThis.__onlineAuth={kind:"guest",name:"bench",color:0};\n${readFileSync(js, "utf8")}`,
-);
+if (online) {
+  writeFileSync(
+    wrapper,
+    `globalThis.__onlineUrl=${JSON.stringify(socketUrl)};globalThis.__onlineAuth={kind:"guest",name:"bench",color:0};\n${readFileSync(js, "utf8")}`,
+  );
+}
 
 const collect = (stream: ReadableStream<Uint8Array> | number | null | undefined): Promise<string> =>
   stream && typeof stream !== "number" ? new Response(stream).text() : Promise.resolve("");
 const delay = (ms: number): Promise<void> => new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 
-const server = Bun.spawn({
+const server = online ? Bun.spawn({
   cmd: [
     process.execPath,
     join(root, "examples", "wander-online", "server", "server.ts"),
@@ -70,42 +77,44 @@ const server = Bun.spawn({
   cwd: root,
   stdout: "pipe",
   stderr: "pipe",
-});
-const serverOut = collect(server.stdout);
-const serverErr = collect(server.stderr);
+}) : null;
+const serverOut = collect(server?.stdout);
+const serverErr = collect(server?.stderr);
 let bots: ReturnType<typeof Bun.spawn> | null = null;
 let botsOut: Promise<string> = Promise.resolve("");
 let botsErr: Promise<string> = Promise.resolve("");
 let desktopLog = "";
 
 try {
-  await delay(750);
-  if (server.exitCode !== null) fail(`server exited ${server.exitCode}: ${(await serverErr).trim()}`);
+  if (server) {
+    await delay(750);
+    if (server.exitCode !== null) fail(`server exited ${server.exitCode}: ${(await serverErr).trim()}`);
 
-  bots = Bun.spawn({
-    cmd: [
-      process.execPath,
-      join(runnerRoot, "examples", "wander-online", "server", "bots.ts"),
-      "--url", socketUrl,
-      "--count", String(players - 1),
-      "--seconds", String(Math.ceil(ticks / 60) + 8),
-    ],
-    cwd: runnerRoot,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  botsOut = collect(bots.stdout);
-  botsErr = collect(bots.stderr);
-  await delay(1500);
+    bots = Bun.spawn({
+      cmd: [
+        process.execPath,
+        join(runnerRoot, "examples", "wander-online", "server", "bots.ts"),
+        "--url", socketUrl,
+        "--count", String(players - 1),
+        "--seconds", String(Math.ceil(ticks / 60) + 8),
+      ],
+      cwd: runnerRoot,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    botsOut = collect(bots.stdout);
+    botsErr = collect(bots.stderr);
+    await delay(1500);
+  }
 
   const hostCmd = [
     host,
-    "--app", "wander-online",
-    "--app-id", "dev.lfkdsk.pocket-rpgkit-wander-online",
+    "--app", app,
+    "--app-id", `dev.lfkdsk.pocket-rpgkit-${app}`,
     "--viewport", "480x272",
     "--fixed",
     "--density", "1",
-    "--js", wrapper,
+    "--js", online ? wrapper : js,
     "--pak", pak,
     "--data-root", dataRoot,
     "--headless",
@@ -113,6 +122,11 @@ try {
     "--trace-frames",
   ];
   if (cpu) hostCmd.unshift("taskset", "-c", cpu);
+  // Host FRAME_TRACE timestamps use the same wall clock. Taking this marker
+  // immediately before spawn makes coldToFirstTickUs cover process launch,
+  // Runtime::boot (pak/fs/native mounts and bundle evaluation), and the first
+  // complete QuickJS frame rather than merely timing that frame's tick body.
+  const spawnWallUs = Date.now() * 1000;
   const desktop = Bun.spawn({
     cmd: hostCmd,
     cwd: root,
@@ -128,22 +142,28 @@ try {
   desktopLog = desktopStdout + desktopStderr;
   if (desktopExit !== 0) fail(`desktop exited ${desktopExit}; see ${rawLog}`);
 
-  const online = desktopLog
-    .split("\n")
-    .filter((line) => line.includes("ONLINE "))
-    .map((line) => line.slice(line.indexOf("ONLINE ") + 7))
-    .flatMap((line) => {
-      try { return [JSON.parse(line) as { online?: number }]; } catch { return []; }
-    });
-  const reached = online.some((state) => state.online === players);
-  if (!reached) fail(`desktop never observed online=${players}; see ${rawLog}`);
+  if (online) {
+    const states = desktopLog
+      .split("\n")
+      .filter((line) => line.includes("ONLINE "))
+      .map((line) => line.slice(line.indexOf("ONLINE ") + 7))
+      .flatMap((line) => {
+        try { return [JSON.parse(line) as { online?: number }]; } catch { return []; }
+      });
+    const reached = states.some((state) => state.online === players);
+    if (!reached) fail(`desktop never observed online=${players}; see ${rawLog}`);
+  }
 
-  const samples = desktopLog
+  const traces = desktopLog
     .split("\n")
     .flatMap((line) => {
-      const match = /FRAME_TRACE,tick,\d+,\d+,(\d+)/.exec(line);
-      return match ? [Number(match[1])] : [];
+      const match = /FRAME_TRACE,tick,(\d+),(\d+),(\d+)/.exec(line);
+      return match ? [{ tick: Number(match[1]), wallUs: Number(match[2]), workUs: Number(match[3]) }] : [];
     });
+  if (traces[0]?.tick !== 1) fail(`missing first tick trace; see ${rawLog}`);
+  const coldToFirstTickUs = traces[0].wallUs - spawnWallUs;
+  if (coldToFirstTickUs <= 0) fail(`invalid cold-start sample ${coldToFirstTickUs}; see ${rawLog}`);
+  const samples = traces.map((trace) => trace.workUs);
   const steady = samples.slice(warmup);
   if (steady.length !== ticks - warmup) {
     fail(`expected ${ticks - warmup} steady samples, got ${steady.length} (${samples.length} total); see ${rawLog}`);
@@ -152,14 +172,18 @@ try {
   const percentile = (q: number): number => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))]!;
   const summary = {
     label,
+    app,
+    workload: online ? "32-player-auto-roam" : "single-player-auto-roam",
     commit: Bun.spawnSync({ cmd: ["git", "-C", root, "rev-parse", "HEAD"] }).stdout.toString().trim(),
     pocketjs: Bun.spawnSync({ cmd: ["git", "-C", join(root, "vendor", "pocket-rpgkit", "vendor", "pocketjs"), "rev-parse", "HEAD"] }).stdout.toString().trim(),
     bundleSha256: new Bun.CryptoHasher("sha256").update(readFileSync(js)).digest("hex"),
     cpu: cpu || "unbound",
-    players,
+    players: online ? players : 1,
     ticks,
     warmup,
     samples: steady.length,
+    coldToFirstTickUs,
+    firstTickWorkUs: traces[0].workUs,
     meanUs: Math.round(steady.reduce((sum, value) => sum + value, 0) / steady.length * 10) / 10,
     p50Us: percentile(0.5),
     p95Us: percentile(0.95),
@@ -170,7 +194,7 @@ try {
   console.log(`WANDER_QJS ${JSON.stringify(summary)}`);
 } finally {
   if (bots?.exitCode === null) bots.kill();
-  if (server.exitCode === null) server.kill();
+  if (server?.exitCode === null) server.kill();
   const [botStdout, botStderr, serverStdout, serverStderr] = await Promise.all([
     botsOut,
     botsErr,
@@ -181,6 +205,6 @@ try {
     rawLog,
     `${desktopLog}\n--- bots ---\n${botStdout}${botStderr}\n--- server ---\n${serverStdout}${serverStderr}`,
   );
-  rmSync(wrapper, { force: true });
+  if (online) rmSync(wrapper, { force: true });
   rmSync(dataRoot, { recursive: true, force: true });
 }
