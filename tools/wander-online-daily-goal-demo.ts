@@ -1,8 +1,8 @@
 // Three real WebSocket clients jointly complete one realm daily goal against
-// the loopback authoritative host, observe the shared festival appearance,
-// and remain connected across a controlled UTC rollover. The retained JSON
-// records recipient-specific contribution history without publishing a
-// contributor list.
+// the loopback authoritative host. At required - 1, two couriers settle one
+// cooperative delivery and both retain their private contribution day. The
+// clients then observe the festival and remain connected across a controlled
+// UTC rollover without publishing a contributor list.
 //
 //   bun tools/wander-online-daily-goal-demo.ts [output.json]
 
@@ -20,7 +20,7 @@ import {
   decodeWelcome4,
   encodeCommand,
 } from "../examples/wander-online/net/protocol.ts";
-import { JOURNEY_EVENT } from "../examples/wander-online/net/journey.ts";
+import { JOURNEY_EVENT, isCooperativeErrand } from "../examples/wander-online/net/journey.ts";
 import { startServer } from "../examples/wander-online/server/server.ts";
 import type { RealmPlayer } from "../examples/wander-online/server/realm-area.ts";
 import {
@@ -33,7 +33,10 @@ import { SOCIAL_PROTOCOL_VERSION } from "../examples/wander-online/shared/social
 import { connect, type TestSocket } from "../tests/lib/ws-helper.ts";
 
 const SEED = 1593842689;
-const DAY = 20_000;
+// This fixture is deliberately a three-credit goal whose real generated
+// errand is cooperative: one courier can bring it to required - 1 before the
+// other two settle one authoritative pair.
+const DAY = 20_025;
 const OUTPUT = resolve(process.argv[2] ?? "reports/wander-online-daily-goal-demo.json");
 const NAMES = ["Aster", "Birch", "Clover"] as const;
 
@@ -49,6 +52,17 @@ interface Client {
   socket: TestSocket;
   features: Record<string, unknown>;
   initial: DailyWire;
+}
+
+const DAILY_WIRE_KEYS = [
+  "completed", "completedNow", "contributed", "contributionDays", "date",
+  "day", "endsAt", "goalId", "kind", "offerRx", "offerRy", "progress",
+  "realm", "required", "revision", "targetName", "targetRx", "targetRy",
+  "type", "v",
+].sort();
+
+function assertDailyWireKeys(daily: DailyWire): void {
+  assert.deepEqual(Object.keys(daily).sort(), DAILY_WIRE_KEYS, "daily frame must expose the exact public key set");
 }
 
 function teleport(player: RealmPlayer, tx: number, ty: number): void {
@@ -173,6 +187,7 @@ assert.equal(goal.required, 3, "demo fixture must require exactly three couriers
 const offer = regionHub(SEED, goal.offerRx!, goal.offerRy!);
 const errand = townErrand(SEED, goal.offerRx!, goal.offerRy!);
 assert.ok(errand && errand.kind === "deliver");
+assert.equal(isCooperativeErrand(SEED, errand), true, "demo fixture must use a real cooperative errand");
 assert.deepEqual({ rx: errand.trx, ry: errand.try }, { rx: goal.targetRx, ry: goal.targetRy });
 
 const clock = { now: DAY * UTC_DAY_MS + 12_345 };
@@ -228,6 +243,7 @@ try {
       dailyGoals: true,
     });
     assert.ok(parseDailyGoalSnapshot(initial));
+    assertDailyWireKeys(initial);
     assert.equal(initial.goalId, goal.goalId);
     assert.equal(initial.progress, 0);
     assert.equal(initial.contributed, false);
@@ -237,47 +253,45 @@ try {
   assert.equal(server.realmArena.players.size, 3);
 
   const progressSteps: Array<Record<string, unknown>> = [];
-  for (let index = 0; index < clients.length; index++) {
-    const source = clients[index]!;
-    const player = server.realmArena.players.get(source.id);
-    assert.ok(player, `authoritative player ${source.name} must exist`);
-    teleport(player, offer.x, offer.y);
-    source.socket.send(encodeCommand({
+  const solo = clients[0]!;
+  const soloPlayer = server.realmArena.players.get(solo.id);
+  assert.ok(soloPlayer, `authoritative player ${solo.name} must exist`);
+  // Two distinct accepted errands from Aster establish progress == required - 1.
+  // The stable source revision changes between accepts, so these are two real
+  // facts rather than a replay of one delivery.
+  for (let progress = 1; progress < goal.required; progress++) {
+    teleport(soloPlayer, offer.x, offer.y);
+    solo.socket.send(encodeCommand({
       kind: COMMAND.acceptErrand,
       rx: goal.offerRx!,
       ry: goal.offerRy!,
       extra: 0,
     }));
-    await nextJourney(source.socket, JOURNEY_EVENT.accepted);
+    await nextJourney(solo.socket, JOURNEY_EVENT.accepted);
 
-    teleport(player, errand.tx, errand.ty);
-    source.socket.send(encodeCommand({
+    teleport(soloPlayer, errand.tx, errand.ty);
+    solo.socket.send(encodeCommand({
       kind: COMMAND.deliverErrand,
       rx: goal.targetRx,
       ry: goal.targetRy,
       extra: 0,
     }));
 
-    const recipientFrames = await Promise.all(clients.map((client) => nextDaily(
-      client.socket,
-      index + 1,
-      index + 1 === goal.required ? { rx: goal.targetRx, ry: goal.targetRy } : undefined,
-    )));
+    const recipientFrames = await Promise.all(clients.map((client) => nextDaily(client.socket, progress)));
     for (let recipient = 0; recipient < recipientFrames.length; recipient++) {
       const frame = recipientFrames[recipient]!;
-      assert.equal(frame.daily.progress, index + 1);
-      assert.equal(frame.daily.completed, index + 1 === goal.required);
-      assert.equal(frame.daily.completedNow, index + 1 === goal.required);
-      assert.equal(frame.daily.contributed, recipient <= index);
-      assert.deepEqual(frame.daily.contributionDays, recipient <= index ? [DAY] : []);
-      if (index + 1 === goal.required) assert.equal(frame.festivalLevel, 2);
-      for (const forbidden of ["contributors", "contributorNames", "leaderboard", "githubId", "accountId"]) {
-        assert.equal(forbidden in frame.daily, false, `public daily frame leaked ${forbidden}`);
-      }
+      assertDailyWireKeys(frame.daily);
+      assert.equal(frame.daily.progress, progress);
+      assert.equal(frame.daily.completed, false);
+      assert.equal(frame.daily.completedNow, false);
+      assert.equal(frame.daily.contributed, recipient === 0);
+      assert.deepEqual(frame.daily.contributionDays, recipient === 0 ? [DAY] : []);
     }
     progressSteps.push({
-      courier: source.name,
-      progress: index + 1,
+      mode: "solo",
+      couriers: [solo.name],
+      progress,
+      remainingBefore: goal.required - (progress - 1),
       recipients: recipientFrames.map((frame, recipient) => ({
         name: clients[recipient]!.name,
         progress: frame.daily.progress,
@@ -288,6 +302,74 @@ try {
       })),
     });
   }
+
+  assert.equal(progressSteps.at(-1)?.progress, goal.required - 1);
+
+  // Birch and Clover now settle the same cooperative errand as one batch.
+  // The first fact fills the aggregate; the second must still be retained in
+  // that courier's private contribution history without another completion.
+  const pair = clients.slice(1);
+  for (const source of pair) {
+    const player = server.realmArena.players.get(source.id);
+    assert.ok(player, `authoritative player ${source.name} must exist`);
+    teleport(player, offer.x, offer.y);
+    source.socket.send(encodeCommand({
+      kind: COMMAND.acceptCoopErrand,
+      rx: goal.offerRx!,
+      ry: goal.offerRy!,
+      extra: 0,
+    }));
+    await nextJourney(source.socket, JOURNEY_EVENT.accepted);
+
+    teleport(player, errand.tx, errand.ty);
+  }
+  pair[0]!.socket.send(encodeCommand({
+    kind: COMMAND.readyCoopErrand,
+    rx: goal.targetRx,
+    ry: goal.targetRy,
+    extra: 0,
+  }));
+  await nextJourney(pair[0]!.socket, JOURNEY_EVENT.coopWaiting);
+  pair[1]!.socket.send(encodeCommand({
+    kind: COMMAND.readyCoopErrand,
+    rx: goal.targetRx,
+    ry: goal.targetRy,
+    extra: 0,
+  }));
+
+  const completionFrames = await Promise.all(clients.map((client) => nextDaily(
+    client.socket,
+    goal.required,
+    { rx: goal.targetRx, ry: goal.targetRy },
+  )));
+  for (const frame of completionFrames) {
+    assertDailyWireKeys(frame.daily);
+    assert.equal(frame.daily.progress, goal.required);
+    assert.equal(frame.daily.completed, true);
+    assert.equal(frame.daily.completedNow, true);
+    assert.equal(frame.daily.contributed, true);
+    assert.deepEqual(frame.daily.contributionDays, [DAY]);
+    assert.equal(frame.festivalLevel, 2);
+  }
+  // The command path flushes Clover immediately; Birch is flushed on the next
+  // authoritative frame. Both must receive the private cooperative journey.
+  server.advance(5);
+  await Promise.all(pair.map((client) => nextJourney(client.socket, JOURNEY_EVENT.coopDelivered)));
+  progressSteps.push({
+    mode: "cooperative",
+    couriers: pair.map((client) => client.name),
+    progressBefore: goal.required - 1,
+    progress: goal.required,
+    retainedContributors: pair.map((client) => client.name),
+    recipients: completionFrames.map((frame, recipient) => ({
+      name: clients[recipient]!.name,
+      progress: frame.daily.progress,
+      contributed: frame.daily.contributed,
+      contributionDays: frame.daily.contributionDays,
+      completedNow: frame.daily.completedNow,
+      festivalLevel: frame.festivalLevel,
+    })),
+  });
 
   const row = server.realmArena.world.regionState(goal.targetRx, goal.targetRy);
   assert.equal(row?.improvementLevel, 2);
@@ -340,6 +422,15 @@ try {
       goal,
       initialProgress: clients.map((client) => ({ name: client.name, progress: client.initial.progress })),
       progressSteps,
+      requiredMinusOneCooperativeDelivery: {
+        progressBefore: goal.required - 1,
+        couriers: pair.map((client) => client.name),
+        progressAfter: completionFrames[0]!.daily.progress,
+        privateContributionDays: Object.fromEntries(pair.map((client, index) => [
+          client.name,
+          completionFrames[index + 1]!.daily.contributionDays,
+        ])),
+      },
       completionPulsesPerClient: [1, 1, 1],
       extraDailyFramesAfterRepeatDelivery: postCompletionDaily.map((frames) => frames.length),
     },
@@ -370,7 +461,7 @@ try {
   };
   await mkdir(dirname(OUTPUT), { recursive: true });
   await writeFile(OUTPUT, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
-  console.log(`PASS: three clients completed ${goal.goalId}, installed four festival stalls, and rolled to UTC day ${DAY + 1}`);
+  console.log(`PASS: required-1 cooperative pair retained both contributions for ${goal.goalId}, installed four festival stalls, and rolled to UTC day ${DAY + 1}`);
   console.log(OUTPUT);
 } finally {
   for (const socket of sockets) socket.close();

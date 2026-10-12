@@ -20,17 +20,17 @@
   "today": {
     "goal": {
       "realm": "local",
-      "day": 20000,
-      "date": "2024-10-04",
+      "day": 20025,
+      "date": "2024-10-29",
       "kind": "delivery",
-      "goalId": "dg1_local_ffk_d_msc_kp_msd_kp_9ibq4u",
-      "offerRx": -1020,
-      "offerRy": 745,
-      "targetRx": -1021,
-      "targetRy": 745,
-      "targetName": "Oaklea",
+      "goalId": "dg1_local_fg9_d_mpo_3k_mpn_3k_1grupdx",
+      "offerRx": -924,
+      "offerRy": 128,
+      "targetRx": -923,
+      "targetRy": 128,
+      "targetName": "Lower Limemill",
       "required": 3,
-      "endsAt": 1728086400000
+      "endsAt": 1730246400000
     },
     "initialProgress": [
       {
@@ -48,15 +48,19 @@
     ],
     "progressSteps": [
       {
-        "courier": "Aster",
+        "mode": "solo",
+        "couriers": [
+          "Aster"
+        ],
         "progress": 1,
+        "remainingBefore": 3,
         "recipients": [
           {
             "name": "Aster",
             "progress": 1,
             "contributed": true,
             "contributionDays": [
-              20000
+              20025
             ],
             "completedNow": false,
             "festivalLevel": null
@@ -80,15 +84,19 @@
         ]
       },
       {
-        "courier": "Birch",
+        "mode": "solo",
+        "couriers": [
+          "Aster"
+        ],
         "progress": 2,
+        "remainingBefore": 2,
         "recipients": [
           {
             "name": "Aster",
             "progress": 2,
             "contributed": true,
             "contributionDays": [
-              20000
+              20025
             ],
             "completedNow": false,
             "festivalLevel": null
@@ -96,10 +104,8 @@
           {
             "name": "Birch",
             "progress": 2,
-            "contributed": true,
-            "contributionDays": [
-              20000
-            ],
+            "contributed": false,
+            "contributionDays": [],
             "completedNow": false,
             "festivalLevel": null
           },
@@ -114,15 +120,24 @@
         ]
       },
       {
-        "courier": "Clover",
+        "mode": "cooperative",
+        "couriers": [
+          "Birch",
+          "Clover"
+        ],
+        "progressBefore": 2,
         "progress": 3,
+        "retainedContributors": [
+          "Birch",
+          "Clover"
+        ],
         "recipients": [
           {
             "name": "Aster",
             "progress": 3,
             "contributed": true,
             "contributionDays": [
-              20000
+              20025
             ],
             "completedNow": true,
             "festivalLevel": 2
@@ -132,7 +147,7 @@
             "progress": 3,
             "contributed": true,
             "contributionDays": [
-              20000
+              20025
             ],
             "completedNow": true,
             "festivalLevel": 2
@@ -142,7 +157,7 @@
             "progress": 3,
             "contributed": true,
             "contributionDays": [
-              20000
+              20025
             ],
             "completedNow": true,
             "festivalLevel": 2
@@ -150,6 +165,22 @@
         ]
       }
     ],
+    "requiredMinusOneCooperativeDelivery": {
+      "progressBefore": 2,
+      "couriers": [
+        "Birch",
+        "Clover"
+      ],
+      "progressAfter": 3,
+      "privateContributionDays": {
+        "Birch": [
+          20025
+        ],
+        "Clover": [
+          20025
+        ]
+      }
+    },
     "completionPulsesPerClient": [
       1,
       1,
@@ -163,30 +194,30 @@
   },
   "festival": {
     "region": {
-      "rx": -1021,
-      "ry": 745,
-      "name": "Oaklea"
+      "rx": -923,
+      "ry": 128,
+      "name": "Lower Limemill"
     },
     "improvementLevel": 2,
     "cells": [
       {
-        "x": -97958,
-        "y": 71576,
+        "x": -88562,
+        "y": 12339,
         "tile": 41
       },
       {
-        "x": -97970,
-        "y": 71576,
+        "x": -88574,
+        "y": 12339,
         "tile": 41
       },
       {
-        "x": -97958,
-        "y": 71570,
+        "x": -88574,
+        "y": 12333,
         "tile": 41
       },
       {
-        "x": -97970,
-        "y": 71570,
+        "x": -88565,
+        "y": 12342,
         "tile": 41
       }
     ],
@@ -208,7 +239,7 @@
         "progress": 3,
         "contributed": true,
         "contributionDays": [
-          20000
+          20025
         ],
         "completedNow": true,
         "festivalLevel": 2
@@ -218,7 +249,7 @@
         "progress": 3,
         "contributed": true,
         "contributionDays": [
-          20000
+          20025
         ],
         "completedNow": true,
         "festivalLevel": 2
@@ -228,7 +259,7 @@
         "progress": 3,
         "contributed": true,
         "contributionDays": [
-          20000
+          20025
         ],
         "completedNow": true,
         "festivalLevel": 2
@@ -237,30 +268,30 @@
     "persistence": "level 2 remains as realm history; rollover performs no reset write"
   },
   "rollover": {
-    "clockBefore": 1728086399999,
-    "clockAt": 1728086400000,
-    "oldDay": 20000,
-    "newDay": 20001,
+    "clockBefore": 1730246399999,
+    "clockAt": 1730246400000,
+    "oldDay": 20025,
+    "newDay": 20026,
     "newGoal": {
       "type": "dailyGoal",
       "v": 1,
       "realm": "local",
-      "day": 20001,
-      "date": "2024-10-05",
-      "kind": "delivery",
-      "goalId": "dg1_local_ffl_d_mkb_1m_mkb_1l_12siubf",
-      "offerRx": -731,
-      "offerRy": 58,
-      "targetRx": -731,
-      "targetRy": 57,
-      "targetName": "Upper Briarfell",
-      "required": 5,
-      "endsAt": 1728172800000,
+      "day": 20026,
+      "date": "2024-10-30",
+      "kind": "landmark",
+      "goalId": "dg1_local_fga_l_n_n_mps_m4o_zbsmq",
+      "offerRx": null,
+      "offerRy": null,
+      "targetRx": -928,
+      "targetRy": -168,
+      "targetName": "East Elmbury",
+      "required": 4,
+      "endsAt": 1730332800000,
       "progress": 0,
       "completed": false,
       "contributed": false,
       "contributionDays": [
-        20000
+        20025
       ],
       "revision": 0,
       "completedNow": false
@@ -282,13 +313,13 @@
     "publicLeaderboardExtension": false,
     "privateContributionDays": {
       "Aster": [
-        20000
+        20025
       ],
       "Birch": [
-        20000
+        20025
       ],
       "Clover": [
-        20000
+        20025
       ]
     }
   }

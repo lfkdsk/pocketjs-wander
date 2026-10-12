@@ -255,7 +255,10 @@ export function startServer(opts: ServerOpts): ServerHandle {
    *  histories remain exact and bounded; only the realm aggregate rolls. */
   function rollDaily(nowMs: number): boolean {
     const day = utcDayFromMs(nowMs);
-    if (daily.goal.day === day) return false;
+    // UTC-day state is monotonic for the lifetime of this host. A corrected
+    // wall clock may move backwards, but must not resurrect an older goal and
+    // discard progress already accepted for a newer day.
+    if (day <= daily.goal.day) return false;
     // A test clock can cross midnight between two authoritative arena facts
     // in one host frame. Deliver the old day's pending completion pulse before
     // replacing its aggregate; normal frames have nothing pending here.
@@ -272,16 +275,22 @@ export function startServer(opts: ServerOpts): ServerHandle {
     rollDaily(nowMs);
     const fact = { ...contribution, realm: realmArena.realmId, day: daily.goal.day };
     if (!matchesDailyContribution(daily.goal, fact)) return;
-    // Keep completed goals as a hot no-op, matching the durable host: later
-    // eligible facts neither write a private day nor bump a revision.
-    if (daily.progress >= daily.goal.required) return;
 
     const previous = dailyContributionDays.get(player.coopIdentity) ?? [];
     if (!previous.includes(daily.goal.day)) {
       const contributionDays = [daily.goal.day, ...previous]
         .slice(0, DAILY_GOAL_CONTRIBUTION_DAYS_MAX);
       dailyContributionDays.set(player.coopIdentity, contributionDays);
+      // Completion is realm-wide, but contribution history is private. A
+      // second courier in the fact that fills the goal still needs a fresh
+      // recipient projection even though it cannot advance the aggregate.
+      dailyDirty = true;
     }
+
+    // Completed aggregates stay hot no-ops. A new identity above was the
+    // only possible private change; replay by an identity already credited
+    // leaves both the aggregate and wire completely quiet.
+    if (daily.progress >= daily.goal.required) return;
 
     daily.progress++;
     daily.revision = (daily.revision + 1) >>> 0;
