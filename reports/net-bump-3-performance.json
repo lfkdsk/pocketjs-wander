@@ -1,0 +1,103 @@
+{
+  "schema": "wander-component-bump-performance/v3",
+  "revisions": {
+    "baselineWander": "dc7cb6127ea4c60ab0c30c028a373dac92d1ed94",
+    "candidateWander": "3714c6a24699b95fea700d85db8cec99d0701bdf",
+    "baselinePocketRpgKit": "2a37b9aa5c6f464087cc5d97a815a38d2000acbd",
+    "candidatePocketRpgKit": "189a6f0dd2c4642fcff6fcecdd02d8e4a5985091",
+    "pocketJs": "862040bd77edc49b1f815beff63952b6616a14c6"
+  },
+  "method": {
+    "runtime": "PocketJS desktop QuickJS host",
+    "order": "baseline-candidate-candidate-baseline",
+    "rounds": 3,
+    "coldCpu": 11,
+    "coldPreflightLoadAverage": [3.33, 6.82, 8.38],
+    "coldPreflightCpuIdlePercent": 97.38,
+    "coldWarmupRuntimesPerSlot": 1,
+    "coldMeasuredRuntimesPerSlot": 7,
+    "coldAggregation": "mean of six per-revision slot medians",
+    "coldThresholdPercent": 3,
+    "coldDecisiveRun": "The full four-profile rerun was declared decisive before sampling after load fell; the earlier high-load full matrix is retained with the raw artifacts but is not used for the gate.",
+    "frameRunnerCpu": 14,
+    "frameHostCpu": 15,
+    "frameTicksPerSlot": 480,
+    "frameWarmupTicks": 120,
+    "frameMeasuredTicksPerSlot": 360,
+    "frameSamplesPerRevision": 2160,
+    "frameConfidence": "Two-sided 95% Student t interval over six independent slot means; the difference uses a conservative Welch t(9) critical value.",
+    "helper": {
+      "source": "vendor/pocket-rpgkit/tools/kp1-quickjs-bench.rs",
+      "compiledOnce": true,
+      "binarySha256": "ba8aac66187409f7da970451303f2a617329194c6d0664c4dba6ff3db68bde78"
+    }
+  },
+  "coldStart": {
+    "wander": {
+      "480x272": {
+        "baselineSlotMediansMs": [116.608, 119.165, 118.938, 110.279, 118.251, 119.434],
+        "candidateSlotMediansMs": [114.551, 118.616, 119.365, 115.051, 118.955, 112.660],
+        "baselineMeanMs": 117.112,
+        "candidateMeanMs": 116.533,
+        "deltaPercent": -0.495,
+        "bundleEvalBaselineMeanMs": 109.022,
+        "bundleEvalCandidateMeanMs": 108.834,
+        "bundleEvalDeltaPercent": -0.172,
+        "gatePass": true
+      },
+      "960x544": {
+        "baselineSlotMediansMs": [147.978, 145.857, 146.386, 143.327, 138.183, 146.259],
+        "candidateSlotMediansMs": [146.461, 142.805, 134.943, 148.401, 147.786, 145.770],
+        "baselineMeanMs": 144.665,
+        "candidateMeanMs": 144.361,
+        "deltaPercent": -0.210,
+        "bundleEvalBaselineMeanMs": 126.243,
+        "bundleEvalCandidateMeanMs": 125.776,
+        "bundleEvalDeltaPercent": -0.370,
+        "gatePass": true
+      }
+    },
+    "wander-online": {
+      "480x272": {
+        "baselineSlotMediansMs": [58.895, 59.403, 59.665, 59.397, 58.292, 57.346],
+        "candidateSlotMediansMs": [60.036, 59.876, 59.255, 59.674, 60.386, 55.270],
+        "baselineMeanMs": 58.833,
+        "candidateMeanMs": 59.083,
+        "deltaPercent": 0.425,
+        "bundleEvalBaselineMeanMs": 54.399,
+        "bundleEvalCandidateMeanMs": 54.868,
+        "bundleEvalDeltaPercent": 0.862,
+        "gatePass": true
+      },
+      "960x544": {
+        "baselineSlotMediansMs": [58.823, 60.312, 58.849, 59.307, 58.239, 58.225],
+        "candidateSlotMediansMs": [59.282, 59.361, 58.613, 60.062, 59.384, 56.536],
+        "baselineMeanMs": 58.959,
+        "candidateMeanMs": 58.873,
+        "deltaPercent": -0.146,
+        "bundleEvalBaselineMeanMs": 54.811,
+        "bundleEvalCandidateMeanMs": 54.854,
+        "bundleEvalDeltaPercent": 0.078,
+        "gatePass": true
+      }
+    }
+  },
+  "frames": {
+    "wander": {
+      "baselineSlotMeansUs": [1230.1, 1354.0, 1435.1, 1421.5, 1329.4, 1358.4],
+      "candidateSlotMeansUs": [1233.9, 1232.9, 1366.5, 1414.9, 1363.6, 1407.2],
+      "baselineMeanUs": 1354.750,
+      "candidateMeanUs": 1336.500,
+      "deltaUs": -18.250,
+      "deltaPercent": -1.347,
+      "baselineMeanCi95Us": [1277.482, 1432.018],
+      "candidateMeanCi95Us": [1249.912, 1423.088],
+      "differenceCi95Us": [-120.377, 83.877],
+      "differenceCi95PercentOfBaseline": [-8.885, 6.191],
+      "baselineMeanSlotP95Us": 2042.333,
+      "candidateMeanSlotP95Us": 2066.833,
+      "p95DeltaPercent": 1.200,
+      "statisticallyDistinguishable": false
+    }
+  }
+}

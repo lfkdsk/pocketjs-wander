@@ -1,0 +1,134 @@
+{
+  "schema": "wander-component-bump-size/v3",
+  "revisions": {
+    "baselineWander": "dc7cb6127ea4c60ab0c30c028a373dac92d1ed94",
+    "candidateWander": "3714c6a24699b95fea700d85db8cec99d0701bdf",
+    "baselinePocketRpgKit": "2a37b9aa5c6f464087cc5d97a815a38d2000acbd",
+    "candidatePocketRpgKit": "189a6f0dd2c4642fcff6fcecdd02d8e4a5985091",
+    "pocketJs": "862040bd77edc49b1f815beff63952b6616a14c6"
+  },
+  "method": {
+    "build": "bun run build",
+    "gzip": "gzip -n -9",
+    "comparison": "The same Wander source revision is built with the old and new component gitlinks; the candidate Wander commit changes only the component gitlink."
+  },
+  "applications": {
+    "wander": {
+      "javascript": {
+        "baseline": {
+          "rawBytes": 890187,
+          "gzipBytes": 188693,
+          "sha256": "0d98f0bd4097eae23112efd3b719676fdb1fd4e02368d3f3dadc456157a93409"
+        },
+        "candidate": {
+          "rawBytes": 900396,
+          "gzipBytes": 190644,
+          "sha256": "57e8454f36f17d254643da0973501c07b8d82037667cfa6cf9409da32e007947"
+        },
+        "delta": {
+          "rawBytes": 10209,
+          "rawPercent": 1.147,
+          "gzipBytes": 1951,
+          "gzipPercent": 1.034
+        }
+      },
+      "pak": {
+        "baseline": {
+          "rawBytes": 1132768,
+          "gzipBytes": 73951,
+          "sha256": "b7ec486759acc56253a22744128a16d74696519d9de33a90481f77eb48cdfc9d"
+        },
+        "candidate": {
+          "rawBytes": 1132768,
+          "gzipBytes": 73951,
+          "sha256": "b7ec486759acc56253a22744128a16d74696519d9de33a90481f77eb48cdfc9d"
+        },
+        "delta": {
+          "rawBytes": 0,
+          "rawPercent": 0,
+          "gzipBytes": 0,
+          "gzipPercent": 0
+        }
+      },
+      "inputs": {
+        "baselineCount": 608,
+        "candidateCount": 608,
+        "manifestSha256": "1df743b711e19432ff926633706812c69e4d4cc4118f02706a575d152c64a87c"
+      }
+    },
+    "wander-online": {
+      "javascript": {
+        "baseline": {
+          "rawBytes": 1136900,
+          "gzipBytes": 244731,
+          "sha256": "ac51eace54b7045b306ff8699b0ead08fe6b7fbc65ee737c9135eb71eda685ff"
+        },
+        "candidate": {
+          "rawBytes": 1147109,
+          "gzipBytes": 246681,
+          "sha256": "e8cc4d65183ec88ad10a105498afdf6ecc54a210a62fd1f5b263e61676a1a995"
+        },
+        "delta": {
+          "rawBytes": 10209,
+          "rawPercent": 0.898,
+          "gzipBytes": 1950,
+          "gzipPercent": 0.797
+        }
+      },
+      "pak": {
+        "baseline": {
+          "rawBytes": 2543120,
+          "gzipBytes": 328885,
+          "sha256": "4b9a072aa0e42da692d227a01832b70bd013a964c9c7289671d00cab617c92bc"
+        },
+        "candidate": {
+          "rawBytes": 2543120,
+          "gzipBytes": 328885,
+          "sha256": "4b9a072aa0e42da692d227a01832b70bd013a964c9c7289671d00cab617c92bc"
+        },
+        "delta": {
+          "rawBytes": 0,
+          "rawPercent": 0,
+          "gzipBytes": 0,
+          "gzipPercent": 0
+        }
+      },
+      "inputs": {
+        "baselineCount": 633,
+        "candidateCount": 633,
+        "manifestSha256": "3db0af7027bd4b355f6fad87605b10471d134f801487d680e60c08ff03101e27"
+      }
+    }
+  },
+  "isolation": {
+    "forbiddenConcreteModules": [
+      "src/engine/rpgmaker-screen.ts",
+      "src/engine/rpgmaker-text.ts",
+      "src/engine/travel-session.ts",
+      "src/engine/travel.ts",
+      "src/ui/ChoiceColourLine.tsx",
+      "src/ui/TravelActors.tsx",
+      "src/ui/choice-colour.ts",
+      "src/ui/travel-actors.ts",
+      "src/rpgmaker-battle/",
+      "src/ui/rpgmaker-battle/"
+    ],
+    "clean": {
+      "tests": 2,
+      "pass": 2,
+      "fail": 0,
+      "manifestAndBundleHits": 0
+    },
+    "mutation": {
+      "change": "Statically import rpgmaker-text.ts from the ordinary session path in a disposable worktree.",
+      "admittedModules": [
+        "src/engine/rpgmaker-screen.ts",
+        "src/engine/rpgmaker-text.ts"
+      ],
+      "tests": 2,
+      "pass": 0,
+      "fail": 2,
+      "exitCode": 1
+    }
+  }
+}
