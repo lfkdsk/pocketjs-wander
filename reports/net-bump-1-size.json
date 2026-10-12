@@ -1,0 +1,71 @@
+{
+  "schema": "wander-component-bump-size/v1",
+  "compression": "gzip -n -9",
+  "baseline": {
+    "wander": "2d6768ecfe8f6e7453547cfc637a2512b9d40e1a",
+    "pocketRpgKit": "a4dc4e72341ae6aa7373623f83dbd07124316a6d"
+  },
+  "candidate": {
+    "wander": "787a84520da5306c358582a60ffb754305c02eb0",
+    "pocketRpgKit": "0aecc05a6f911208cc5df8041fd00e76a6f35a1b",
+    "pocketJs": "862040bd77edc49b1f815beff63952b6616a14c6"
+  },
+  "apps": {
+    "wander": {
+      "js": {
+        "baselineBytes": 849902,
+        "candidateBytes": 925217,
+        "deltaBytes": 75315,
+        "deltaPercent": 8.8616,
+        "baselineGzipBytes": 180440,
+        "candidateGzipBytes": 194700,
+        "gzipDeltaBytes": 14260,
+        "gzipDeltaPercent": 7.9029
+      },
+      "pak": {
+        "baselineBytes": 1132768,
+        "candidateBytes": 1132768,
+        "deltaBytes": 0,
+        "deltaPercent": 0,
+        "baselineGzipBytes": 73949,
+        "candidateGzipBytes": 73952,
+        "gzipDeltaBytes": 3,
+        "gzipDeltaPercent": 0.0041
+      },
+      "addedInputs": [
+        "src/engine/rpgmaker-text.ts",
+        "src/engine/travel.ts",
+        "src/ui/ChoiceColourLine.tsx",
+        "src/ui/choice-colour.ts"
+      ],
+      "optionalBattleInputs": []
+    },
+    "wander-online": {
+      "js": {
+        "baselineBytes": 1086786,
+        "candidateBytes": 1147248,
+        "deltaBytes": 60462,
+        "deltaPercent": 5.5634,
+        "baselineGzipBytes": 232804,
+        "candidateGzipBytes": 245106,
+        "gzipDeltaBytes": 12302,
+        "gzipDeltaPercent": 5.2843
+      },
+      "pak": {
+        "baselineBytes": 2543120,
+        "candidateBytes": 2543120,
+        "deltaBytes": 0,
+        "deltaPercent": 0,
+        "baselineGzipBytes": 328885,
+        "candidateGzipBytes": 328885,
+        "gzipDeltaBytes": 0,
+        "gzipDeltaPercent": 0
+      },
+      "addedInputs": [
+        "src/engine/rpgmaker-text.ts",
+        "src/engine/travel.ts"
+      ],
+      "optionalBattleInputs": []
+    }
+  }
+}
