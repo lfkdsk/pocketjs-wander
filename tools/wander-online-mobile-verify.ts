@@ -10,7 +10,7 @@
 // creates its character through the page text box, verifies the realm daily
 // goal HUD and notice-board line, exercises the co-op board,
 // friend-waiting, READY countdown/cancel surfaces, opens the social home and
-// Friends panels, the post-office mailbox and postcard review, and the emote
+// Friends panels, the post-office mailbox and direct-reply review/send, and the emote
 // picker, mints/copies/closes an invite, and signs out. Landscape additionally
 // uses immersive play and proves the floating controls clear the game's
 // status, log, errand and help HUD rectangles plus each open modal panel.
@@ -28,6 +28,7 @@ import {
   type HudRect,
 } from "../examples/wander-online/hud.ts";
 import { formatDailyGoal, type DailyGoalSnapshot } from "../examples/wander-online/shared/daily-goal.ts";
+import { postcardRequestId } from "../examples/wander-online/shared/postcard.ts";
 import { isCooperativeErrand } from "../examples/wander-online/net/journey.ts";
 import { COMMAND } from "../examples/wander-online/net/protocol.ts";
 import { plaqueOf } from "../examples/wander-online/net/npc.ts";
@@ -651,6 +652,8 @@ async function main(): Promise<void> {
       discoveryLeaderboard: false,
       dailyGoals: true,
       postcards: true,
+      postcardReplies: true,
+      postcardIdempotency: true,
     });
     await pushJson({
       type: "socialSnapshot",
@@ -722,7 +725,7 @@ async function main(): Promise<void> {
     const postcardUnreadShot = await screenshot(`${label}-${width}x${height}-postcard-${locale}-unread`);
 
     // CROSS at the same born notice board opens its postal counter. Read the
-    // offline card, then compose to a different offline mutual friend using
+    // offline card, then reply directly through its opaque postcard id using
     // only controller input and a preset phrase. The loopback server does not
     // advertise hosted mail, so bounded hosted-shaped responses are injected
     // while every client transition and outgoing request remains production.
@@ -752,29 +755,51 @@ async function main(): Promise<void> {
     const postcardReadSelectedPixels = await checkScreenColor("postcard selected row", [0x35, 0x49, 0x68], 80);
     const postcardReadShot = await screenshot(`${label}-${width}x${height}-postcard-${locale}-read`);
 
-    await touch('[data-button="CROSS"]', 140); // read -> inbox
-    await touch('[data-button="CROSS"]', 140); // inbox -> home
-    await touch('[data-button="DOWN"]', 140); // send
-    await touch('[data-button="CIRCLE"]', 140); // recipients
-    await waitFor<boolean>("postcard recipients", 'globalThis.__onlineState?.postcardScreen === "recipients"', Boolean);
-    await touch('[data-button="DOWN"]', 140); // offline pen pal
-    await touch('[data-button="CIRCLE"]', 140); // phrases
+    await touch('[data-button="DOWN"]', 140);
+    await touch('[data-button="DOWN"]', 140);
+    await touch('[data-button="DOWN"]', 140); // reply row
+    await touch('[data-button="CIRCLE"]', 140); // direct reply -> phrases
+    await waitFor<boolean>("postcard reply phrases", 'globalThis.__onlineState?.postcardScreen === "phrases"', Boolean);
     await touch('[data-button="DOWN"]', 140);
     await touch('[data-button="DOWN"]', 140); // longest preset: thanks
     await touch('[data-button="CIRCLE"]', 140); // postmarks
     await touch('[data-button="CIRCLE"]', 140); // no postmark -> review
-    await waitFor<boolean>("postcard review", 'globalThis.__onlineState?.postcardScreen === "review"', Boolean);
+    await waitFor<boolean>("postcard reply review", 'globalThis.__onlineState?.postcardScreen === "review"', Boolean);
     const postcardReviewLayout = await layoutReport(true);
-    const postcardReviewPanelPixels = await checkScreenColor("postcard review panel", [0x17, 0x24, 0x3b], 500);
-    const postcardReviewTitlePixels = await checkScreenColor("postcard review title", [0xff, 0xe1, 0x7a], 8);
-    const postcardReviewInkPixels = await checkScreenColor("postcard review ink", [0xe8, 0xef, 0xff], 8);
-    const postcardReviewSelectedPixels = await checkScreenColor("postcard review selected row", [0x35, 0x49, 0x68], 80);
-    const postcardReviewShot = await screenshot(`${label}-${width}x${height}-postcard-${locale}-review`);
-    for (const screen of ["postmarks", "phrases", "recipients", "home"] as const) {
-      await touch('[data-button="CROSS"]', 140);
-      await waitFor<boolean>(`postcard back to ${screen}`,
-        `globalThis.__onlineState?.postcardScreen === ${JSON.stringify(screen)}`, Boolean);
-    }
+    const postcardReviewPanelPixels = await checkScreenColor("postcard reply review panel", [0x17, 0x24, 0x3b], 500);
+    const postcardReviewTitlePixels = await checkScreenColor("postcard reply review title", [0xff, 0xe1, 0x7a], 8);
+    const postcardReviewInkPixels = await checkScreenColor("postcard reply review ink", [0xe8, 0xef, 0xff], 8);
+    const postcardReviewSelectedPixels = await checkScreenColor("postcard reply review selected row", [0x35, 0x49, 0x68], 80);
+    const postcardReviewShot = await screenshot(`${label}-${width}x${height}-postcard-${locale}-reply-review`);
+
+    // Confirm twice before supplying a result: both real touches must reuse the
+    // same request id and opaque reply target, modelling a lost first response.
+    await touch('[data-button="CIRCLE"]', 140);
+    await touch('[data-button="CIRCLE"]', 140);
+    const postcardReplyFrames = await waitFor<Record<string, unknown>[]>(
+      "two direct-reply send attempts",
+      `(() => (globalThis.__mobileVerifyTextFrames ?? [])
+        .filter((frame) => frame?.type === "postcardSend")
+        .slice(-2))()`,
+      (candidates) => candidates.length === 2
+        && candidates.every((candidate) => candidate.replyToPostcardId === `pc_mobile_${label}`),
+    );
+    const replyRequestId = postcardReplyFrames[0]?.requestId;
+    check(`${phase}: direct reply uses a bounded request id`, postcardRequestId(replyRequestId), String(replyRequestId ?? "missing"));
+    check(`${phase}: response-loss retry reuses its request id`,
+      postcardReplyFrames[1]?.requestId === replyRequestId, String(postcardReplyFrames[1]?.requestId ?? "missing"));
+    check(`${phase}: direct reply keeps the sender account opaque`,
+      postcardReplyFrames.every((frame) => !Object.hasOwn(frame, "targetGithubId")), "replyToPostcardId only");
+    check(`${phase}: direct reply keeps preset and postmark bounds`,
+      postcardReplyFrames.every((frame) => frame.sentenceId === "thanks" && frame.postmark === null), "thanks / no postmark");
+    await pushJson({
+      type: "postcardResult",
+      v: 1,
+      operation: "send",
+      ok: true,
+      requestId: replyRequestId,
+    });
+    await waitFor<boolean>("postcard reply sent", 'globalThis.__onlineState?.postcardScreen === "home"', Boolean);
     await touch('[data-button="CROSS"]', 140);
     await waitFor<boolean>("post office closed", "globalThis.__onlineState?.postcard === false", Boolean);
 
@@ -961,8 +986,12 @@ async function main(): Promise<void> {
       },
       postcards: {
         unread: unreadState!.postcardUnread,
-        offlineRecipient: penPal,
+        replyRecipient: {
+          postcardId: `pc_mobile_${label}`,
+          name: locale === "zh" ? han(0x65c5, 0x53cb) : "Nia",
+        },
         readRequest: postcardReadFrame,
+        replySendAttempts: postcardReplyFrames,
         badgePixels: postcardBadgePixels,
         badgeTextPixels: postcardBadgeTextPixels,
         homeLayout: postcardHomeLayout,
@@ -974,7 +1003,7 @@ async function main(): Promise<void> {
           selectedPixels: postcardReadSelectedPixels,
           layout: postcardReadLayout,
         },
-        review: {
+        replyReview: {
           panelPixels: postcardReviewPanelPixels,
           titlePixels: postcardReviewTitlePixels,
           inkPixels: postcardReviewInkPixels,

@@ -234,13 +234,28 @@ small `MAIL n` / `信 n` badge whenever the server reports unread cards.
 The post office has two controller-first paths. Mailbox opens stored cards and
 marks the selected unread card through the server. Send chooses a mutual
 friend, one of six English/Chinese preset phrases, and either no postmark or a
-landmark from the private travel log. The client sends only a friend id,
-sentence id and optional region coordinate. The hosted Room verifies the
-physical board, rejects a forged phrase or coordinate, and accepts a postmark
-only when that exact landmark FIRST belongs to the sender's current account
-incarnation. It derives the public landmark kind itself; a recipient never
-receives the coordinate, realm, account id, token or sender position. There is
-no free-text field.
+landmark from the private travel log. On servers advertising
+`postcardReplies`, the read view also offers a direct reply through the card's
+opaque `replyToPostcardId`; the browser never receives or reconstructs the
+sender's account id. The reply goes through the same phrase, postmark,
+friendship, capacity and daily-limit checks as a new card.
+
+Each send carries a bounded `requestId`. Reconfirming the same unchanged draft
+after a lost response reuses that id, so a server advertising
+`postcardIdempotency` can return the recorded result without delivering or
+charging twice; changing the target, phrase or postmark creates a new request.
+The hosted Room still verifies the physical board, rejects a forged phrase or
+coordinate, and accepts a postmark only when that exact landmark FIRST belongs
+to the sender's current account incarnation. It derives the public landmark
+kind itself; a recipient never receives the coordinate, realm, account id,
+token or sender position. There is no free-text field.
+
+Postcard status is server-authoritative and has exactly four data fields:
+`revision`, `unread`, `total` and `dailyRemaining`. A mailbox response adds the
+bounded card list. Capability rollout is additive: deploy the accepting client
+before enabling `postcardReplies` or `postcardIdempotency` on hosted rooms.
+Missing flags from an older server normalize to false; the base `postcards`
+mailbox remains usable without reply UI or strict result-id matching.
 
 Auth owns offline delivery and all limits: 32 live cards per mailbox, five
 successful sends per sender per UTC day and a 30-day TTL. A recipient sees the
@@ -258,8 +273,10 @@ The loopback Bun server deliberately does not advertise postcards: it has no
 durable identity or mailbox store and must not masquerade as hosted offline
 delivery. Client/controller tests use bounded protocol fixtures; the server
 repository's workerd integration test proves a real A-to-offline-B delivery
-and a nonfriend C rejection. After building, capture the bilingual native-size
-and nearest-neighbour 3x review frames with:
+and a nonfriend C rejection. After building, capture bilingual unread, read,
+direct-reply review and ordinary review frames at both desktop sizes, each in
+native resolution and a nearest-neighbour 3x copy, with text-fit and semantic
+pixel evidence in `report.json`:
 
 ```sh
 bun run shots:postcard -- ./wander-online-postcard-shots
@@ -282,10 +299,13 @@ bun run shots:social -- ./wander-online-social-shots
 ```
 
 For the real browser controls, build the web app and run the DPR 3 phone
-verifier. It exercises the post-office read/review and social-menu touch paths
-in 390x844 portrait and 844x390 landscape, projects each open panel through the
-live logical canvas, fails if any visible floating game-pad control overlaps
-it, and retains its screenshots and JSON layout report:
+verifier. In both 390x844 English portrait and 844x390 Chinese landscape it
+uses real touches to read a card, compose a direct reply, retry the unchanged
+send with the same request id and accept the matching result. It also exercises
+the social-menu path, projects each open panel through the live logical canvas,
+fails if a visible floating game-pad control overlaps it, and retains
+screenshots plus a JSON report containing the send attempts, failures and
+console errors:
 
 ```sh
 bun run web

@@ -41,7 +41,7 @@ const MIN_SEMANTIC_PIXELS: Record<keyof typeof SEMANTIC_COLOURS, number> = {
   selected: 100,
 };
 
-type Scene = "unread" | "read" | "review";
+type Scene = "unread" | "read" | "reply-review" | "review";
 type FitRegion = "header" | "label" | "detail" | "body";
 
 interface World {
@@ -235,7 +235,7 @@ function capture(
   requiredText: readonly string[],
   expectedFit: readonly FitExpectation[],
 ): void {
-  const expectedScreen = scene === "unread" ? "inbox" : scene;
+  const expectedScreen = scene === "unread" ? "inbox" : scene === "reply-review" ? "review" : scene;
   if (state()?.postcardScreen !== expectedScreen) {
     throw new Error(`${locale} ${width}x${height}: expected ${expectedScreen} controller screen`);
   }
@@ -303,13 +303,25 @@ function copy(locale: PostcardLocale) {
         ],
       },
       read: {
-        required: ["信箱", "寄件人", "Alice", sentence, "邮戳: Ancient Tree"],
+        required: ["信箱", "寄件人", "Alice", sentence, "邮戳: Ancient Tree", "回信"],
         fit: [
           { text: "信箱", region: "header" },
           { text: "寄件人", region: "label" },
           { text: "Alice", region: "detail" },
           { text: sentence, region: "body" },
           { text: "邮戳: Ancient Tree", region: "body" },
+          { text: "回信", region: "body" },
+        ],
+      },
+      replyReview: {
+        required: ["确认明信片", "收件人", "Alice", `正文: ${greeting}`, "邮戳: 不附邮戳", "确认寄出"],
+        fit: [
+          { text: "确认明信片", region: "header" },
+          { text: "收件人", region: "label" },
+          { text: "Alice", region: "detail" },
+          { text: `正文: ${greeting}`, region: "body" },
+          { text: "邮戳: 不附邮戳", region: "body" },
+          { text: "确认寄出", region: "body" },
         ],
       },
       review: {
@@ -337,13 +349,32 @@ function copy(locale: PostcardLocale) {
       ],
     },
     read: {
-      required: ["MAILBOX", "FROM", "Alice", sentence, "POSTMARK: Ancient Tree"],
+      required: ["MAILBOX", "FROM", "Alice", sentence, "POSTMARK: Ancient Tree", "REPLY"],
       fit: [
         { text: "MAILBOX", region: "header" },
         { text: "FROM", region: "label" },
         { text: "Alice", region: "detail" },
         { text: sentence, region: "body" },
         { text: "POSTMARK: Ancient Tree", region: "body" },
+        { text: "REPLY", region: "body" },
+      ],
+    },
+    replyReview: {
+      required: [
+        "REVIEW POSTCARD",
+        "TO",
+        "Alice",
+        `MESSAGE: ${greeting}`,
+        "POSTMARK: NO POSTMARK",
+        "SEND NOW",
+      ],
+      fit: [
+        { text: "REVIEW POSTCARD", region: "header" },
+        { text: "TO", region: "label" },
+        { text: "Alice", region: "detail" },
+        { text: `MESSAGE: ${greeting}`, region: "body" },
+        { text: "POSTMARK: NO POSTMARK", region: "body" },
+        { text: "SEND NOW", region: "body" },
       ],
     },
     review: {
@@ -381,6 +412,8 @@ async function captureViewport(width: number, height: number, locale: PostcardLo
     discoveryLeaderboard: false,
     dailyGoals: false,
     postcards: true,
+    postcardReplies: true,
+    postcardIdempotency: true,
   });
   pushText(world, f, {
     type: "postcardStatus",
@@ -439,6 +472,17 @@ async function captureViewport(width: number, height: number, locale: PostcardLo
   press(world, BTN.CIRCLE); // unread postcard -> read
   capture(world, width, height, locale, "read", words.read.required, words.read.fit);
 
+  press(world, BTN.DOWN);
+  press(world, BTN.DOWN);
+  press(world, BTN.DOWN); // REPLY
+  press(world, BTN.CIRCLE); // reply -> phrases
+  press(world, BTN.CIRCLE); // default greeting
+  press(world, BTN.CIRCLE); // no postmark
+  capture(world, width, height, locale, "reply-review", words.replyReview.required, words.replyReview.fit);
+
+  press(world, BTN.CROSS); // reply review -> postmarks
+  press(world, BTN.CROSS); // postmarks -> phrases
+  press(world, BTN.CROSS); // reply phrases -> read
   press(world, BTN.CROSS); // read -> inbox
   press(world, BTN.CROSS); // inbox -> home
   press(world, BTN.DOWN); // SEND A POSTCARD
