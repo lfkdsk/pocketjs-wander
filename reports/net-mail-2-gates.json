@@ -1,0 +1,56 @@
+{
+  "schema": "net-mail-2-final-gates",
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-12T05:36:30Z",
+  "verdict": "PASS",
+  "repositories": {
+    "wander": {
+      "testedHead": "333751f3e9e8b958f89c313a696b949b0ca7f2aa",
+      "commands": [
+        {
+          "command": "bun run build:wasm",
+          "exitCode": 0,
+          "result": "359729-byte WebAssembly host rebuilt"
+        },
+        {
+          "command": "bun run build",
+          "exitCode": 0
+        },
+        {
+          "command": "bun test tests/",
+          "exitCode": 0,
+          "passed": 508,
+          "failed": 0,
+          "skipped": 0,
+          "assertions": 500915,
+          "files": 41,
+          "durationSeconds": 134.1
+        },
+        {
+          "command": "bunx tsc --noEmit",
+          "exitCode": 0
+        }
+      ]
+    },
+    "server": {
+      "testedHead": "cd3757f24236d9a9cb64b95e4208fa3b20298eb1",
+      "commands": [
+        {
+          "command": "bun test tests/*.test.ts",
+          "exitCode": 0,
+          "passed": 341,
+          "failed": 0,
+          "skipped": 0,
+          "assertions": 3568,
+          "files": 15,
+          "durationSeconds": 22.52,
+          "realWorkerdAcceptanceIncluded": true
+        },
+        {
+          "command": "./node_modules/.bin/tsc --noEmit",
+          "exitCode": 0
+        }
+      ]
+    }
+  }
+}
