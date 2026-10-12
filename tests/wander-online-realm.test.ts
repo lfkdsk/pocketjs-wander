@@ -16,6 +16,7 @@ import {
 import { entityFor, snapshotForRealm } from "../examples/wander-online/shared/snapshot.ts";
 import { decodeState4, type Welcome4 } from "../examples/wander-online/net/protocol.ts";
 import { CHUNK } from "../examples/wander/world.ts";
+import { plaqueOf } from "../examples/wander-online/net/npc.ts";
 
 const SEED = 0x5eed_0001;
 const EPOCH = 0x1020_3040;
@@ -177,6 +178,32 @@ describe("wander-online v4 realm arena and prediction", () => {
     expect(() => arena.tryAdd("invalid", 3, 0, { tx: 0, ty: 0, facing: 4 })).toThrow("0..3");
     expect(arena.players.size).toBe(2);
     expect(arena.add("next", 4).id).toBe(3);
+  });
+
+  test("the post office is only the born notice board directly in front of the authoritative player", () => {
+    let nowMs = 0;
+    const arena = new RealmArena({ seed: SEED, hz: 20, epoch: EPOCH, now: () => nowMs });
+    let town: { rx: number; ry: number; board: NonNullable<ReturnType<typeof plaqueOf>> } | null = null;
+    for (let radius = 0; radius <= 12 && !town; radius++) {
+      for (let ry = -radius; ry <= radius && !town; ry++) for (let rx = -radius; rx <= radius; rx++) {
+        if (Math.max(Math.abs(rx), Math.abs(ry)) !== radius) continue;
+        const board = plaqueOf(arena.townPlan(rx, ry));
+        if (board) town = { rx, ry, board };
+      }
+    }
+    expect(town).not.toBeNull();
+    const player = arena.add("postal", 1, 0, {
+      tx: town!.board.x,
+      ty: town!.board.y - 1,
+      facing: 0,
+    });
+    expect(arena.postOfficeFor(player, nowMs)).toBeNull();
+    nowMs = 10_000_000;
+    expect(arena.postOfficeFor(player, nowMs)).toEqual({ rx: town!.rx, ry: town!.ry });
+    player.state.move.facing = 1;
+    expect(arena.postOfficeFor(player, nowMs)).toBeNull();
+    player.state.move.facing = 0;
+    expect(arena.postOfficeFor({ ...player, id: player.id + 100 } as RealmPlayer, nowMs)).toBeNull();
   });
 
   test("prediction explicitly corrects a mover mismatch and rejects another epoch", () => {

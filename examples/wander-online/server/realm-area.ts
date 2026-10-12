@@ -757,6 +757,20 @@ export class RealmArena {
     return this.coopWaitingCountForOffer(offerRx, offerRy, nowMs);
   }
 
+  /** The deterministic notice board directly in front of this authoritative
+   * player doubles as the town's post-office counter. The born-tick check
+   * matches the client renderer, so an unbuilt future board grants nothing. */
+  postOfficeFor(player: RealmPlayer, nowMs = this.now()): { rx: number; ry: number } | null {
+    if (this.players.get(player.id) !== player) return null;
+    const front = frontTile(player.state.move);
+    const rx = regionOf(front.x), ry = regionOf(front.y);
+    const plan = this.townPlan(rx, ry);
+    const board = plaqueOf(plan);
+    if (!board || board.x !== front.x || board.y !== front.y) return null;
+    if (this.world.regionTick(rx, ry, nowMs) < board.born) return null;
+    return { rx, ry };
+  }
+
   /** Settle one deterministic pair containing `player`, if two distinct
    *  identities are valid and physically present now. */
   private settleCoopIfReady(player: RealmPlayer, nowMs: number): boolean {
