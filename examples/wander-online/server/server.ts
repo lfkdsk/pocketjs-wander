@@ -272,20 +272,21 @@ export function startServer(opts: ServerOpts): ServerHandle {
     rollDaily(nowMs);
     const fact = { ...contribution, realm: realmArena.realmId, day: daily.goal.day };
     if (!matchesDailyContribution(daily.goal, fact)) return;
+    // Keep completed goals as a hot no-op, matching the durable host: later
+    // eligible facts neither write a private day nor bump a revision.
+    if (daily.progress >= daily.goal.required) return;
 
     const previous = dailyContributionDays.get(player.coopIdentity) ?? [];
-    if (previous.includes(daily.goal.day)) return;
-    const contributionDays = [...previous, daily.goal.day];
-    if (contributionDays.length > DAILY_GOAL_CONTRIBUTION_DAYS_MAX) {
-      contributionDays.splice(0, contributionDays.length - DAILY_GOAL_CONTRIBUTION_DAYS_MAX);
+    if (!previous.includes(daily.goal.day)) {
+      const contributionDays = [daily.goal.day, ...previous]
+        .slice(0, DAILY_GOAL_CONTRIBUTION_DAYS_MAX);
+      dailyContributionDays.set(player.coopIdentity, contributionDays);
     }
-    dailyContributionDays.set(player.coopIdentity, contributionDays);
 
-    const wasCompleted = daily.progress === daily.goal.required;
-    if (!wasCompleted) daily.progress++;
+    daily.progress++;
     daily.revision = (daily.revision + 1) >>> 0;
     dailyDirty = true;
-    if (!wasCompleted && daily.progress === daily.goal.required) {
+    if (daily.progress === daily.goal.required) {
       dailyCompletedNow = true;
       realmArena.raiseSharedImprovement(player, daily.goal.targetRx, daily.goal.targetRy, 2, nowMs);
     }
