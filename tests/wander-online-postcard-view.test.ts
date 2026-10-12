@@ -100,6 +100,8 @@ simDescribe("wander-online postcard view", () => {
     expect(state().postcardScreen).toBe("home");
     expect(sent).toContainEqual({ type: "postcardGet", v: 1 });
     expect(sent).toContainEqual({ type: "socialGet", v: 1 });
+    push({ type: "postcardResult", v: 1, operation: "get", ok: false, reason: "post-office" });
+    expect(state().notice).toBe("POSTCARD: VISIT A POST OFFICE");
 
     push({
       type: "socialSnapshot", v: 1, visible: true,

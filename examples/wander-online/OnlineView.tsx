@@ -907,7 +907,8 @@ export function OnlineView() {
       setPostcardState((state) => normalizePostcardMenuState(state, postcardMenuData()));
       return true;
     }
-    if (typeof msg.ok !== "boolean" || (msg.operation !== "send" && msg.operation !== "read")) return true;
+    if (typeof msg.ok !== "boolean"
+      || (msg.operation !== "get" && msg.operation !== "send" && msg.operation !== "read")) return true;
     if (msg.ok) {
       if (msg.operation === "send") {
         setPostcardState(postcardSendComplete());
