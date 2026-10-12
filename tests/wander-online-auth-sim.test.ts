@@ -17,6 +17,20 @@ import { CREATE_ERROR_TEXT_EN, CREATE_ERROR_TEXT_ZH } from "../examples/wander-o
 setDefaultTimeout(30_000);
 
 const WEB_TICKET_KEY = "pocket-rpgkit:wander-online:ticket";
+const WEB_REALM_KEY = "pocket-rpgkit:wander-online:realm";
+
+interface CompatibilityFixture {
+  onlineLocal: {
+    ticketKey: string;
+    ticketValue: string;
+    realmKey: string;
+    realmValue: string;
+  };
+}
+
+const compatibilityFixture = await Bun.file(
+  new URL("./fixtures/pre-upgrade-state.json", import.meta.url),
+).json() as CompatibilityFixture;
 
 const preflight = appPreflight("wander-online");
 if (!preflight.ok) console.warn(`wander-online auth sim tests skipped: ${preflight.reason}`);
@@ -329,6 +343,47 @@ simDescribe("wander-online auth: the login gate", () => {
 });
 
 simDescribe("wander-online auth: ticket persistence across boots", () => {
+  test("pre-upgrade ticket and realm state rejoin that realm and continue sending input", async () => {
+    const old = compatibilityFixture.onlineLocal;
+    expect(old.ticketKey).toBe(WEB_TICKET_KEY);
+    expect(old.realmKey).toBe(WEB_REALM_KEY);
+    const values = new Map<string, string>([
+      [old.ticketKey, old.ticketValue],
+      [old.realmKey, old.realmValue],
+    ]);
+    const sent: Record<string, unknown>[] = [];
+    const sentInputs: number[] = [];
+    const urls: string[] = [];
+    const w = await boot(
+      undefined,
+      fakeOnlineSocketFactory({
+        mode: "welcome4",
+        name: "Pre Upgrade",
+        ticket: "pre-upgrade-ticket",
+        realm: { id: "cedar-realm" },
+        heartbeat: true,
+        sent,
+        sentInputs,
+        urls,
+      }),
+      480,
+      272,
+      { __pocketWeb: true, __pocketWebStore: webStore(values) },
+    );
+
+    await waitFor(w, () => state()?.screen === "world" && state()?.status === "joined", "pre-upgrade realm rejoin");
+    expect(sent.some((msg) => msg.type === "join" && msg.ticket === "pre-upgrade-ticket")).toBe(true);
+    expect(new URL(urls[0]!).searchParams.get("realm")).toBe("cedar-realm");
+    expect(state()?.realmId).toBe("cedar-realm");
+    expect(values.get(WEB_TICKET_KEY)).toBe(old.ticketValue);
+    expect(values.get(WEB_REALM_KEY)).toBe(old.realmValue);
+
+    pump(w, 30, BTN.RIGHT);
+    await waitFor(w, () => sentInputs.some((mask) => (mask & BTN.RIGHT) !== 0), "continued realm input");
+    expect(state()?.status).toBe("joined");
+    w.frame(0);
+  });
+
   test("web reboots with a ready ticket from the same storage bridge", async () => {
     const values = new Map<string, string>();
     const bridge = webStore(values);

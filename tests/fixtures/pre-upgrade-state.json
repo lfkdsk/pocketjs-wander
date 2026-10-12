@@ -1,0 +1,19 @@
+{
+  "schema": "wander-compat-fixture/v1",
+  "generatedBy": {
+    "wander": "2d6768ecfe8f6e7453547cfc637a2512b9d40e1a",
+    "pocketRpgKit": "a4dc4e72341ae6aa7373623f83dbd07124316a6d"
+  },
+  "singlePlayer": {
+    "travelLog": "{\"v\":3,\"found\":[[-67108864,{\"name\":\"Froststead\",\"kind\":\"RUINED ARCH\",\"x\":-33,\"y\":24,\"rx\":-1,\"ry\":0,\"t\":5591}],[67108864,{\"name\":\"Lower Aspenmound\",\"kind\":\"STANDING STONES\",\"x\":116,\"y\":21,\"rx\":1,\"ry\":0,\"t\":7403}],[67108863,{\"name\":\"Junipermarket\",\"kind\":\"RUINED ARCH\",\"x\":161,\"y\":-29,\"rx\":1,\"ry\":-1,\"t\":8193}],[134217726,{\"name\":\"Upper Elderwatch\",\"kind\":\"OLD CAMP\",\"x\":213,\"y\":-157,\"rx\":2,\"ry\":-2,\"t\":12012}],[134217727,{\"name\":\"Lower Hawthornhill\",\"kind\":\"RUINED ARCH\",\"x\":274,\"y\":-27,\"rx\":2,\"ry\":-1,\"t\":16781}]],\"overflow\":[],\"seen\":[-67108864,67108864,67108863,134217726,134217727],\"total\":5,\"version\":5}",
+    "errands": "{\"v\":1,\"e\":null,\"h\":\"AAAABAAAkMEAAAAAAACgwQAAAAAAAAAAAAAA/P//n0EAAADw//+PQQAAAPj//59BAAAA/v//p0E=\",\"t\":\"AAAAAAAA8L8AAAAEAACQwQAAAAIAAKDBAAAAAAAAoMEAAAAAAAAAAAAAAPz//59BAAAA8P//j0EAAAD8//+nQQAAAPj//59BAAAA/v//p0E=\",\"b\":\"gAEAAAQAAAAAAAAAABAASAAAAAAAAAAAAAgAAAAAIAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgEBAAAAAAQAAAABAABAAAgAAAAAAAAAAAAAECAgAAAAAAAAAAAAAA=\",\"hc\":7}",
+    "logDigest": "5:5:5::-67108864:RUINED ARCH|67108864:STANDING STONES|67108863:RUINED ARCH|134217726:OLD CAMP|134217727:RUINED ARCH",
+    "errandsDigest": "7|-67108865,-134217728,0,134217727,67108862,134217726,201326591|-1,-67108865,-134217729,-134217728,0,134217727,67108862,201326590,134217726,201326591|180,4,0,48001000,0,0,800,200000,1000000,0,0,0,0,0,20000000,0,0,0,0,0,0,0,40408,10000000,4000000,100,20,0,40000000,8080,0,0|-"
+  },
+  "onlineLocal": {
+    "ticketKey": "pocket-rpgkit:wander-online:ticket",
+    "ticketValue": "{\"ticket\":\"pre-upgrade-ticket\"}",
+    "realmKey": "pocket-rpgkit:wander-online:realm",
+    "realmValue": "{\"realm\":\"cedar-realm\"}"
+  }
+}
