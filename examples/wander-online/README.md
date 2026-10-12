@@ -118,18 +118,25 @@ delivery contribute, and a landmark contributes only for the winner of the
 server's FIRST compare-and-set. Clients cannot submit goal credit. Progress is
 shared with the realm; `contributed` and the bounded `contributionDays` list in
 each recipient's snapshot describe only that authenticated account and never
-publish a contributor list.
+publish a contributor list. If a cooperative pair arrives with one step
+remaining, both accepted courier facts retain that private day even though the
+shared counter stops at its required value; the completion edge still occurs
+only once.
 
-The top-right goal plate shows progress and the time remaining until UTC
-midnight. Every physical town notice board appends the same goal, so it remains
-available when the HUD is crowded. Copy follows the selected English or Chinese
-locale and uses the compact font slot. At midnight the occupied server pushes
-the next definition without a reconnect; a fact's one captured timestamp
-chooses exactly one day. The sole completion crossing sends one celebration
-notice and raises the selected town to improvement level 2, adding a market
-ring through the normal shared-world repaint path. That festival remains after
-rollover as a realm-history marker; permanence also avoids a reset write every
-day, while ordinary level-1 journey flowers retain their existing appearance.
+The top-right goal plate shows a graphical fill bar, numeric progress and the
+time remaining until UTC midnight. Every physical town notice board appends
+the same goal and fill bar, so it remains available when the HUD is crowded.
+Copy follows the selected English or Chinese locale and uses the compact font
+slot. At midnight the occupied server pushes the next definition without a
+reconnect; a fact's one captured timestamp chooses exactly one day. The
+loopback clock only advances this definition, so a host clock correction cannot
+resurrect an older unfinished goal or repeat completion. The sole completion
+crossing sends one celebration notice and raises the selected town to
+improvement level 2, adding four deterministic market stalls through the
+normal shared-world repaint path. A fallback ring supplies edge or dense towns
+whose preferred stall cells are occupied. The festival remains after rollover
+as a realm-history marker; permanence also avoids a reset write every day,
+while ordinary level-1 journey flowers retain their existing appearance.
 
 The loopback server keeps the aggregate and private day lists in memory for a
 deterministic local demo. The hosted server stores the shared aggregate and
