@@ -248,8 +248,11 @@ card on the next mailbox open even if no socket was connected when it was
 sent; an online cross-realm unread update is only a best-effort hint, and the
 next status request is authoritative. Removing a friendship immediately
 deletes unread cards in both directions, retains already-read recipient history
-until expiry and does not refund send quota. Complete account deletion removes
-both received cards and sender-side references.
+until expiry and does not refund send quota. Deleting unread mail prevents a
+former friend from leaving a new unseen contact behind; retaining a card the
+recipient already opened avoids rewriting their known history, while the TTL
+still bounds it. Complete account deletion removes both received cards and
+sender-side references.
 
 The loopback Bun server deliberately does not advertise postcards: it has no
 durable identity or mailbox store and must not masquerade as hosted offline
