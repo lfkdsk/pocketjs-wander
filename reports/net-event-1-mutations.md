@@ -79,4 +79,22 @@ bun test tests/room-do.test.ts -t "different cooperative offers to one target re
 Result: exit 1, `0 pass`, `1 fail`. The first courier's distinct errand was
 incorrectly completed (`null`) instead of remaining `{ rx: 1, ry: -5 }`.
 
-All five required mutations were killed by their focused checks.
+## Full-goal early return
+
+Mutation: restore the old `progress >= required` return before fact
+deduplication, fact insertion, and the courier's private contribution-day
+write. This recreates the completion-edge bug: the first fact in a two-courier
+batch fills the goal and the second fact is discarded.
+
+Command (inside a disposable server worktree):
+
+```text
+bun test tests/realm-storage.test.ts -t "two-fact batches retain every new fact at zero, the completion edge, and full progress"
+```
+
+Result: exit 1, `0 pass`, `1 fail`. At the completion edge the second result
+was `credited: false`; the test requires `credited: true` so that both accepted
+courier facts and both private contribution days survive while shared progress
+remains capped.
+
+All six required mutations were killed by their focused checks.
