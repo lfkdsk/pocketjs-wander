@@ -62,7 +62,7 @@ export function emoteCell(bar: HudRect, index: number): HudRect {
  *  clears the status plate, the bottom bars and the side margins. */
 export const FAR_MARKER_SIZE = 8;
 export function farMarkerRect(w: number, h: number, debug: boolean): HudRect {
-  return { x0: 10, y0: statusPlate(w, h, debug).y1 + 10, x1: w - 10, y1: h - 66 };
+  return { x0: 10, y0: statusPlate(w, h, debug).y1 + 10, x1: w - 10, y1: dailyGoalLayout(w, h).panel.y0 - 4 };
 }
 
 export function farMarkerPoint(w: number, h: number, debug: boolean, ux: number, uy: number): { x: number; y: number } {
@@ -87,6 +87,54 @@ export function logBarRect(w: number, h: number): HudRect {
 /** The ERRAND / HELPED bar, directly above the help strip. */
 export function errandBarRect(w: number, h: number): HudRect {
   return { x0: 6, y0: h - 40, x1: w - 6, y1: h - 24 };
+}
+
+export interface DailyGoalLayout {
+  /** Narrow viewports stack the goal and countdown; wide ones share a row. */
+  compact: boolean;
+  panel: HudRect;
+  goalText: HudRect;
+  countdownText: HudRect;
+}
+
+/** Responsive daily-goal strip above the LOG bar. At the 480 px baseline,
+ * the shared goal copy and UTC clock get a full-width row each. At 2x they
+ * share one row, leaving the expanded width to the longer goal copy. */
+export function dailyGoalLayout(w: number, h: number): DailyGoalLayout {
+  const compact = w < 720;
+  const x0 = 6, x1 = w - 6;
+  const y1 = logBarRect(w, h).y0 - 4;
+  const y0 = y1 - (compact ? 30 : 16);
+  const innerX0 = x0 + 6, innerX1 = x1 - 6;
+  const countdownW = 126;
+  return {
+    compact,
+    panel: { x0, y0, x1, y1 },
+    goalText: compact
+      ? { x0: innerX0, y0: y0 + 2, x1: innerX1, y1: y0 + 14 }
+      : { x0: innerX0, y0: y0 + 2, x1: innerX1 - countdownW - 8, y1: y0 + 14 },
+    countdownText: compact
+      ? { x0: innerX0, y0: y0 + 16, x1: innerX1, y1: y0 + 28 }
+      : { x0: innerX1 - countdownW, y0: y0 + 2, x1: innerX1, y1: y0 + 14 },
+  };
+}
+
+/** Whole-second UTC time remaining for the daily goal. The server deadline
+ * is authoritative; clients only project it against their estimated server
+ * clock. */
+export function dailyGoalRemainingSeconds(endsAt: number, now: number): number {
+  if (!Number.isFinite(endsAt) || !Number.isFinite(now)) return 0;
+  return Math.ceil(Math.max(0, endsAt - now) / 1000);
+}
+
+/** Fixed-width bilingual countdown copy for the daily-goal strip. */
+export function dailyGoalCountdown(endsAt: number, now: number, language: "en" | "zh" = "en"): string {
+  const remaining = dailyGoalRemainingSeconds(endsAt, now);
+  const hours = Math.floor(remaining / 3600);
+  const minutes = Math.floor((remaining % 3600) / 60);
+  const seconds = remaining % 60;
+  const clock = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")} UTC`;
+  return language === "zh" ? `${String.fromCodePoint(0x5269, 0x4f59)} ${clock}` : `ENDS ${clock}`;
 }
 
 /** Rows a dialog panel shows at once (the kit's four-row text box). */

@@ -67,6 +67,9 @@ import {
   EMOTE_CELLS,
   FAR_LABEL_W,
   FAR_MARKER_SIZE,
+  dailyGoalCountdown,
+  dailyGoalLayout,
+  dailyGoalRemainingSeconds,
   dialogRect,
   emoteBarRect,
   emoteCell,
@@ -115,6 +118,7 @@ import {
   type SelfDataSummary,
   type SocialSnapshot,
 } from "./shared/social.ts";
+import { formatDailyGoal, parseDailyGoalSnapshot, type DailyGoalSnapshot } from "./shared/daily-goal.ts";
 import { nameGridCharset } from "./shared/name-charset.ts";
 import { describeCreateError } from "./create-text.ts";
 import { LINK_PAD_KEYS, stepLinkCode, type LinkCodeState } from "./link-code.ts";
@@ -269,6 +273,14 @@ export interface OnlinePublished {
   helpedCount: number;
   /** The ERRAND bar's line. */
   errand: string;
+  /** Current capability-gated realm daily goal, or null. */
+  dailyGoal: DailyGoalSnapshot | null;
+  /** Localized shared goal line exactly as painted in the HUD and boards. */
+  dailyGoalText: string;
+  /** Localized countdown line projected from the estimated server clock. */
+  dailyGoalCountdown: string;
+  /** Whole seconds until the authoritative UTC deadline. */
+  dailyGoalRemaining: number;
   /** Whole seconds left on this client's READY claim. */
   coopRemaining: number;
   /** Mutual visible friends currently advertised as waiting in this realm. */
@@ -442,6 +454,8 @@ export function OnlineView() {
   const [realmFeatures, setRealmFeatures] = createSignal<RealmFeatures | null>(null);
   const [coopErrand, setCoopErrand] = createSignal<CoopErrandSnapshot | null>(null);
   const [discoveryLeaderboard, setDiscoveryLeaderboard] = createSignal<DiscoveryLeaderboard | null>(null);
+  const [dailyGoal, setDailyGoal] = createSignal<DailyGoalSnapshot | null>(null);
+  const [dailyCountdownText, setDailyCountdownText] = createSignal("");
   const [rosterRevision, setRosterRevision] = createSignal(0);
   /** Delete-profile confirmation: the first SQUARE arms it, the second
    *  (within the window) sends the delete. Destructive, so never one press. */
@@ -483,7 +497,14 @@ export function OnlineView() {
   const coopFriendHinted = new Set<string>();
   const leaderboardCache = new Map<string, DiscoveryLeaderboard>();
   let jsonRealm = "";
-  let openCoopBoard: { realm: string; offerRx: number; offerRy: number; base: readonly string[] } | null = null;
+  let lastDailyCompletionKey = "";
+  let openNoticeBoard: {
+    realm: string;
+    offerRx: number;
+    offerRy: number;
+    base: readonly string[];
+    cooperative: boolean;
+  } | null = null;
 
   const clearRealmJson = (nextRealm = ""): void => {
     featureCache.clear();
@@ -491,12 +512,15 @@ export function OnlineView() {
     coopBoardCache.clear();
     coopFriendHinted.clear();
     leaderboardCache.clear();
-    openCoopBoard = null;
+    lastDailyCompletionKey = "";
+    openNoticeBoard = null;
     jsonRealm = nextRealm;
     batch(() => {
       setRealmFeatures(null);
       setCoopErrand(null);
       setDiscoveryLeaderboard(null);
+      setDailyGoal(null);
+      setDailyCountdownText("");
       setSocialSnapshot((snapshot) => snapshot ? {
         ...snapshot,
         friends: snapshot.friends.map((friend) => friend.coopWaiting
@@ -513,6 +537,10 @@ export function OnlineView() {
   };
 
   const han = (...points: number[]): string => String.fromCodePoint(...points);
+  const dailyLine = (goal = dailyGoal()): string => goal ? formatDailyGoal(goal, locale) : "";
+  const dailyCompletionNotice = (goal: DailyGoalSnapshot): string => locale === "zh"
+    ? `${han(0x6bcf, 0x65e5)} ${han(0x5b8c, 0x6210)} · ${goal.targetName}`
+    : `DAILY COMPLETE · ${goal.targetName}`;
   const coopLabel = () => locale === "zh" ? han(0x534f, 0x4f5c) : "COOP";
   const coopReadiness = (snapshot: CoopErrandSnapshot): string =>
     `${coopLabel()} ${snapshot.presentReady}/${snapshot.required}`;
@@ -756,7 +784,7 @@ export function OnlineView() {
     const type = String(msg.type ?? "");
     const socialType = type === "socialSnapshot" || type === "worlds" || type === "selfData"
       || type === "realmFeatures" || type === "coopErrand" || type === "coopBoard"
-      || type === "coopFriendWaiting" || type === "discoveryLeaderboard"
+      || type === "coopFriendWaiting" || type === "discoveryLeaderboard" || type === "dailyGoal"
       || type === "friendResult" || type === "privacyResult" || type === "socialError"
       || type === "deletedAll" || type === "deleteAllError";
     if (!socialType) return false;
@@ -775,7 +803,10 @@ export function OnlineView() {
       if (parsed.coopPartnerFinding !== true) {
         coopBoardCache.clear();
         coopFriendHinted.clear();
-        openCoopBoard = null;
+        if (openNoticeBoard?.cooperative) {
+          openNoticeBoard = { ...openNoticeBoard, cooperative: false };
+          refreshOpenNoticeBoard();
+        }
         setSocialSnapshot((snapshot) => snapshot ? {
           ...snapshot,
           friends: snapshot.friends.map((friend) => friend.coopWaiting
@@ -787,11 +818,61 @@ export function OnlineView() {
         leaderboardCache.delete(realm);
         setDiscoveryLeaderboard(null);
       }
+      if (parsed.dailyGoals !== true) {
+        setDailyGoal(null);
+        setDailyCountdownText("");
+        refreshOpenNoticeBoard();
+      }
       setSocialState((state) => state.screen === "discovery" && !parsed.discoveryLeaderboard
         ? createSocialMenuState()
         : normalizeSocialMenuState(state, socialMenuData()));
       if (!previous?.discoveryLeaderboard && parsed.discoveryLeaderboard && socialOpen()) {
         sendSocial({ type: "leaderboardGet" });
+      }
+      return true;
+    }
+    if (type === "dailyGoal") {
+      const parsed = parseDailyGoalSnapshot(msg);
+      const realm = currentJsonRealm();
+      if (!parsed || typeof msg.completedNow !== "boolean" || !realm || parsed.realm !== realm
+        || realmFeatures()?.dailyGoals !== true) return true;
+      const previous = dailyGoal();
+      if (previous) {
+        if (parsed.day < previous.day) return true;
+        if (parsed.day === previous.day) {
+          // One UTC day names one immutable goal and its progress only moves
+          // forward. Equal-revision replays are accepted solely so the
+          // one-shot completion flag can still be observed and deduplicated.
+          if (parsed.goalId !== previous.goalId
+            || parsed.kind !== previous.kind
+            || parsed.date !== previous.date
+            || parsed.offerRx !== previous.offerRx || parsed.offerRy !== previous.offerRy
+            || parsed.targetRx !== previous.targetRx || parsed.targetRy !== previous.targetRy
+            || parsed.targetName !== previous.targetName
+            || parsed.required !== previous.required || parsed.endsAt !== previous.endsAt
+            || parsed.revision < previous.revision
+            || parsed.progress < previous.progress
+            || (previous.contributed && !parsed.contributed)
+            || (previous.completed && !parsed.completed)
+            || previous.contributionDays.some((day) => !parsed.contributionDays.includes(day))) return true;
+          if (parsed.revision === previous.revision
+            && (parsed.progress !== previous.progress
+              || parsed.contributed !== previous.contributed
+              || parsed.completed !== previous.completed)) return true;
+        }
+      }
+      if (!previous || parsed.day > previous.day || parsed.revision > previous.revision) {
+        setDailyGoal(parsed);
+        setDailyCountdownText(dailyGoalCountdown(parsed.endsAt, client?.estimatedServerTime() ?? 0, locale));
+        refreshOpenNoticeBoard();
+      }
+      const current = !previous || parsed.day > previous.day || parsed.revision > previous.revision ? parsed : previous;
+      if (msg.completedNow === true && current.completed) {
+        const completionKey = `${current.goalId}:${current.revision}`;
+        if (completionKey !== lastDailyCompletionKey) {
+          lastDailyCompletionKey = completionKey;
+          showNotice(dailyCompletionNotice(current), NOTICE_EVENT_MS);
+        }
       }
       return true;
     }
@@ -821,14 +902,12 @@ export function OnlineView() {
     if (type === "coopBoard") {
       const parsed = parseCoopBoardSnapshot(msg);
       const realm = currentJsonRealm();
-      const board = openCoopBoard;
+      const board = openNoticeBoard;
       if (!parsed || !realm || parsed.realm !== realm || realmFeatures()?.coopPartnerFinding !== true
-        || !board || board.realm !== parsed.realm
+        || !board || !board.cooperative || board.realm !== parsed.realm
         || board.offerRx !== parsed.offerRx || board.offerRy !== parsed.offerRy) return true;
       coopBoardCache.set(coopBoardKey(realm, parsed.offerRx, parsed.offerRy), parsed);
-      dialogLines = [...board.base, coopBoardLine(parsed)];
-      dialogPage = 0;
-      setDialogRows(dialogLines.slice(0, DIALOG_ROWS));
+      refreshOpenNoticeBoard();
       return true;
     }
     if (type === "coopFriendWaiting") {
@@ -1651,16 +1730,39 @@ export function OnlineView() {
   let dialogLines: readonly string[] = [];
   let dialogPage = 0;
   const openDialog = (lines: readonly string[]) => {
-    openCoopBoard = null;
+    openNoticeBoard = null;
     dialogLines = lines;
     dialogPage = 0;
     setDialogRows(lines.slice(0, DIALOG_ROWS));
     setDialogOpen(true);
   };
+  const noticeBoardLines = (board: NonNullable<typeof openNoticeBoard>): readonly string[] => {
+    const goal = dailyGoal();
+    const daily = realmFeatures()?.dailyGoals === true && goal?.realm === board.realm
+      ? [formatDailyGoal(goal, locale)]
+      : [];
+    const coop = board.cooperative
+      ? [coopBoardLine(coopBoardCache.get(coopBoardKey(board.realm, board.offerRx, board.offerRy)) ?? null)]
+      : [];
+    return [...board.base, ...daily, ...coop];
+  };
+  const refreshOpenNoticeBoard = (): void => {
+    if (!openNoticeBoard || !dialogOpen()) return;
+    dialogLines = noticeBoardLines(openNoticeBoard);
+    dialogPage = 0;
+    setDialogRows(dialogLines.slice(0, DIALOG_ROWS));
+  };
+  const openNoticeBoardDialog = (board: NonNullable<typeof openNoticeBoard>): void => {
+    openNoticeBoard = board;
+    dialogLines = noticeBoardLines(board);
+    dialogPage = 0;
+    setDialogRows(dialogLines.slice(0, DIALOG_ROWS));
+    setDialogOpen(true);
+  };
   const advanceDialog = () => {
     dialogPage += DIALOG_ROWS;
     if (dialogPage >= dialogLines.length) {
-      openCoopBoard = null;
+      openNoticeBoard = null;
       dialogLines = [];
       dialogPage = 0;
       setDialogRows([]);
@@ -1694,17 +1796,13 @@ export function OnlineView() {
     if (world.regionTick(rx, ry, c.estimatedServerTime()) < board.born) return;
     const lines = townLines(c, world.seed, plan, null);
     const offer = townErrand(world.seed, rx, ry);
-    if (realmFeatures()?.coopPartnerFinding === true && offer && isCooperativeErrand(world.seed, offer)) {
-      const realm = currentJsonRealm();
-      if (!realm) return;
-      const key = coopBoardKey(realm, rx, ry);
-      const cached = coopBoardCache.get(key) ?? null;
-      openDialog([...lines, coopBoardLine(cached)]);
-      openCoopBoard = { realm, offerRx: rx, offerRy: ry, base: lines };
+    const realm = currentJsonRealm();
+    const cooperative = realmFeatures()?.coopPartnerFinding === true
+      && !!offer && isCooperativeErrand(world.seed, offer);
+    openNoticeBoardDialog({ realm, offerRx: rx, offerRy: ry, base: lines, cooperative });
+    if (cooperative) {
       sendSocial({ type: "coopBoardGet", offerRx: rx, offerRy: ry });
-      return;
     }
-    openDialog(lines);
   };
 
   /** CROSS outside dialogs: the plaza action near a town hub (accept the
@@ -1863,7 +1961,8 @@ export function OnlineView() {
     const realm = c.predictor instanceof RealmPredictor;
     const seed = c.predictor?.world.seed ?? 0;
     const mode = h.fast ? "FAST" : autoMode ? "AUTO" : "YOU";
-    pruneExpiredFriendWaits(c.estimatedServerTime());
+    const estimatedServerTime = c.estimatedServerTime();
+    pruneExpiredFriendWaits(estimatedServerTime);
     batch(() => {
       setStatusText(status);
       setNameLine(`${roster.get(c.myId)?.name ?? (login() || "?")} · ROOM ${h.online} · ALL ${h.allOnline}`);
@@ -1871,6 +1970,8 @@ export function OnlineView() {
       setPosText(`X ${cam.tx}  Y ${cam.ty}  ${mode}${h.landmarkFirstName ? `  FIRST ${h.landmarkFirstName}` : ""}`);
       setRealmOn(realm);
       setMenuAuto(autoMode);
+      const goal = dailyGoal();
+      setDailyCountdownText(goal ? dailyGoalCountdown(goal.endsAt, estimatedServerTime, locale) : "");
       if (realm) {
         // Travel log: private sightings (never decrease) and the nearest rumor.
         const keys = h.progressKeys;
@@ -1926,6 +2027,12 @@ export function OnlineView() {
     out.fast = h?.fast ?? false;
     out.helpedCount = h?.helpedCount ?? 0;
     out.errand = errandText();
+    const goal = dailyGoal();
+    const estimatedServerTime = c?.estimatedServerTime() ?? 0;
+    out.dailyGoal = goal;
+    out.dailyGoalText = goal ? formatDailyGoal(goal, locale) : "";
+    out.dailyGoalCountdown = goal ? dailyGoalCountdown(goal.endsAt, estimatedServerTime, locale) : "";
+    out.dailyGoalRemaining = goal ? dailyGoalRemainingSeconds(goal.endsAt, estimatedServerTime) : 0;
     out.coopRemaining = coopRemainingSeconds();
     out.coopWaitingFriends = coopWaitingFriendCount();
     out.logCount = h?.progressCount ?? 0;
@@ -2273,6 +2380,7 @@ export function OnlineView() {
   const menu = () => menuRect(viewport().w, viewport().h);
   const logBar = () => logBarRect(viewport().w, viewport().h);
   const errandBar = () => errandBarRect(viewport().w, viewport().h);
+  const dailyLayout = () => dailyGoalLayout(viewport().w, viewport().h);
   const dialogBox = () => dialogRect(viewport().w, viewport().h);
   const emoteBar = () => emoteBarRect(viewport().w, viewport().h, debugOn());
 
@@ -2296,6 +2404,15 @@ export function OnlineView() {
         </Show>
         <Show when={!dialogOpen()}>
           <Show when={realmOn()}>
+            <Show when={dailyGoal() !== null && !menuOpen() && !socialOpen()}>
+              <View class="absolute" style={{ posType: 1, ...rect(dailyLayout().panel), bgColor: "#0b1626", opacity: 0.76 }} debugName="online-daily-goal" />
+              <Text class="text-xs" style={{ ...rect(dailyLayout().goalText), textColor: "#8fe3b0", lineHeight: 12 }} debugName="online-daily-goal-text">
+                {dailyLine()}
+              </Text>
+              <Text class="text-xs" style={{ ...rect(dailyLayout().countdownText), textColor: "#9fd0ff", lineHeight: 12 }} debugName="online-daily-goal-countdown">
+                {dailyCountdownText()}
+              </Text>
+            </Show>
             <View class="absolute" style={{ posType: 1, ...rect(logBar()), bgColor: "#0b1626", opacity: 0.76 }} debugName="online-logline" />
             <Text class="text-xs" style={{ posType: 1, insetT: logBar().y0 + 2, insetL: 12, width: logBar().x1 - 12, textColor: "#ffe97a", lineHeight: 12, height: 12 }}>{logText()}</Text>
             <View class="absolute" style={{ posType: 1, ...rect(errandBar()), bgColor: "#0b1626", opacity: 0.76 }} debugName="online-errandline" />

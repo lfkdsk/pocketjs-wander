@@ -12,6 +12,9 @@ import {
   createLayout,
   createNameGrid,
   createTitleRect,
+  dailyGoalCountdown,
+  dailyGoalLayout,
+  dailyGoalRemainingSeconds,
   dialogRect,
   errandBarRect,
   gateRect,
@@ -41,6 +44,10 @@ describe("wander-online layout: world overlays", () => {
         expect(contains(screen, noticeRect(w, h, debug)), "notice band").toBe(true);
       }
       expect(contains(screen, helpRect(w, h)), "help strip").toBe(true);
+      const daily = dailyGoalLayout(w, h);
+      expect(contains(screen, daily.panel), "daily goal panel").toBe(true);
+      expect(contains(daily.panel, daily.goalText), "daily goal text").toBe(true);
+      expect(contains(daily.panel, daily.countdownText), "daily countdown text").toBe(true);
       expect(contains(screen, logBarRect(w, h)), "log bar").toBe(true);
       expect(contains(screen, errandBarRect(w, h)), "errand bar").toBe(true);
       expect(contains(screen, dialogRect(w, h)), "dialog panel").toBe(true);
@@ -60,7 +67,9 @@ describe("wander-online layout: world overlays", () => {
         expect(intersects(plate, helpRect(w, h)), "plate vs help").toBe(false);
         expect(intersects(plate, logBarRect(w, h)), "plate vs log bar").toBe(false);
         expect(intersects(plate, errandBarRect(w, h)), "plate vs errand bar").toBe(false);
+        expect(intersects(plate, dailyGoalLayout(w, h).panel), "plate vs daily goal").toBe(false);
         expect(intersects(noticeRect(w, h, debug), logBarRect(w, h)), "notice vs log bar").toBe(false);
+        expect(intersects(noticeRect(w, h, debug), dailyGoalLayout(w, h).panel), "notice vs daily goal").toBe(false);
         // The notice band sits directly below the plate; the menu must not
         // reach either (it is centred, the band is at the top).
         expect(intersects(menuRect(w, h), noticeRect(w, h, debug)), "menu vs notice").toBe(false);
@@ -75,10 +84,13 @@ describe("wander-online layout: world overlays", () => {
       const log = logBarRect(w, h);
       const errand = errandBarRect(w, h);
       const help = helpRect(w, h);
+      const daily = dailyGoalLayout(w, h);
+      expect(intersects(daily.panel, log), "daily goal vs log").toBe(false);
       expect(intersects(log, errand), "log vs errand").toBe(false);
       expect(intersects(errand, help), "errand vs help").toBe(false);
       expect(intersects(log, help), "log vs help").toBe(false);
       expect(log.y1).toBeLessThanOrEqual(errand.y0);
+      expect(daily.panel.y1).toBeLessThanOrEqual(log.y0);
       expect(errand.y1).toBeLessThanOrEqual(help.y0);
       // Each bar is one 12 px text row with 2 px of padding above and below.
       expect(log.y1 - log.y0).toBe(16);
@@ -119,6 +131,21 @@ describe("wander-online layout: world overlays", () => {
       expect(debug.y1).toBeGreaterThan(normal.y1);
       expect(noticeRect(w, h, true).y0).toBeGreaterThan(noticeRect(w, h, false).y0);
     }
+  });
+
+  test("daily goal geometry stacks at 480px, splits at 960px, and formats a UTC countdown", () => {
+    const compact = dailyGoalLayout(480, 272);
+    const wide = dailyGoalLayout(960, 544);
+    expect(compact.compact).toBe(true);
+    expect(compact.goalText.y1).toBeLessThanOrEqual(compact.countdownText.y0);
+    expect(compact.goalText.x1 - compact.goalText.x0).toBe(compact.countdownText.x1 - compact.countdownText.x0);
+    expect(wide.compact).toBe(false);
+    expect(wide.goalText.x1).toBeLessThanOrEqual(wide.countdownText.x0);
+    expect(wide.goalText.y0).toBe(wide.countdownText.y0);
+    expect(dailyGoalRemainingSeconds(86_400_000, 82_738_999)).toBe(3662);
+    expect(dailyGoalCountdown(86_400_000, 82_738_999, "en")).toBe("ENDS 01:01:02 UTC");
+    expect(dailyGoalCountdown(86_400_000, 82_738_999, "zh")).toBe("\u5269\u4f59 01:01:02 UTC");
+    expect(dailyGoalCountdown(86_400_000, 86_400_001, "en")).toBe("ENDS 00:00:00 UTC");
   });
 });
 
