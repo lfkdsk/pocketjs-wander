@@ -1,0 +1,326 @@
+{
+  "verdict": "PASS",
+  "transport": "three live WebSocket clients",
+  "seed": 1593842689,
+  "realm": "local",
+  "connectedClients": [
+    {
+      "name": "Aster",
+      "id": 1
+    },
+    {
+      "name": "Birch",
+      "id": 2
+    },
+    {
+      "name": "Clover",
+      "id": 3
+    }
+  ],
+  "today": {
+    "goal": {
+      "realm": "local",
+      "day": 20025,
+      "date": "2024-10-29",
+      "kind": "delivery",
+      "goalId": "dg1_local_fg9_d_mpo_3k_mpn_3k_1grupdx",
+      "offerRx": -924,
+      "offerRy": 128,
+      "targetRx": -923,
+      "targetRy": 128,
+      "targetName": "Lower Limemill",
+      "required": 3,
+      "endsAt": 1730246400000
+    },
+    "initialProgress": [
+      {
+        "name": "Aster",
+        "progress": 0
+      },
+      {
+        "name": "Birch",
+        "progress": 0
+      },
+      {
+        "name": "Clover",
+        "progress": 0
+      }
+    ],
+    "progressSteps": [
+      {
+        "mode": "solo",
+        "couriers": [
+          "Aster"
+        ],
+        "progress": 1,
+        "remainingBefore": 3,
+        "recipients": [
+          {
+            "name": "Aster",
+            "progress": 1,
+            "contributed": true,
+            "contributionDays": [
+              20025
+            ],
+            "completedNow": false,
+            "festivalLevel": null
+          },
+          {
+            "name": "Birch",
+            "progress": 1,
+            "contributed": false,
+            "contributionDays": [],
+            "completedNow": false,
+            "festivalLevel": null
+          },
+          {
+            "name": "Clover",
+            "progress": 1,
+            "contributed": false,
+            "contributionDays": [],
+            "completedNow": false,
+            "festivalLevel": null
+          }
+        ]
+      },
+      {
+        "mode": "solo",
+        "couriers": [
+          "Aster"
+        ],
+        "progress": 2,
+        "remainingBefore": 2,
+        "recipients": [
+          {
+            "name": "Aster",
+            "progress": 2,
+            "contributed": true,
+            "contributionDays": [
+              20025
+            ],
+            "completedNow": false,
+            "festivalLevel": null
+          },
+          {
+            "name": "Birch",
+            "progress": 2,
+            "contributed": false,
+            "contributionDays": [],
+            "completedNow": false,
+            "festivalLevel": null
+          },
+          {
+            "name": "Clover",
+            "progress": 2,
+            "contributed": false,
+            "contributionDays": [],
+            "completedNow": false,
+            "festivalLevel": null
+          }
+        ]
+      },
+      {
+        "mode": "cooperative",
+        "couriers": [
+          "Birch",
+          "Clover"
+        ],
+        "progressBefore": 2,
+        "progress": 3,
+        "retainedContributors": [
+          "Birch",
+          "Clover"
+        ],
+        "recipients": [
+          {
+            "name": "Aster",
+            "progress": 3,
+            "contributed": true,
+            "contributionDays": [
+              20025
+            ],
+            "completedNow": true,
+            "festivalLevel": 2
+          },
+          {
+            "name": "Birch",
+            "progress": 3,
+            "contributed": true,
+            "contributionDays": [
+              20025
+            ],
+            "completedNow": true,
+            "festivalLevel": 2
+          },
+          {
+            "name": "Clover",
+            "progress": 3,
+            "contributed": true,
+            "contributionDays": [
+              20025
+            ],
+            "completedNow": true,
+            "festivalLevel": 2
+          }
+        ]
+      }
+    ],
+    "requiredMinusOneCooperativeDelivery": {
+      "progressBefore": 2,
+      "couriers": [
+        "Birch",
+        "Clover"
+      ],
+      "progressAfter": 3,
+      "privateContributionDays": {
+        "Birch": [
+          20025
+        ],
+        "Clover": [
+          20025
+        ]
+      }
+    },
+    "completionPulsesPerClient": [
+      1,
+      1,
+      1
+    ],
+    "extraDailyFramesAfterRepeatDelivery": [
+      0,
+      0,
+      0
+    ]
+  },
+  "festival": {
+    "region": {
+      "rx": -923,
+      "ry": 128,
+      "name": "Lower Limemill"
+    },
+    "improvementLevel": 2,
+    "cells": [
+      {
+        "x": -88562,
+        "y": 12339,
+        "tile": 41
+      },
+      {
+        "x": -88574,
+        "y": 12339,
+        "tile": 41
+      },
+      {
+        "x": -88574,
+        "y": 12333,
+        "tile": 41
+      },
+      {
+        "x": -88565,
+        "y": 12342,
+        "tile": 41
+      }
+    ],
+    "beforeTiles": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "afterTiles": [
+      41,
+      41,
+      41,
+      41
+    ],
+    "recipientRegionLevels": [
+      {
+        "name": "Aster",
+        "progress": 3,
+        "contributed": true,
+        "contributionDays": [
+          20025
+        ],
+        "completedNow": true,
+        "festivalLevel": 2
+      },
+      {
+        "name": "Birch",
+        "progress": 3,
+        "contributed": true,
+        "contributionDays": [
+          20025
+        ],
+        "completedNow": true,
+        "festivalLevel": 2
+      },
+      {
+        "name": "Clover",
+        "progress": 3,
+        "contributed": true,
+        "contributionDays": [
+          20025
+        ],
+        "completedNow": true,
+        "festivalLevel": 2
+      }
+    ],
+    "persistence": "level 2 remains as realm history; rollover performs no reset write"
+  },
+  "rollover": {
+    "clockBefore": 1730246399999,
+    "clockAt": 1730246400000,
+    "oldDay": 20025,
+    "newDay": 20026,
+    "newGoal": {
+      "type": "dailyGoal",
+      "v": 1,
+      "realm": "local",
+      "day": 20026,
+      "date": "2024-10-30",
+      "kind": "landmark",
+      "goalId": "dg1_local_fga_l_n_n_mps_m4o_zbsmq",
+      "offerRx": null,
+      "offerRy": null,
+      "targetRx": -928,
+      "targetRy": -168,
+      "targetName": "East Elmbury",
+      "required": 4,
+      "endsAt": 1730332800000,
+      "progress": 0,
+      "completed": false,
+      "contributed": false,
+      "contributionDays": [
+        20025
+      ],
+      "revision": 0,
+      "completedNow": false
+    },
+    "clientIdsBefore": [
+      1,
+      2,
+      3
+    ],
+    "clientIdsAfter": [
+      1,
+      2,
+      3
+    ],
+    "connectedPlayers": 3
+  },
+  "privacy": {
+    "publicContributorList": false,
+    "publicLeaderboardExtension": false,
+    "privateContributionDays": {
+      "Aster": [
+        20025
+      ],
+      "Birch": [
+        20025
+      ],
+      "Clover": [
+        20025
+      ]
+    }
+  }
+}

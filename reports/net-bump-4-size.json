@@ -1,0 +1,145 @@
+{
+  "schema": "wander-component-bump-size/v4",
+  "revisions": {
+    "baselineWander": "b827e9a",
+    "candidateWander": "bf87e52e9afb3feaa56336363aa4750c12c6b714",
+    "baselinePocketRpgKit": "189a6f0dd2c4642fcff6fcecdd02d8e4a5985091",
+    "candidatePocketRpgKit": "be938da56905c96410ed9db4cf0345eca10cfc99",
+    "pocketJs": "862040bd77edc49b1f815beff63952b6616a14c6"
+  },
+  "method": {
+    "build": "bun run build",
+    "gzip": "gzip -n -9",
+    "comparison": "The same Wander source tree is built with the old and new component gitlinks; the candidate runtime commit changes only the component gitlink."
+  },
+  "applications": {
+    "wander": {
+      "javascript": {
+        "baseline": {
+          "rawBytes": 900396,
+          "gzipBytes": 190644,
+          "sha256": "57e8454f36f17d254643da0973501c07b8d82037667cfa6cf9409da32e007947"
+        },
+        "candidate": {
+          "rawBytes": 906826,
+          "gzipBytes": 191625,
+          "sha256": "a14d799667e645d4412277c5c95e81a5d2d1f3eec2cbcb24b0586ad5d5abb038"
+        },
+        "delta": {
+          "rawBytes": 6430,
+          "rawPercent": 0.714,
+          "gzipBytes": 981,
+          "gzipPercent": 0.515
+        }
+      },
+      "pak": {
+        "baseline": {
+          "rawBytes": 1132768,
+          "gzipBytes": 73951,
+          "sha256": "b7ec486759acc56253a22744128a16d74696519d9de33a90481f77eb48cdfc9d"
+        },
+        "candidate": {
+          "rawBytes": 1132768,
+          "gzipBytes": 73951,
+          "sha256": "b7ec486759acc56253a22744128a16d74696519d9de33a90481f77eb48cdfc9d"
+        },
+        "delta": {
+          "rawBytes": 0,
+          "rawPercent": 0,
+          "gzipBytes": 0,
+          "gzipPercent": 0
+        }
+      },
+      "inputs": {
+        "baselineCount": 608,
+        "candidateCount": 608,
+        "baselineSha256": "baf51cc5af136c70ded382e93489875b50f61e9e4443983040e6b68c26be9f72",
+        "candidateSha256": "baf51cc5af136c70ded382e93489875b50f61e9e4443983040e6b68c26be9f72"
+      }
+    },
+    "wander-online": {
+      "javascript": {
+        "baseline": {
+          "rawBytes": 1147109,
+          "gzipBytes": 246681,
+          "sha256": "e8cc4d65183ec88ad10a105498afdf6ecc54a210a62fd1f5b263e61676a1a995"
+        },
+        "candidate": {
+          "rawBytes": 1153539,
+          "gzipBytes": 247644,
+          "sha256": "f9ead4c708ebb561dbf1cf7d28dffa2fd6a92e06d5a6ad21217524ce83245346"
+        },
+        "delta": {
+          "rawBytes": 6430,
+          "rawPercent": 0.561,
+          "gzipBytes": 963,
+          "gzipPercent": 0.390
+        }
+      },
+      "pak": {
+        "baseline": {
+          "rawBytes": 2543120,
+          "gzipBytes": 328885,
+          "sha256": "4b9a072aa0e42da692d227a01832b70bd013a964c9c7289671d00cab617c92bc"
+        },
+        "candidate": {
+          "rawBytes": 2543120,
+          "gzipBytes": 328885,
+          "sha256": "4b9a072aa0e42da692d227a01832b70bd013a964c9c7289671d00cab617c92bc"
+        },
+        "delta": {
+          "rawBytes": 0,
+          "rawPercent": 0,
+          "gzipBytes": 0,
+          "gzipPercent": 0
+        }
+      },
+      "inputs": {
+        "baselineCount": 633,
+        "candidateCount": 633,
+        "baselineSha256": "8bf57a406d9e7a6253b24e1f07cc8a8a88d3f8dd7c947c4f94a477816f398aaf",
+        "candidateSha256": "8bf57a406d9e7a6253b24e1f07cc8a8a88d3f8dd7c947c4f94a477816f398aaf"
+      }
+    }
+  },
+  "isolation": {
+    "forbiddenConcreteModules": [
+      "src/engine/rpgmaker-screen.ts",
+      "src/engine/rpgmaker-text.ts",
+      "src/engine/travel-session.ts",
+      "src/engine/travel.ts",
+      "src/ui/ChoiceColourLine.tsx",
+      "src/ui/TravelActors.tsx",
+      "src/ui/choice-colour.ts",
+      "src/ui/travel-actors.ts",
+      "src/rpgmaker-battle/",
+      "src/ui/rpgmaker-battle/"
+    ],
+    "clean": {
+      "tests": 2,
+      "pass": 2,
+      "fail": 0,
+      "skip": 0,
+      "manifestAndBundleHits": 0
+    },
+    "mutation": {
+      "change": "Statically import rpgmaker-text.ts from the ordinary session path in an isolated disposable worktree.",
+      "admittedModules": [
+        "src/engine/rpgmaker-screen.ts",
+        "src/engine/rpgmaker-text.ts"
+      ],
+      "tests": 2,
+      "pass": 0,
+      "fail": 2,
+      "exitCode": 1
+    }
+  },
+  "capabilityValidation": {
+    "clean": "Wander's project uses no optional RPG Maker command capability and starts without a declaration change.",
+    "mutation": {
+      "change": "Add a screenTone common-event command without registering its optional runtime.",
+      "exitCode": 1,
+      "error": "RPG Maker screen: commands screenTone require the optional rpgMakerText runtime"
+    }
+  }
+}

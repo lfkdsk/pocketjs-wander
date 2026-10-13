@@ -1,0 +1,109 @@
+{
+  "schema": "wander-online-coop-demo/v2",
+  "result": "PASS",
+  "transport": "three independent WebSocket clients over /ws/v4",
+  "seed": 1593842689,
+  "realm": "local",
+  "clients": [
+    {
+      "role": "A",
+      "name": "Alice",
+      "id": 1,
+      "githubId": 71001
+    },
+    {
+      "role": "B",
+      "name": "Bob",
+      "id": 2,
+      "githubId": 71002
+    },
+    {
+      "role": "C",
+      "name": "Observer",
+      "id": 3,
+      "githubId": 71003
+    }
+  ],
+  "offer": {
+    "rx": 0,
+    "ry": 0
+  },
+  "delivery": {
+    "target": {
+      "rx": 0,
+      "ry": -1,
+      "tx": 39,
+      "ty": -49,
+      "name": "Upper Greennook"
+    },
+    "item": "a bag of salt",
+    "requiredPlayers": 2
+  },
+  "waiting": {
+    "journeyEvent": 5,
+    "status": "waiting",
+    "savedReady": 1,
+    "presentReady": 1,
+    "improvementLevel": 0
+  },
+  "partnerFinding": {
+    "projection": "hosted mutual-visible-friend routing mirrored over authoritative loopback READY state",
+    "friendship": {
+      "mutual": [
+        71001,
+        71002
+      ],
+      "nonfriend": 71003
+    },
+    "friendNotification": {
+      "source": "demo social projection",
+      "recipient": 71002,
+      "message": {
+        "type": "coopFriendWaiting",
+        "v": 1,
+        "realm": "local",
+        "friend": {
+          "githubId": 71001,
+          "name": "Alice"
+        },
+        "targetTown": "Upper Greennook",
+        "item": "a bag of salt",
+        "expiresAt": 1791912855341
+      }
+    },
+    "nonfriendIdentifiedNotifications": 0,
+    "noticeBoard": {
+      "source": "loopback WebSocket",
+      "message": {
+        "type": "coopBoard",
+        "v": 1,
+        "realm": "local",
+        "offerRx": 0,
+        "offerRy": 0,
+        "waiting": 1,
+        "required": 2
+      }
+    }
+  },
+  "completion": {
+    "aliceJourneyEvent": 6,
+    "bobJourneyEvent": 6,
+    "aliceHelpedCount": 1,
+    "bobHelpedCount": 1,
+    "aliceStatus": "none",
+    "bobStatus": "none",
+    "sharedImprovementLevel": 1,
+    "sharedRevision": 3,
+    "observerSawImprovementLevel": 1,
+    "observerSawRowRevision": 3
+  },
+  "assertions": [
+    "three distinct clients joined the authoritative realm",
+    "one ready participant remained waiting at 1/2 with no improvement",
+    "the second distinct participant completed both private journeys",
+    "the target town improved exactly from level 0 to level 1",
+    "the friend received one privacy-safe waiting projection and the nonfriend received none",
+    "the nonfriend read only the offer-scoped anonymous 1/2 notice-board count",
+    "the non-participating third client received the shared improved row at the authoritative revision"
+  ]
+}
